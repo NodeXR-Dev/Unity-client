@@ -302,17 +302,17 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
                 // ✅ [데이터 연동 추가] 소현 님의 세션 정보 저장
                 // ==========================================================
                 // SceneRefs는 보통 싱글톤이거나 씬에 하나 있으므로 찾아옵니다.
-                var sceneRefs = FindFirstObjectByType<NodeXR.SceneRefs>();
-                if (sceneRefs != null && sceneRefs.session != null)
-                {
-                    sceneRefs.session.roomId = sessionName;          // 서버의 room_id (UUID)
-                    sceneRefs.session.userId = response.result.user_id; // 서버에서 준 내 ID
-                    Debug.Log("<color=cyan>[Session] 데이터 저장 완료! 소켓 연결 준비 끝.</color>");
-                }
-                else
-                {
-                    Debug.LogWarning("[Session] SceneRefs나 SessionData를 찾을 수 없어 ID를 저장하지 못했습니다.");
-                }
+                // var sceneRefs = FindFirstObjectByType<NodeXR.SceneRefs>();
+                // if (sceneRefs != null && sceneRefs.session != null)
+                // {
+                //     sceneRefs.session.roomId = sessionName;          // 서버의 room_id (UUID)
+                //     sceneRefs.session.userId = response.result.user_id; // 서버에서 준 내 ID
+                //     Debug.Log("<color=cyan>[Session] 데이터 저장 완료! 소켓 연결 준비 끝.</color>");
+                // }
+                // else
+                // {
+                //     Debug.LogWarning("[Session] SceneRefs나 SessionData를 찾을 수 없어 ID를 저장하지 못했습니다.");
+                // }
                 // ==========================================================
 
                 // 2. 실제 Photon Fusion 세션 접속 시작

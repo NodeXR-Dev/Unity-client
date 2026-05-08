@@ -4,7 +4,7 @@ using UnityEditor;
 namespace Photon.Voice.Unity.UtilityScripts
 {
     [CustomEditor(typeof(MicAmplifier))]
-    public class MicAmplifierEditor : Editor
+    public class MicAmplifierEditor : UnityEditor.Editor
     {
         private MicAmplifier simpleAmplifier;
 

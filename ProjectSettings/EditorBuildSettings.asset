@@ -6,8 +6,15 @@ EditorBuildSettings:
   serializedVersion: 2
   m_Scenes:
   - enabled: 1
-    path: Assets/Scenes/MeetingRoom.unity
+    path: Assets/Sohyuun/Scenes/MeetingRoom.unity
     guid: 99c9720ab356a0642a771bea13969a05
+  - enabled: 1
+    path: Assets/Scenes/Lobby.unity
+    guid: 3d00cc925f62bba43a98b9d7bccfd203
   m_configObjects:
+    Unity.XR.Oculus.Settings: {fileID: 11400000, guid: aea880836b53e4558aac35286df7298c, type: 2}
     com.unity.input.settings.actions: {fileID: -944628639613478452, guid: 052faaac586de48259a63d0c4782560b, type: 3}
+    com.unity.xr.arfoundation.simulation_settings: {fileID: 11400000, guid: 623dcea6cd4c44b0dbe2f6df8f89bc33, type: 2}
+    com.unity.xr.management.loader_settings: {fileID: 11400000, guid: 2b78e94ef5780494e8a60a3ef9ded0b5, type: 2}
+    com.unity.xr.openxr.settings4: {fileID: 11400000, guid: b5d5b5eb96aa248e2bdf5215b312d05c, type: 2}
   m_UseUCBPForAssetBundles: 0
