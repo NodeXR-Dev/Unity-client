@@ -5,12 +5,18 @@ EditorBuildSettings:
   m_ObjectHideFlags: 0
   serializedVersion: 2
   m_Scenes:
-  - enabled: 1
+  - enabled: 0
     path: Assets/Sohyuun/Scenes/MeetingRoom.unity
     guid: 99c9720ab356a0642a771bea13969a05
   - enabled: 1
-    path: Assets/Scenes/Lobby.unity
+    path: Assets/00_Scenes/10_Lobby/backup/Lobby.unity
     guid: 3d00cc925f62bba43a98b9d7bccfd203
+  - enabled: 1
+    path: Assets/00_Scenes/10_Lobby/Lobby_Core.unity
+    guid: 01ecfafbf5b3981418026cb3e76c2a79
+  - enabled: 1
+    path: Assets/00_Scenes/10_Lobby/UiTest.unity
+    guid: 73664930b787e49fabff8eba8034f6b2
   m_configObjects:
     Unity.XR.Oculus.Settings: {fileID: 11400000, guid: aea880836b53e4558aac35286df7298c, type: 2}
     com.unity.input.settings.actions: {fileID: -944628639613478452, guid: 052faaac586de48259a63d0c4782560b, type: 3}
