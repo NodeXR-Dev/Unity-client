@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: 85c36ad692bf8e44191aa2c8694abedd
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 4300000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 267128
+  packageName: Meeting_Room
+  packageVersion: 1.0
+  assetPath: Assets/Meeting_Room/Meshes/Decor_Element_01.mesh
+  uploadId: 634197

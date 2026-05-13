@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: 2c31a3d32eb031f428e6e355ad63e420
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 267128
+  packageName: Meeting_Room
+  packageVersion: 1.0
+  assetPath: Assets/Meeting_Room/Prefabs/Floor.prefab
+  uploadId: 634197

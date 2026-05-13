@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: 6a005fea3a68fea4f88956e6e2af06c2
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 2100000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 267128
+  packageName: Meeting_Room
+  packageVersion: 1.0
+  assetPath: Assets/Meeting_Room/Materials/Paint_01.mat
+  uploadId: 634197

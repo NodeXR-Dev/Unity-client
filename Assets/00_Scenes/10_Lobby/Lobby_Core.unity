@@ -995,7 +995,7 @@ MonoBehaviour:
   lobbyName: default
   sessionListContentParent: {fileID: 717044779}
   sessionListEntryPrefab: {fileID: 7717861025995004143, guid: 97df7ada387d6264f840f02a98e4fb31, type: 3}
-  gameplaySceneAsset: {fileID: 102900000, guid: 73664930b787e49fabff8eba8034f6b2, type: 3}
+  gameplaySceneAsset: {fileID: 102900000, guid: 7d79aecd874c542fe8cfe195a9777fea, type: 3}
   lobbySceneAsset: {fileID: 102900000, guid: 01ecfafbf5b3981418026cb3e76c2a79, type: 3}
   gameplaySceneName: UiTest
   lobbySceneName: vr_lobby 2

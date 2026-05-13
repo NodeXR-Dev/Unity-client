@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: 82064c8555d81c64489f002a965d1101
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 4300000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 267128
+  packageName: Meeting_Room
+  packageVersion: 1.0
+  assetPath: Assets/Meeting_Room/Meshes/Big_Picture_01.mesh
+  uploadId: 634197

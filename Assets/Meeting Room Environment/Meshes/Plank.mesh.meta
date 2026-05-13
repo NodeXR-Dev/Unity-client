@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: 36725768d45409b40885efc3d7697709
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 4300000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 267128
+  packageName: Meeting_Room
+  packageVersion: 1.0
+  assetPath: Assets/Meeting_Room/Meshes/Plank.mesh
+  uploadId: 634197
