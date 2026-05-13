@@ -1,0 +1,18 @@
+fileFormatVersion: 2
+guid: 5817714c81a294c0db67a5b6767a4e5b
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences: []
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 137030
+  packageName: "3D WebView for Android\u2122 (Web Browser)"
+  packageVersion: 4.15
+  assetPath: Assets/Vuplex/WebView/Core/Scripts/IWithMutableAudio.cs
+  uploadId: 853888

@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: 1b0611231af614f7b91169ff83a790cd
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 0
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 137030
+  packageName: "3D WebView for Android\u2122 (Web Browser)"
+  packageVersion: 4.15
+  assetPath: Assets/Vuplex/WebView/Core/Editor/Materials/Resources/MockViewportMaterial.mat
+  uploadId: 853888

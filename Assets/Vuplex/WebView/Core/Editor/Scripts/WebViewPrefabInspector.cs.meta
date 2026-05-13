@@ -1,0 +1,18 @@
+fileFormatVersion: 2
+guid: b88a73aa4eea34b3eb0c643e900629a0
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences: []
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 137030
+  packageName: "3D WebView for Android\u2122 (Web Browser)"
+  packageVersion: 4.15
+  assetPath: Assets/Vuplex/WebView/Core/Editor/Scripts/WebViewPrefabInspector.cs
+  uploadId: 853888

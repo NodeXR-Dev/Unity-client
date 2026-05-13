@@ -1,0 +1,17 @@
+fileFormatVersion: 2
+guid: 900c52203be2f403587d07144d3617a5
+timeCreated: 1521940727
+licenseType: Store
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 0
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 137030
+  packageName: "3D WebView for Android\u2122 (Web Browser)"
+  packageVersion: 4.15
+  assetPath: Assets/Vuplex/WebView/Core/Materials/Resources/AppleWebMaterial.mat
+  uploadId: 853888
