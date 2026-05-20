@@ -290,11 +290,6 @@ namespace UnityEngine.XR.Interaction.Toolkit.Samples.SpatialKeyboard
 
         protected virtual void KeyClick()
         {
-            if (Time.time - m_LastClickTime < 0.25f) 
-            {
-                return;
-            }
-
             // Local function of things to do to the key when pressed (Audio, etc.)
             KeyPressed();
 
