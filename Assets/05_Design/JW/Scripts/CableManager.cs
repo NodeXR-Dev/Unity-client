@@ -11,6 +11,7 @@ public class CableManager : MonoBehaviour
     void Awake() => Instance = this;
 
     public void OnConnection(ConnectorEndpoint a, ConnectorEndpoint b)
+    {
         string key = GetKey(a, b);
         if (activeConnections.ContainsKey(key)) return;
 
