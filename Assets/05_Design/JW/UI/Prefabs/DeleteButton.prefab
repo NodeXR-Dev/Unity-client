@@ -1,6 +1,6 @@
 %YAML 1.1
 %TAG !u! tag:unity3d.com,2011:
---- !u!1 &3764022019816524750
+--- !u!1 &8586949720095932187
 GameObject:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -8,24 +8,24 @@ GameObject:
   m_PrefabAsset: {fileID: 0}
   serializedVersion: 6
   m_Component:
-  - component: {fileID: 7837358942483175951}
-  - component: {fileID: 5254508010269152794}
-  - component: {fileID: 7969939056750720550}
-  - component: {fileID: 7009810642084281047}
+  - component: {fileID: 2955775090119060486}
+  - component: {fileID: 1891110276556716925}
+  - component: {fileID: 7560005386455680863}
+  - component: {fileID: 5331428306317777053}
   m_Layer: 5
-  m_Name: CircleIconButton
+  m_Name: DeleteButton
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
   m_IsActive: 1
---- !u!224 &7837358942483175951
+--- !u!224 &2955775090119060486
 RectTransform:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 3764022019816524750}
+  m_GameObject: {fileID: 8586949720095932187}
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
   m_LocalPosition: {x: 0, y: 0, z: 0}
   m_LocalScale: {x: 0.01, y: 0.01, z: 0.01}
@@ -35,24 +35,24 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0.5, y: 0.5}
   m_AnchorMax: {x: 0.5, y: 0.5}
-  m_AnchoredPosition: {x: 2.54, y: -0.1}
+  m_AnchoredPosition: {x: -4, y: 13.841064}
   m_SizeDelta: {x: 200, y: 200}
   m_Pivot: {x: 0.5, y: 0.5}
---- !u!222 &5254508010269152794
+--- !u!222 &1891110276556716925
 CanvasRenderer:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 3764022019816524750}
+  m_GameObject: {fileID: 8586949720095932187}
   m_CullTransparentMesh: 1
---- !u!114 &7969939056750720550
+--- !u!114 &7560005386455680863
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 3764022019816524750}
+  m_GameObject: {fileID: 8586949720095932187}
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: fe87c0e1cc204ed48ad3b37840f39efc, type: 3}
@@ -66,7 +66,7 @@ MonoBehaviour:
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
-  m_Sprite: {fileID: 21300000, guid: e1ddc42eaff1c4cadafc84b1ee4d2c93, type: 3}
+  m_Sprite: {fileID: 21300000, guid: 6eb046e5e3beb4cbfa0e6a3c63f959da, type: 3}
   m_Type: 0
   m_PreserveAspect: 0
   m_FillCenter: 1
@@ -76,22 +76,22 @@ MonoBehaviour:
   m_FillOrigin: 0
   m_UseSpriteMesh: 0
   m_PixelsPerUnitMultiplier: 1
---- !u!114 &7009810642084281047
+--- !u!114 &5331428306317777053
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 3764022019816524750}
+  m_GameObject: {fileID: 8586949720095932187}
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: f2623e30b56524f718df3fbd2c166466, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  spriteDefault: {fileID: 21300000, guid: e1ddc42eaff1c4cadafc84b1ee4d2c93, type: 3}
-  spriteHover: {fileID: 21300000, guid: 04a91e40e79ae45dfa67646e78747bd2, type: 3}
-  spritePressed: {fileID: 21300000, guid: fab2f039618d2482f9ab27fee9ba8915, type: 3}
-  spriteDisabled: {fileID: 21300000, guid: e5f4a1a1e33534f7dad62806ee473502, type: 3}
-  spriteLoading: {fileID: 21300000, guid: 1e6bfc17066634a27b1f4d6414455390, type: 3}
-  isDisabled: 0
-  isLoading: 1
+  spriteDefault: {fileID: 21300000, guid: 6eb046e5e3beb4cbfa0e6a3c63f959da, type: 3}
+  spriteHover: {fileID: 21300000, guid: 4c21683c6723d412583ab88c85449923, type: 3}
+  spritePressed: {fileID: 21300000, guid: c2fa8dcdb450e48abbe0f37b41098f84, type: 3}
+  spriteDisabled: {fileID: 21300000, guid: b5cb746dd6e594794aee08a028f0a3e3, type: 3}
+  spriteLoading: {fileID: 21300000, guid: 46137ab2596024c779c2ca5fa2fe79a2, type: 3}
+  isDisabled: 1
+  isLoading: 0
