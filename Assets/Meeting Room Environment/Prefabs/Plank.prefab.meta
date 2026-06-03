@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: 400b630aff90be44d828b7bf0d4b9f5d
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 267128
+  packageName: Meeting_Room
+  packageVersion: 1.0
+  assetPath: Assets/Meeting_Room/Prefabs/Plank.prefab
+  uploadId: 634197

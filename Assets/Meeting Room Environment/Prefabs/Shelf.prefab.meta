@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: 6ace040a68596e44f8317ab70f835994
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 267128
+  packageName: Meeting_Room
+  packageVersion: 1.0
+  assetPath: Assets/Meeting_Room/Prefabs/Shelf.prefab
+  uploadId: 634197

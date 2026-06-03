@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: f0a113a71e6a3824280fda4c828cb063
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 267128
+  packageName: Meeting_Room
+  packageVersion: 1.0
+  assetPath: Assets/Meeting_Room/Prefabs/Ceiling_Conditioner.prefab
+  uploadId: 634197

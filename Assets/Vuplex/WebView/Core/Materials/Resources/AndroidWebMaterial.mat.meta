@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: b330f1b65a93d4b708726acb581f07b0
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 0
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 137030
+  packageName: "3D WebView for Android\u2122 (Web Browser)"
+  packageVersion: 4.15
+  assetPath: Assets/Vuplex/WebView/Core/Materials/Resources/AndroidWebMaterial.mat
+  uploadId: 853888

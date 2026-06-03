@@ -1,0 +1,16 @@
+fileFormatVersion: 2
+guid: 0bdfa5843cae24fc696523cfa7bdf19a
+timeCreated: 1606287511
+licenseType: Store
+DefaultImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 137030
+  packageName: "3D WebView for Android\u2122 (Web Browser)"
+  packageVersion: 4.15
+  assetPath: Assets/Vuplex/WebView/Demos/Scenes/6_CanvasPopupDemo.unity
+  uploadId: 853888

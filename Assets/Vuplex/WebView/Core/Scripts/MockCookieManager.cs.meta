@@ -1,0 +1,18 @@
+fileFormatVersion: 2
+guid: 6b8ba1b84e3754b1cbbc39b31bc214e9
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences: []
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 137030
+  packageName: "3D WebView for Android\u2122 (Web Browser)"
+  packageVersion: 4.15
+  assetPath: Assets/Vuplex/WebView/Core/Scripts/MockCookieManager.cs
+  uploadId: 853888

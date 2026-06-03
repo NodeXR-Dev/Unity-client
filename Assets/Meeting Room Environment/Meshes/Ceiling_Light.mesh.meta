@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: 5a7840052bcfb6847830360fe5003902
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 4300000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 267128
+  packageName: Meeting_Room
+  packageVersion: 1.0
+  assetPath: Assets/Meeting_Room/Meshes/Ceiling_Light.mesh
+  uploadId: 634197

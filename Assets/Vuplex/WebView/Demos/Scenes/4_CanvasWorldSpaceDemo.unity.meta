@@ -1,0 +1,16 @@
+fileFormatVersion: 2
+guid: 62f02fda5217b49c3b226481915f5292
+timeCreated: 1618100853
+licenseType: Store
+DefaultImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 137030
+  packageName: "3D WebView for Android\u2122 (Web Browser)"
+  packageVersion: 4.15
+  assetPath: Assets/Vuplex/WebView/Demos/Scenes/4_CanvasWorldSpaceDemo.unity
+  uploadId: 853888

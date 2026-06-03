@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: 89ab32a65e6474ea7957906261af3fc1
+TextScriptImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 137030
+  packageName: "3D WebView for Android\u2122 (Web Browser)"
+  packageVersion: 4.15
+  assetPath: Assets/Vuplex/WebView/Android/Plugins/proguard-webview-android.txt
+  uploadId: 853888

@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: dd959f50af473b34dbb50ae5db755050
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 2100000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 267128
+  packageName: Meeting_Room
+  packageVersion: 1.0
+  assetPath: Assets/Meeting_Room/Materials/Floor_01.mat
+  uploadId: 634197

@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: 4eb93376a7a01074aa010bd3f6f153f0
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 267128
+  packageName: Meeting_Room
+  packageVersion: 1.0
+  assetPath: Assets/Meeting_Room/Prefabs/Walls.prefab
+  uploadId: 634197
