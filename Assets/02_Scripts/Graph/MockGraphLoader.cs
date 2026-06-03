@@ -12,7 +12,6 @@
  *   [PROPERTY] 미래지향 스타일 → [PROPERTY] 유토피아 → [PROPERTY] 식물
  *   [PROPERTY] 미래지향 스타일 → [PART] ALL   ← 서브그래프 최상위 PROPERTY가 PART에 연결
  *   [PROPERTY] 금속 → [PROPERTY] 무광
- *   [PROPERTY] 금속 → [PART] 다리             ← 서브그래프 최상위 PROPERTY가 PART에 연결
  */
 using System.Collections.Generic;
 using UnityEngine;
@@ -45,13 +44,12 @@ public class MockGraphLoader : MonoBehaviour
             graph_version = 1,
             nodes = new List<NodeData>
             {
-                new NodeData { node_id = "prop_future", type = "PROPERTY", label = "미래지향 스타일", position = new float[] { -2f,  3f, 0f }, property_category = "style"    },
-                new NodeData { node_id = "prop_utopia", type = "PROPERTY", label = "유토피아",       position = new float[] { -2f,  1f, 0f }, property_category = "concept"  },
-                new NodeData { node_id = "prop_plant",  type = "PROPERTY", label = "식물",           position = new float[] { -2f, -1f, 0f }, property_category = "motif"    },
-                new NodeData { node_id = "part_all",    type = "PART",     label = "ALL",            position = new float[] {  0f, -1f, 0f }, is_global = true               },
-                new NodeData { node_id = "part_leg",    type = "PART",     label = "다리",           position = new float[] {  2f, -1f, 0f }                                 },
-                new NodeData { node_id = "prop_metal",  type = "PROPERTY", label = "금속",           position = new float[] {  2f,  1f, 0f }, property_category = "material" },
-                new NodeData { node_id = "prop_matte",  type = "PROPERTY", label = "무광",           position = new float[] {  2f,  3f, 0f }, property_category = "texture"  },
+                new NodeData { node_id = "prop_future", type = "PROPERTY", label = "미래지향 스타일", position = new float[] { -5f,  3f, 0f }, property_category = "style"    },
+                new NodeData { node_id = "prop_utopia", type = "PROPERTY", label = "유토피아",       position = new float[] { -5f,  0f, 0f }, property_category = "concept"  },
+                new NodeData { node_id = "prop_plant",  type = "PROPERTY", label = "식물",           position = new float[] { -5f, -3f, 0f }, property_category = "motif"    },
+                new NodeData { node_id = "part_all",    type = "PART",     label = "ALL",            position = new float[] { -1f, -3f, 0f }, is_global = true               },
+                new NodeData { node_id = "prop_metal",  type = "PROPERTY", label = "금속",           position = new float[] {  5f,  0f, 0f }, property_category = "material" },
+                new NodeData { node_id = "prop_matte",  type = "PROPERTY", label = "무광",           position = new float[] {  5f,  3f, 0f }, property_category = "texture"  },
             },
             edges = new List<EdgeData>
             {
@@ -59,7 +57,6 @@ public class MockGraphLoader : MonoBehaviour
                 new EdgeData { edge_id = "e2", from_node_id = "prop_utopia", to_node_id = "prop_plant"  }, // PROPERTY → PROPERTY (속성 세부화)
                 new EdgeData { edge_id = "e3", from_node_id = "prop_future", to_node_id = "part_all"    }, // PROPERTY → PART (최상위 속성을 전체 이미지에 적용)
                 new EdgeData { edge_id = "e4", from_node_id = "prop_metal",  to_node_id = "prop_matte"  }, // PROPERTY → PROPERTY (속성 세부화)
-                new EdgeData { edge_id = "e5", from_node_id = "prop_metal",  to_node_id = "part_leg"    }, // PROPERTY → PART (최상위 속성을 다리에 적용)
             }
         };
 

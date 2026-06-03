@@ -7,6 +7,9 @@
  * - Bind() 시 data, fromView, toView를 저장하고 즉시 선을 갱신한다.
  * - LateUpdate에서 매 프레임 위치를 갱신하여 노드 이동 시 선이 따라오도록 한다.
  * - LineRenderer가 Inspector에 연결되지 않으면 GetComponent로 자동 탐색한다.
+ * - 끝점 결정: fromView.OutputPort / toView.InputPort 가 있으면 우선 사용하고,
+ *   없으면 각각 fromView.transform.position / toView.transform.position 으로 fallback.
+ *   디자이너 NodeBox Variant에는 Port_Out/Port_In 앵커가 있고 기존 Mock NodePrefab에는 없으므로 양쪽 모두 호환된다.
  *
  * 프리팹 구조 (01_Prefabs/Graph/EdgePrefab):
  *   EdgeRoot
@@ -56,8 +59,20 @@ public class EdgeView : MonoBehaviour
         if (!_isBound || _fromView == null || _toView == null || _lineRenderer == null)
             return;
 
-        _lineRenderer.SetPosition(0, _fromView.transform.position);
-        _lineRenderer.SetPosition(1, _toView.transform.position);
+        _lineRenderer.SetPosition(0, GetFromPosition());
+        _lineRenderer.SetPosition(1, GetToPosition());
+    }
+
+    private Vector3 GetFromPosition()
+    {
+        var port = _fromView.OutputPort;
+        return port != null ? port.position : _fromView.transform.position;
+    }
+
+    private Vector3 GetToPosition()
+    {
+        var port = _toView.InputPort;
+        return port != null ? port.position : _toView.transform.position;
     }
 
     private void LateUpdate()

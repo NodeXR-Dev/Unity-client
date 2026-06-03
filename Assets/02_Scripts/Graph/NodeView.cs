@@ -4,8 +4,11 @@
  * 생성일: 2026-05-20
  * 목적: NodeData를 3D 월드 공간 노드 오브젝트에 바인딩한다.
  * 핵심 내용:
- * - TextMeshPro 3D로 label을 표시한다.
- * - NodeType에 따라 기본 색상을 구분한다.
+ * - 라벨은 TMP_Text 베이스로 받아 TextMeshPro(3D)와 TextMeshProUGUI(UGUI) 모두 호환한다.
+ * - NodeType별 머티리얼 슬롯이 연결되어 있으면 sharedMaterial 교체를 우선 사용하고,
+ *   비어 있으면 기존 NodeType 기본 색상 fallback으로 동작한다.
+ * - PART + is_global == true 는 ALL로 보고 _allMaterial을 사용한다.
+ * - InputPort / OutputPort 자식 Transform은 EdgeView가 끝점 결정 시 우선 사용한다.
  * - 선택/호버 상태 메서드는 stub으로 둔다. 추후 개발자 2의 XR 입력과 연결 예정.
  *
  * 프리팹 구조 (01_Prefabs/Graph/NodePrefab):
@@ -23,8 +26,26 @@ using UnityEngine;
 
 public class NodeView : MonoBehaviour
 {
-    [SerializeField] private TextMeshPro _labelText;
+    [SerializeField] private TMP_Text _labelText;
     [SerializeField] private MeshRenderer _meshRenderer;
+
+    [Header("포트 앵커 (선택)")]
+    [Tooltip("엣지 끝점으로 사용할 입력 포트. 미연결 시 EdgeView가 transform.position을 fallback으로 사용한다.")]
+    [SerializeField] private Transform _inputPort;
+    [Tooltip("엣지 시작점으로 사용할 출력 포트. 미연결 시 EdgeView가 transform.position을 fallback으로 사용한다.")]
+    [SerializeField] private Transform _outputPort;
+
+    [Header("NodeType 머티리얼 (선택, 우선 적용)")]
+    [Tooltip("PART + is_global == true (ALL) 용. 보통 BOX_00.")]
+    [SerializeField] private Material _allMaterial;
+    [Tooltip("일반 PART 용. 보통 BOX_01.")]
+    [SerializeField] private Material _partMaterial;
+    [Tooltip("PROPERTY 용. 보통 BOX_02.")]
+    [SerializeField] private Material _propertyMaterial;
+    [Tooltip("REFERENCE 용. 보통 BOX_03.")]
+    [SerializeField] private Material _referenceMaterial;
+    [Tooltip("UNKNOWN 또는 예비. 비워두면 색상 fallback이 사용된다.")]
+    [SerializeField] private Material _unknownMaterial;
 
     [Header("NodeType 기본 색상")]
     [SerializeField] private Color _partColor      = Color.blue;
@@ -35,6 +56,10 @@ public class NodeView : MonoBehaviour
     private NodeData _data;
 
     public string NodeId => _data?.node_id;
+
+    // EdgeView가 끝점 결정 시 사용. null이면 호출 측에서 transform.position fallback.
+    public Transform InputPort  => _inputPort;
+    public Transform OutputPort => _outputPort;
 
     public void Bind(NodeData data)
     {
@@ -52,10 +77,18 @@ public class NodeView : MonoBehaviour
         if (_labelText != null)
             _labelText.text = _data.DisplayText;
 
-        if (_meshRenderer != null)
+        if (_meshRenderer == null) return;
+
+        var mat = ResolveMaterial(_data);
+        if (mat != null)
         {
-            // _meshRenderer.material.color를 직접 변경하면 런타임에 material instance가 생성된다.
-            // MVP에서는 허용하며, 추후 draw call 최적화가 필요할 경우 MaterialPropertyBlock으로 교체를 고려한다.
+            // sharedMaterial 교체: 머티리얼 인스턴스를 새로 만들지 않으므로 batching 친화적.
+            _meshRenderer.sharedMaterial = mat;
+        }
+        else
+        {
+            // 머티리얼 슬롯이 비어 있으면 색상 fallback (기존 Mock NodePrefab 동작 유지).
+            // _meshRenderer.material 접근은 런타임에 material instance를 생성한다. MVP 허용 범위.
             _meshRenderer.material.color = GetColorByType(_data.NodeType);
         }
     }
@@ -68,6 +101,19 @@ public class NodeView : MonoBehaviour
             case NodeType.PROPERTY:  return _propertyColor;
             case NodeType.REFERENCE: return _referenceColor;
             default:                 return _unknownColor;
+        }
+    }
+
+    private Material ResolveMaterial(NodeData data)
+    {
+        switch (data.NodeType)
+        {
+            case NodeType.PART:
+                // PART + is_global == true 는 ALL로 본다.
+                return (data.is_global && _allMaterial != null) ? _allMaterial : _partMaterial;
+            case NodeType.PROPERTY:  return _propertyMaterial;
+            case NodeType.REFERENCE: return _referenceMaterial;
+            default:                 return _unknownMaterial;
         }
     }
 

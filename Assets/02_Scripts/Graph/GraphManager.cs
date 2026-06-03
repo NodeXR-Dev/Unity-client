@@ -202,6 +202,11 @@ public class GraphManager : MonoBehaviour
 
     public NodeData GetNode(string nodeId) => _nodeRegistry.Get(nodeId);
 
+    // 외부 UI(MainSketchView 등)가 GraphData를 읽기 위한 read-only 조회 메서드.
+    // Registry 자체는 노출하지 않고, Registry.GetAll() / GetEdgesConnectedTo() 의 복사본 List를 그대로 위임 반환한다.
+    public List<NodeData> GetAllNodes() => _nodeRegistry.GetAll();
+    public List<EdgeData> GetEdgesConnectedToNode(string nodeId) => _edgeRegistry.GetEdgesConnectedTo(nodeId);
+
     // ─────────────────────────────────────────────
     // 엣지 CRUD
     // ─────────────────────────────────────────────
@@ -353,6 +358,22 @@ public class GraphManager : MonoBehaviour
     {
         // TODO: 서버 응답으로 NodeData를 받은 뒤 AddNode 호출 예정
         // parentNodeId는 새 노드와 연결할 부모 노드 식별자
+    }
+
+    // 메인 그래프 UI(MainSketchView/AddPartPort)에서 PART 또는 ALL 노드를 즉시 생성할 때 사용한다.
+    // 서버 연동 전까지는 클라이언트에서 GUID를 생성해 AddNode로 등록하고 생성된 node_id를 반환한다.
+    // 실패 시 null. 서버 연동 시 POST /api/nodes 응답 ID로 교체 예정.
+    public string RequestCreatePartNode(string label, bool isGlobal = false)
+    {
+        var node = new NodeData
+        {
+            node_id = Guid.NewGuid().ToString(),
+            type = "PART",
+            label = label,
+            position = new float[] { 0f, 0f, 0f },
+            is_global = isGlobal
+        };
+        return AddNode(node) ? node.node_id : null;
     }
 
     public bool RequestConnectNodes(string fromNodeId, string toNodeId)
