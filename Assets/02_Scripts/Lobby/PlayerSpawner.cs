@@ -5,6 +5,7 @@ using TMPro;
 public class PlayerSpawner : MonoBehaviour
 {
     public GameObject playerPrefab;
+    [SerializeField] private bool useSpawnerTransform = true;
     public Vector3 spawnPoint = new Vector3(0, 1, 0);
     public TMP_InputField nameInputField;
 
@@ -24,10 +25,19 @@ public class PlayerSpawner : MonoBehaviour
             return;
         }
 
+        if (runner.GetPlayerObject(runner.LocalPlayer) != null)
+        {
+            Debug.Log("[PlayerSpawner] Local player object already exists. Skip spawn.");
+            return;
+        }
+
+        Vector3 spawnPosition = useSpawnerTransform ? transform.position : spawnPoint;
+        Quaternion spawnRotation = useSpawnerTransform ? transform.rotation : Quaternion.identity;
+
         runner.Spawn(
             playerPrefab,
-            spawnPoint,
-            Quaternion.identity,
+            spawnPosition,
+            spawnRotation,
             runner.LocalPlayer,
             (runner, obj) =>
             {

@@ -5,15 +5,15 @@ EditorBuildSettings:
   m_ObjectHideFlags: 0
   serializedVersion: 2
   m_Scenes:
-  - enabled: 0
-    path: Assets/Sohyuun/Scenes/MeetingRoom.unity
-    guid: 99c9720ab356a0642a771bea13969a05
   - enabled: 1
     path: Assets/00_Scenes/10_Lobby/backup/Lobby.unity
     guid: 3d00cc925f62bba43a98b9d7bccfd203
   - enabled: 1
     path: Assets/00_Scenes/10_Lobby/Lobby_Core.unity
     guid: 01ecfafbf5b3981418026cb3e76c2a79
+  - enabled: 1
+    path: Assets/00_Scenes/10_Lobby/MeetingRoom.unity
+    guid: 3fc24ee76501f9448828a6182885f1dd
   - enabled: 1
     path: Assets/00_Scenes/10_Lobby/UiTest.unity
     guid: 73664930b787e49fabff8eba8034f6b2
