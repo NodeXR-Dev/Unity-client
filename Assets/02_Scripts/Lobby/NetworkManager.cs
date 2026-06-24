@@ -9,6 +9,7 @@ using TMPro;
 using UnityEngine.UI;
 using UnityEngine.Networking;
 using System.Text;
+using System.Threading.Tasks;
 
 #if UNITY_EDITOR
 using UnityEditor;
@@ -46,12 +47,30 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
     [Header("Network Status UI")]
     public TMP_Text networkStatusText;
 
+    [Header("Reconnect / Session Recovery")]
+    [SerializeField] private bool enableSessionRecovery = true;
+    [SerializeField] private int maxReconnectAttempts = 3;
+    [SerializeField] private float reconnectDelaySeconds = 2f;
+    [SerializeField] private float reconnectBackoffSeconds = 1f;
+
     [Header("Date Navigation UI")]
     public TMP_Text meetingDateText; // 2026.01.30 (오늘) 이 적힐 텍스트
     private DateTime currentViewDate = DateTime.Now; // 현재 보고 있는 날짜 저장
 
     private SessionInfo selectedSession;
     private List<SessionInfo> cachedSessionList = new();
+
+    private const string LastSessionNamePrefsKey = "Lobby.LastSessionName";
+    private const string LastSessionNicknamePrefsKey = "Lobby.LastSessionNickname";
+    private const string LastSessionUserIdPrefsKey = "Lobby.LastSessionUserId";
+
+    private string lastSessionName;
+    private string lastSessionNickname;
+    private string lastSessionUserId;
+    private bool intentionalShutdown;
+    private bool suppressShutdownSceneLoad;
+    private bool isRecoveringSession;
+    private Coroutine reconnectRoutine;
 
 
 
@@ -64,6 +83,11 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
             runnerInsatance = gameObject.AddComponent<NetworkRunner>();
         }
 
+        runnerInsatance.RemoveCallbacks(this);
+        runnerInsatance.AddCallbacks(this);
+
+        LoadRecoverySession();
+
 #if UNITY_EDITOR
         if (gameplaySceneAsset != null)
             gameplaySceneName = gameplaySceneAsset.name;
@@ -71,6 +95,14 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
         if (lobbySceneAsset != null)
             lobbySceneName = lobbySceneAsset.name;
 #endif
+    }
+
+    private void OnDestroy()
+    {
+        if (runnerInsatance != null)
+        {
+            runnerInsatance.RemoveCallbacks(this);
+        }
     }
 
     private void Start()
@@ -206,7 +238,8 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
                 // StartGame도 이미 실행 중이면 에러가 날 수 있으니 체크
                 if (runnerInsatance.IsCloudReady)
                 {
-                    runnerInsatance.StartGame(new StartGameArgs()
+                    intentionalShutdown = false;
+                    var startTask = runnerInsatance.StartGame(new StartGameArgs()
                     {
                         Scene = SceneRef.FromIndex(sceneIndex),
                         SessionName = assignedRoomId,
@@ -215,6 +248,13 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
                         IsVisible = true,
                         SessionProperties = props
                     });
+
+                    yield return WaitForTask(startTask);
+
+                    if (!startTask.IsFaulted && !startTask.IsCanceled)
+                    {
+                        RememberSessionForRecovery(assignedRoomId, nick, null);
+                    }
                 }
             }
         }
@@ -275,6 +315,8 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
 
     private IEnumerator JoinRoomRoutine(string sessionName)
     {
+        StopSessionRecovery();
+
         var runner = NetworkManager.runnerInsatance;
 
         // 1. 서버 API 호출 (방 입장 등록)
@@ -317,7 +359,12 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
 
                 // 2. 실제 Photon Fusion 세션 접속 시작
                 if (runner.IsRunning)
-                    yield return runner.Shutdown();
+                {
+                    suppressShutdownSceneLoad = true;
+                    var shutdownTask = runner.Shutdown();
+                    yield return WaitForTask(shutdownTask);
+                    suppressShutdownSceneLoad = false;
+                }
 
                 int sceneIndex = GetSceneIndex(gameplaySceneName);
                 if (sceneIndex < 0)
@@ -334,7 +381,14 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
                     CustomLobbyName = lobbyName,
                 };
 
-                yield return runner.StartGame(args);
+                intentionalShutdown = false;
+                var startTask = runner.StartGame(args);
+                yield return WaitForTask(startTask);
+
+                if (!startTask.IsFaulted && !startTask.IsCanceled)
+                {
+                    RememberSessionForRecovery(sessionName, myNickname, response.result.user_id);
+                }
             }
             else
             {
@@ -508,12 +562,196 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
         return -1;
     }
 
+    private void LoadRecoverySession()
+    {
+        lastSessionName = PlayerPrefs.GetString(LastSessionNamePrefsKey, string.Empty);
+        lastSessionNickname = PlayerPrefs.GetString(LastSessionNicknamePrefsKey, string.Empty);
+        lastSessionUserId = PlayerPrefs.GetString(LastSessionUserIdPrefsKey, string.Empty);
+    }
+
+    private void RememberSessionForRecovery(string sessionName, string nickname, string userId)
+    {
+        lastSessionName = sessionName;
+        lastSessionNickname = nickname;
+        lastSessionUserId = userId;
+
+        PlayerPrefs.SetString(LastSessionNamePrefsKey, lastSessionName);
+        PlayerPrefs.SetString(LastSessionNicknamePrefsKey, lastSessionNickname ?? string.Empty);
+        PlayerPrefs.SetString(LastSessionUserIdPrefsKey, lastSessionUserId ?? string.Empty);
+        PlayerPrefs.Save();
+    }
+
+    private void ClearRecoverySession()
+    {
+        lastSessionName = string.Empty;
+        lastSessionNickname = string.Empty;
+        lastSessionUserId = string.Empty;
+
+        PlayerPrefs.DeleteKey(LastSessionNamePrefsKey);
+        PlayerPrefs.DeleteKey(LastSessionNicknamePrefsKey);
+        PlayerPrefs.DeleteKey(LastSessionUserIdPrefsKey);
+        PlayerPrefs.Save();
+    }
+
+    private IEnumerator WaitForTask(Task task)
+    {
+        while (task != null && !task.IsCompleted)
+        {
+            yield return null;
+        }
+
+        if (task != null && task.IsFaulted)
+        {
+            Debug.LogException(task.Exception);
+        }
+    }
+
+    private void UpdateNetworkStatus(string message, Color color)
+    {
+        if (networkStatusText == null) return;
+
+        networkStatusText.text = message;
+        networkStatusText.color = color;
+    }
+
+    private void StopSessionRecovery()
+    {
+        if (reconnectRoutine != null)
+        {
+            StopCoroutine(reconnectRoutine);
+            reconnectRoutine = null;
+        }
+
+        isRecoveringSession = false;
+    }
+
+    private void TryStartSessionRecovery(string reason)
+    {
+        if (!enableSessionRecovery || intentionalShutdown)
+            return;
+
+        if (string.IsNullOrEmpty(lastSessionName))
+        {
+            Debug.LogWarning($"[SessionRecovery] No cached session to recover. Reason: {reason}");
+            UpdateNetworkStatus("Disconnected. Returning to lobby.", Color.red);
+            SceneManager.LoadScene(lobbySceneName);
+            return;
+        }
+
+        if (reconnectRoutine != null)
+            return;
+
+        reconnectRoutine = StartCoroutine(SessionRecoveryRoutine(reason));
+    }
+
+    private IEnumerator SessionRecoveryRoutine(string reason)
+    {
+        isRecoveringSession = true;
+        Debug.LogWarning($"[SessionRecovery] Trying to recover session '{lastSessionName}'. Reason: {reason}");
+
+        yield return null;
+
+        int sceneIndex = GetSceneIndex(gameplaySceneName);
+        if (sceneIndex < 0)
+        {
+            Debug.LogError($"[SessionRecovery] '{gameplaySceneName}' 씬을 찾을 수 없습니다!");
+            FinishSessionRecovery(false);
+            yield break;
+        }
+
+        for (int attempt = 1; attempt <= maxReconnectAttempts; attempt++)
+        {
+            UpdateNetworkStatus($"Reconnecting... ({attempt}/{maxReconnectAttempts})", Color.yellow);
+
+            var runner = runnerInsatance;
+            if (runner == null)
+            {
+                Debug.LogError("[SessionRecovery] NetworkRunner is missing.");
+                break;
+            }
+
+            if (runner.IsRunning)
+            {
+                suppressShutdownSceneLoad = true;
+                var shutdownTask = runner.Shutdown();
+                yield return WaitForTask(shutdownTask);
+                suppressShutdownSceneLoad = false;
+            }
+
+            var args = new StartGameArgs()
+            {
+                SessionName = lastSessionName,
+                GameMode = GameMode.Shared,
+                Scene = SceneRef.FromIndex(sceneIndex),
+                CustomLobbyName = lobbyName,
+            };
+
+            intentionalShutdown = false;
+            var startTask = runner.StartGame(args);
+            yield return WaitForTask(startTask);
+
+            float timeout = 0f;
+            while (timeout < 5f)
+            {
+                if (runner.IsRunning && runner.SessionInfo.Name == lastSessionName)
+                {
+                    UpdateNetworkStatus("Reconnected to session.", Color.green);
+                    FinishSessionRecovery(true);
+                    yield break;
+                }
+
+                timeout += Time.deltaTime;
+                yield return null;
+            }
+
+            float delay = reconnectDelaySeconds + (reconnectBackoffSeconds * (attempt - 1));
+            yield return new WaitForSeconds(delay);
+        }
+
+        FinishSessionRecovery(false);
+    }
+
+    private void FinishSessionRecovery(bool success)
+    {
+        reconnectRoutine = null;
+        isRecoveringSession = false;
+        suppressShutdownSceneLoad = false;
+
+        if (success)
+        {
+            Debug.Log($"[SessionRecovery] Session recovered: {lastSessionName}");
+            return;
+        }
+
+        Debug.LogWarning($"[SessionRecovery] Failed to recover session: {lastSessionName}");
+        UpdateNetworkStatus("Reconnect failed. Returning to lobby.", Color.red);
+        SceneManager.LoadScene(lobbySceneName);
+    }
+
     public static void ReturnToLobby()
     {
-        NetworkManager.runnerInsatance.Despawn(
-            runnerInsatance.GetPlayerObject(runnerInsatance.LocalPlayer)
-        );
-        NetworkManager.runnerInsatance.Shutdown(true, ShutdownReason.Ok);
+        var runner = NetworkManager.runnerInsatance;
+        if (runner == null)
+        {
+            SceneManager.LoadScene("LobbyScene");
+            return;
+        }
+
+        var manager = runner.GetComponent<NetworkManager>();
+        if (manager != null)
+        {
+            manager.intentionalShutdown = true;
+            manager.StopSessionRecovery();
+            manager.ClearRecoverySession();
+        }
+
+        var playerObject = runner.GetPlayerObject(runner.LocalPlayer);
+        if (playerObject != null)
+        {
+            runner.Despawn(playerObject);
+        }
+
+        runner.Shutdown(true, ShutdownReason.Ok);
     }
 
     // -------------------------------
@@ -527,6 +765,11 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
             networkStatusText.color = Color.green;
         }
 
+        if (isRecoveringSession)
+        {
+            Debug.Log($"[SessionRecovery] Connected while recovering session '{lastSessionName}'.");
+        }
+
         RefreshRoomListFromServer();
     }
 
@@ -537,12 +780,25 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
             networkStatusText.text = "Failed to connect.";
             networkStatusText.color = Color.cyan;
         }
+
+        Debug.LogWarning($"[NetworkManager] Connect failed: {reason}");
+        TryStartSessionRecovery($"ConnectFailed: {reason}");
     }
 
     public void OnShutdown(NetworkRunner runner, ShutdownReason shutdownReason)
     {
         Debug.Log($"[NetworkManager] Runner Shutdown: {shutdownReason}");
-        SceneManager.LoadScene(lobbySceneName);
+
+        if (suppressShutdownSceneLoad || isRecoveringSession || reconnectRoutine != null)
+            return;
+
+        if (intentionalShutdown || shutdownReason == ShutdownReason.Ok)
+        {
+            SceneManager.LoadScene(lobbySceneName);
+            return;
+        }
+
+        TryStartSessionRecovery($"Shutdown: {shutdownReason}");
     }
 
     public void OnSceneLoadDone(NetworkRunner runner)
@@ -593,8 +849,16 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
     // --- 나머지 콜백 (빈 구현 유지) ---
     public void OnConnectRequest(NetworkRunner runner, NetworkRunnerCallbackArgs.ConnectRequest request, byte[] token) { }
     public void OnCustomAuthenticationResponse(NetworkRunner runner, Dictionary<string, object> data) { }
-    void INetworkRunnerCallbacks.OnDisconnectedFromServer(NetworkRunner runner, NetDisconnectReason reason) { }
-    public void OnHostMigration(NetworkRunner runner, HostMigrationToken hostMigrationToken) { }
+    void INetworkRunnerCallbacks.OnDisconnectedFromServer(NetworkRunner runner, NetDisconnectReason reason)
+    {
+        Debug.LogWarning($"[NetworkManager] Disconnected from server: {reason}");
+        TryStartSessionRecovery($"Disconnected: {reason}");
+    }
+    public void OnHostMigration(NetworkRunner runner, HostMigrationToken hostMigrationToken)
+    {
+        Debug.LogWarning("[NetworkManager] Host migration requested. Trying session recovery.");
+        TryStartSessionRecovery("HostMigration");
+    }
     public void OnInputMissing(NetworkRunner runner, PlayerRef player, NetworkInput input) { }
     public void OnObjectEnterAOI(NetworkRunner runner, NetworkObject obj, PlayerRef player) { }
     public void OnObjectExitAOI(NetworkRunner runner, NetworkObject obj, PlayerRef player) { }
