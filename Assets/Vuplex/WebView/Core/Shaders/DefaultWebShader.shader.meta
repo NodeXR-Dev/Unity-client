@@ -1,0 +1,16 @@
+fileFormatVersion: 2
+guid: 4e653f72759f94e82b22355692823efe
+ShaderImporter:
+  externalObjects: {}
+  defaultTextures: []
+  nonModifiableTextures: []
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 137030
+  packageName: "3D WebView for Android\u2122 (Web Browser)"
+  packageVersion: 4.15
+  assetPath: Assets/Vuplex/WebView/Core/Shaders/DefaultWebShader.shader
+  uploadId: 853888

@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: 3afe08e9b5fe5e542982ddfde14e4e73
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 267128
+  packageName: Meeting_Room
+  packageVersion: 1.0
+  assetPath: Assets/Meeting_Room/Prefabs/Door.prefab
+  uploadId: 634197

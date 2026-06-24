@@ -1,0 +1,9 @@
+# For more info, please see this page: https://support.vuplex.com/articles/android-minification
+-keep public interface com.vuplex.webview.BiConsumer { public *; }
+-keep public interface com.vuplex.webview.Consumer { public *; }
+-keep public class android.print.VuplexPdfPrinter { public *; }
+-keep public class com.vuplex.webview.ByteArrayResult { public *; }
+-keep public class com.vuplex.webview.FileSelectionRequest { public *; }
+-keep public class com.vuplex.webview.HelperActivity { public *; }
+-keep public class com.vuplex.webview.WebView { public *; }
+-keep public class com.vuplex.webview.WebView3D { public *; }

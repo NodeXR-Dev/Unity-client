@@ -1,0 +1,17 @@
+fileFormatVersion: 2
+guid: d704fe1266adf446ebcfa350586e1bc7
+timeCreated: 1583351880
+licenseType: Store
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 100100000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 137030
+  packageName: "3D WebView for Android\u2122 (Web Browser)"
+  packageVersion: 4.15
+  assetPath: Assets/Vuplex/WebView/Core/Prefabs/Resources/WebViewPrefab.prefab
+  uploadId: 853888

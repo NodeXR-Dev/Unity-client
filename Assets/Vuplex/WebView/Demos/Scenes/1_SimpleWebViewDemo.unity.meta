@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: 10cf299739e784ee794fdc27cb3415bf
+DefaultImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 137030
+  packageName: "3D WebView for Android\u2122 (Web Browser)"
+  packageVersion: 4.15
+  assetPath: Assets/Vuplex/WebView/Demos/Scenes/1_SimpleWebViewDemo.unity
+  uploadId: 853888

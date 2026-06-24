@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: 796d4916f35dd8042aacbd18b39fc299
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 4300000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 267128
+  packageName: Meeting_Room
+  packageVersion: 1.0
+  assetPath: Assets/Meeting_Room/Meshes/Ceiling_Conditioner.mesh
+  uploadId: 634197

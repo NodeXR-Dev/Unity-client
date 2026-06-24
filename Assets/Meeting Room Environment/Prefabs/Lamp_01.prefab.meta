@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: 65c0bd6023763dd45b5c2a339c946a4f
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 267128
+  packageName: Meeting_Room
+  packageVersion: 1.0
+  assetPath: Assets/Meeting_Room/Prefabs/Lamp_01.prefab
+  uploadId: 634197

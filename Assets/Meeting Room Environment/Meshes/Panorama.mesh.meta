@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: a72428a42fa643c42b00bb74fe1bd958
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 4300000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 267128
+  packageName: Meeting_Room
+  packageVersion: 1.0
+  assetPath: Assets/Meeting_Room/Meshes/Panorama.mesh
+  uploadId: 634197

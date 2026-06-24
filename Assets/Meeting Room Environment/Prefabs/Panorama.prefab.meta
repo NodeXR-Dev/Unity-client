@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: 14157c60d1f865b4caf22fc827703921
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 267128
+  packageName: Meeting_Room
+  packageVersion: 1.0
+  assetPath: Assets/Meeting_Room/Prefabs/Panorama.prefab
+  uploadId: 634197

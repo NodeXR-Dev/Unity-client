@@ -1,0 +1,17 @@
+fileFormatVersion: 2
+guid: 8f67f2d646b0a4cc58c56790b3f53ef4
+timeCreated: 1618101293
+licenseType: Store
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 100100000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 137030
+  packageName: "3D WebView for Android\u2122 (Web Browser)"
+  packageVersion: 4.15
+  assetPath: Assets/Vuplex/WebView/Core/Prefabs/Resources/CanvasKeyboard.prefab
+  uploadId: 853888

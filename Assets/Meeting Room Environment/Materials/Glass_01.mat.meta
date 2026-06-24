@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: e6dd26f14c7f39e4794e1e8c2b6acd89
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 2100000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 267128
+  packageName: Meeting_Room
+  packageVersion: 1.0
+  assetPath: Assets/Meeting_Room/Materials/Glass_01.mat
+  uploadId: 634197

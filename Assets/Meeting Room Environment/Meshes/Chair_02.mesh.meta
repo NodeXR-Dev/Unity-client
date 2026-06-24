@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: da8461e669f61ac4e8a88915aa5a16d4
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 4300000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 267128
+  packageName: Meeting_Room
+  packageVersion: 1.0
+  assetPath: Assets/Meeting_Room/Meshes/Chair_02.mesh
+  uploadId: 634197

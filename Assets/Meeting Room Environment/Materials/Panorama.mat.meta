@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: 81075f7f044ff9d43b1ddcc9bee7f238
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 2100000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 267128
+  packageName: Meeting_Room
+  packageVersion: 1.0
+  assetPath: Assets/Meeting_Room/Materials/Panorama.mat
+  uploadId: 634197
