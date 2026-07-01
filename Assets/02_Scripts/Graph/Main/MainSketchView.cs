@@ -22,6 +22,8 @@ public class MainSketchView : MonoBehaviour
 {
     [Header("연결")]
     [SerializeField] private GraphManager _graphManager;
+    [Tooltip("PART 노드 CRUD 서버 REST 경계. PartPort/AddPartPort 에 전달된다.")]
+    [SerializeField] private PartNodeApiClient _apiClient;
     [SerializeField] private AllPort _allPort;
     [SerializeField] private Transform _partPortContainer;
 
@@ -67,7 +69,7 @@ public class MainSketchView : MonoBehaviour
             var edges = _graphManager.GetEdgesConnectedToNode(allNode.node_id);
             allConnected = edges != null && edges.Count > 0;
         }
-        if (_allPort != null) _allPort.Bind(allNode, allConnected);
+        if (_allPort != null) _allPort.Bind(allNode, _graphManager, Refresh, allConnected);
 
         // PartPortContainer 부분 갱신: 기존 자식 재사용 + 사라진 것만 Destroy.
         // 1) 기존 자식 분류
@@ -108,7 +110,7 @@ public class MainSketchView : MonoBehaviour
             }
             var partEdges = _graphManager.GetEdgesConnectedToNode(part.node_id);
             bool partConnected = partEdges != null && partEdges.Count > 0;
-            view.Bind(part, _graphManager, Refresh, partConnected);
+            view.Bind(part, _graphManager, _apiClient, Refresh, partConnected);
             view.transform.SetSiblingIndex(sibling++);
         }
 
@@ -119,7 +121,7 @@ public class MainSketchView : MonoBehaviour
         // 4) AddPartPort는 1개를 계속 유지. 없으면 생성, 있으면 마지막 sibling으로.
         if (existingAdder == null)
             existingAdder = Instantiate(_addPartPortPrefab, _partPortContainer);
-        existingAdder.Bind(_graphManager, Refresh);
+        existingAdder.Bind(_graphManager, _apiClient, Refresh);
         existingAdder.transform.SetSiblingIndex(sibling);
 
         // 5) 잘못된 자식 정리

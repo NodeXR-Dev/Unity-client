@@ -191,6 +191,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   _graphManager: {fileID: 0}
+  _apiClient: {fileID: 0}
   _allPort: {fileID: 707513792237616461}
   _partPortContainer: {fileID: 6922548688426133848}
   _partPortPrefab: {fileID: 6039015069719039735, guid: c520215bf28b64cbbaf921c16fd17af7, type: 3}
@@ -499,7 +500,13 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   _dotImage: {fileID: 7095917167817172790}
   _emptySprite: {fileID: 21300000, guid: 7547a01dc3773440099afd717c7d50a0, type: 3}
-  _filledSprite: {fileID: 21300000, guid: a75f3da6d34614004897826768816b0f, type: 3}
+  _hoverSprite: {fileID: 0}
+  _connectedSprite: {fileID: 0}
+  _pressedSprite: {fileID: 0}
+  _connectedListContainer: {fileID: 0}
+  _connectedNodeButtonPrefab: {fileID: 0}
+  _disabledSprite: {fileID: 0}
+  _loadingSprite: {fileID: 0}
   _labelText: {fileID: 4181867667776727922}
   _defaultLabel: ALL
 --- !u!1 &6025254791145272651

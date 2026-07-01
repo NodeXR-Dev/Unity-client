@@ -269,9 +269,9 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   _dotImage: {fileID: 949957621428432244}
-  _emptySprite: {fileID: 21300000, guid: 7547a01dc3773440099afd717c7d50a0, type: 3}
-  _hoverSprite: {fileID: 21300000, guid: b2126a5e6bc824e00a6a46bd0605507e, type: 3}
-  _pressedSprite: {fileID: 21300000, guid: a75f3da6d34614004897826768816b0f, type: 3}
+  _emptySprite: {fileID: 21300000, guid: bd7c5e72f5380420e80f3db05a23dc5c, type: 3}
+  _hoverSprite: {fileID: 21300000, guid: 8192d2631faf94295b0ce6d3b1fc419b, type: 3}
+  _inputtingSprite: {fileID: 21300000, guid: 4215f02f034ec40e3b7ce382dff10adb, type: 3}
   _disabledSprite: {fileID: 0}
   _loadingSprite: {fileID: 0}
   _addButton: {fileID: 4566510368328053202}
@@ -365,7 +365,7 @@ RectTransform:
   m_AnchorMin: {x: 0.5, y: 0.5}
   m_AnchorMax: {x: 0.5, y: 0.5}
   m_AnchoredPosition: {x: 0, y: 12}
-  m_SizeDelta: {x: 75, y: 75}
+  m_SizeDelta: {x: 30, y: 30}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!222 &8094879854974726748
 CanvasRenderer:
@@ -395,7 +395,7 @@ MonoBehaviour:
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
-  m_Sprite: {fileID: 21300000, guid: 7547a01dc3773440099afd717c7d50a0, type: 3}
+  m_Sprite: {fileID: 21300000, guid: e3d9d804c11d146eeb52e417919bc1cb, type: 3}
   m_Type: 0
   m_PreserveAspect: 0
   m_FillCenter: 1
@@ -515,7 +515,7 @@ MonoBehaviour:
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
-  m_text: Enter text...
+  m_text: (PartName)
   m_isRightToLeft: 0
   m_fontAsset: {fileID: 11400000, guid: a474e78634c714c179e5c7c74fb95c6d, type: 2}
   m_sharedMaterial: {fileID: -5124638249707594488, guid: a474e78634c714c179e5c7c74fb95c6d, type: 2}
