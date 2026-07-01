@@ -1,23 +1,55 @@
-using UnityEngine;
 using Fusion;
+using UnityEngine;
 
 public class SimpleLipSync : NetworkBehaviour
 {
     public VoiceLevelSource_V2 source;
     public SkinnedMeshRenderer headMesh;
-    public int mouthBlendShapeIndex = 0; 
-    public float maxMouthOpen = 100f;    
+    public int mouthBlendShapeIndex = 0;
+    public float maxMouthOpen = 100f;
 
-    void Update()
+    [Header("Voice Sync")]
+    [Range(0f, 1f)] public float speakingThreshold = 0.08f;
+    public float remoteSmoothSpeed = 12f;
+
+    [Networked] public float NetworkVoiceLevel { get; private set; }
+    [Networked] public NetworkBool IsSpeaking { get; private set; }
+
+    public float CurrentVoiceLevel { get; private set; }
+
+    public override void Spawned()
     {
-        if (source == null || headMesh == null) return;
+        if (source != null)
+            source.enabled = Object.HasInputAuthority;
+    }
 
-        // [수정 포인트]
-        // source.level01이 0(침묵)일 때: 100 - 0 = 100 (앙 다문 상태)
-        // source.level01이 1(최대 소리)일 때: 100 - 100 = 0 (완전히 벌린 상태)
-        float weight = maxMouthOpen - (source.level01 * maxMouthOpen);
+    private void Update()
+    {
+        if (headMesh == null)
+            return;
 
-        // 계산된 가중치를 적용
+        float targetLevel = GetTargetVoiceLevel();
+        CurrentVoiceLevel = Mathf.Lerp(CurrentVoiceLevel, targetLevel, Time.deltaTime * remoteSmoothSpeed);
+
+        float weight = maxMouthOpen - (CurrentVoiceLevel * maxMouthOpen);
         headMesh.SetBlendShapeWeight(mouthBlendShapeIndex, weight);
+    }
+
+    private float GetTargetVoiceLevel()
+    {
+        if (Object.HasInputAuthority)
+        {
+            float localLevel = source != null ? Mathf.Clamp01(source.level01) : 0f;
+
+            if (Object.HasStateAuthority)
+            {
+                NetworkVoiceLevel = localLevel;
+                IsSpeaking = localLevel >= speakingThreshold;
+            }
+
+            return localLevel;
+        }
+
+        return Mathf.Clamp01(NetworkVoiceLevel);
     }
 }
