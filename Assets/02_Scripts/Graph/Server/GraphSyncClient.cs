@@ -7,16 +7,19 @@ using UnityEngine;
 // GraphManager는 서버를 모르고 이벤트만 발행한다. 이 클래스가 유일한 연결 지점이다.
 //
 // 엔드포인트(서버 ws_room_event.py 기준):
-//   ws://{host}/ws/rooms/{room_id}/event?user_id={user_id}
-// 이벤트 봉투: { "event_type": "...", "room_id": "<uuid>", "payload": {...} }
+//   ws://{host}/ws/rooms/event
+//   room_id/user_id 는 URL이 아니라 매 메시지 본문(WSEvent)에서 읽는다.
+// 이벤트 봉투: { "event_type": "...", "room_id": "<uuid>", "user_id": "<uuid>", "payload": {...} }
+//   user_id 는 서버 WSEvent 필수 키 → 모든 송신 메시지에 포함한다(비우면 WS400).
 //
-// [이번 세션 범위]
-//   - 송신: NODE_TEXT_UPDATE / NODE_DELETE / NODE_MOVE (3종)
+// [송신] NODE_CREATE / NODE_TEXT_UPDATE / NODE_DELETE / NODE_MOVE (4종)
 //   - 수신: 로그만. 서버 이벤트를 GraphManager.Request* 로 재적용하지 않는다(echo loop 방지).
-//   - EDGE_CREATE/EDGE_DELETE: 서버 sub_graph_id 제약으로 실패 가능 → 이번 세션 송신 제외(로그만).
+//   - EDGE_CREATE/EDGE_DELETE: 서버 sub_graph_id 제약으로 실패 가능 → 송신 제외(로그만).
 //
-// [서버 미지원 — TODO]
-//   - NODE_CREATE 이벤트 없음. 로컬 노드 생성은 서버 반영 불가.
+// [노드 생성 경로 2종 — 의도적 분리]
+//   - 키보드 직접 생성: WS NODE_CREATE(클라 발급 node_id 로 서버가 같은 UUID 저장 → 정합, LLM 없음).
+//   - 음성 발화(LLM 확장): REST /api/utterances(UtteranceApiClient, 서버가 UUID 발급 후 병합).
+//   - 둘은 서로 다른 입력(키보드 라벨칸 vs 음성)에서 발생하므로 이중 생성되지 않는다.
 public class GraphSyncClient : MonoBehaviour
 {
     [Header("연결 대상 GraphManager")]
@@ -88,9 +91,11 @@ public class GraphSyncClient : MonoBehaviour
             return;
         }
 
-        string url = $"ws://{_host}/ws/rooms/{_roomId}/event";
-        if (!string.IsNullOrEmpty(_userId))
-            url += $"?user_id={_userId}";
+        // 서버는 room_id/user_id 를 URL이 아닌 메시지 본문(WSEvent)에서 읽는다.
+        string url = $"ws://{_host}/ws/rooms/event";
+
+        if (string.IsNullOrEmpty(_userId))
+            Debug.LogWarning("[GraphSyncClient] user_id 가 비어 있습니다. 서버가 user_id 를 필수로 요구하므로 송신이 WS400으로 거부됩니다. (seed 예: 11111111-1111-1111-1111-111111111111)");
 
         _socket = new WebSocket(url);
 
@@ -153,6 +158,7 @@ public class GraphSyncClient : MonoBehaviour
     private void Subscribe()
     {
         if (_graphManager == null || _isSubscribed) return;
+        _graphManager.OnNodeCreated     += HandleNodeCreated;
         _graphManager.OnNodeDeleted     += HandleNodeDeleted;
         _graphManager.OnEdgeCreated     += HandleEdgeCreated;
         _graphManager.OnEdgeDeleted     += HandleEdgeDeleted;
@@ -164,6 +170,7 @@ public class GraphSyncClient : MonoBehaviour
     private void Unsubscribe()
     {
         if (_graphManager == null || !_isSubscribed) return;
+        _graphManager.OnNodeCreated     -= HandleNodeCreated;
         _graphManager.OnNodeDeleted     -= HandleNodeDeleted;
         _graphManager.OnEdgeCreated     -= HandleEdgeCreated;
         _graphManager.OnEdgeDeleted     -= HandleEdgeDeleted;
@@ -176,12 +183,34 @@ public class GraphSyncClient : MonoBehaviour
     // 송신 핸들러 (이번 세션: NODE_TEXT_UPDATE / NODE_DELETE / NODE_MOVE)
     // ─────────────────────────────────────────────
 
+    // 키보드 직접 생성 → NODE_CREATE. 클라 발급 node_id 를 그대로 실어 서버가 같은 UUID 로 저장한다
+    // (WS는 응답이 없으므로 클라 UUID 가 유일한 정합 수단). position 은 NODE_CREATE 에서 배열 [x,y,z].
+    // 루트(부모 없음)는 parent_node_id 를 빈 문자열로 보낸다(서버가 ""→None 으로 처리).
+    private void HandleNodeCreated(string nodeId, string nodeText, string parentNodeId, string nodeType, Vector3 position)
+    {
+        var env = new NodeCreateEnvelope
+        {
+            room_id = _roomId,
+            user_id = _userId,
+            payload = new NodeCreatePayload
+            {
+                node_id        = nodeId,
+                node_text      = nodeText,
+                parent_node_id = parentNodeId ?? "",
+                node_type      = nodeType,
+                position       = new[] { position.x, position.y, position.z },
+            },
+        };
+        Send("NODE_CREATE", JsonUtility.ToJson(env));
+    }
+
     private void HandleNodeTextUpdated(string nodeId, string newText)
     {
         // 서버 NodeUpdatePayload = { node_id, text } (text는 non-blank 요구)
         var env = new NodeTextEnvelope
         {
             room_id = _roomId,
+            user_id = _userId,
             payload = new NodeTextPayload { node_id = nodeId, text = newText },
         };
         Send("NODE_TEXT_UPDATE", JsonUtility.ToJson(env));
@@ -192,6 +221,7 @@ public class GraphSyncClient : MonoBehaviour
         var env = new NodeDeleteEnvelope
         {
             room_id = _roomId,
+            user_id = _userId,
             payload = new NodeIdPayload { node_id = nodeId },
         };
         Send("NODE_DELETE", JsonUtility.ToJson(env));
@@ -199,14 +229,16 @@ public class GraphSyncClient : MonoBehaviour
 
     private void HandleNodeMoved(string nodeId, Vector3 position)
     {
-        // 서버 NodeMovePayload.position 은 배열이 아닌 { x, y, z } dict
+        // API 명세: NODE_MOVE position 은 배열 [x, y, z] (NODE_CREATE 와 동일 표준).
+        // ⚠️ 서버 _handle_node_move 가 배열을 읽도록 함께 바뀌어야 함(현재 dict 로 읽으면 실패).
         var env = new NodeMoveEnvelope
         {
             room_id = _roomId,
+            user_id = _userId,
             payload = new NodeMovePayload
             {
                 node_id  = nodeId,
-                position = new WsVec3 { x = position.x, y = position.y, z = position.z },
+                position = new[] { position.x, position.y, position.z },
             },
         };
         Send("NODE_MOVE", JsonUtility.ToJson(env));
@@ -255,13 +287,14 @@ public class GraphSyncClient : MonoBehaviour
     [Serializable] private class Image2DEvent { public string event_type; public Image2DPayload payload; }
     [Serializable] private class Image2DPayload { public string asset_id; public string mime_type; public string img_url; }
 
-    [Serializable] private class WsVec3 { public float x; public float y; public float z; }
-
     [Serializable] private class NodeTextPayload { public string node_id; public string text; }
     [Serializable] private class NodeIdPayload   { public string node_id; }
-    [Serializable] private class NodeMovePayload { public string node_id; public WsVec3 position; }
+    [Serializable] private class NodeMovePayload { public string node_id; public float[] position; }   // 배열 [x,y,z]
+    // NODE_CREATE 는 position 을 배열 [x,y,z] 로 받는다(NODE_MOVE 의 dict 와 다름). parent_node_id 는 루트면 "".
+    [Serializable] private class NodeCreatePayload { public string node_id; public string node_text; public string parent_node_id; public string node_type; public float[] position; }
 
-    [Serializable] private class NodeTextEnvelope { public string event_type = "NODE_TEXT_UPDATE"; public string room_id; public NodeTextPayload payload; }
-    [Serializable] private class NodeDeleteEnvelope { public string event_type = "NODE_DELETE"; public string room_id; public NodeIdPayload payload; }
-    [Serializable] private class NodeMoveEnvelope { public string event_type = "NODE_MOVE"; public string room_id; public NodeMovePayload payload; }
+    [Serializable] private class NodeTextEnvelope { public string event_type = "NODE_TEXT_UPDATE"; public string room_id; public string user_id; public NodeTextPayload payload; }
+    [Serializable] private class NodeDeleteEnvelope { public string event_type = "NODE_DELETE"; public string room_id; public string user_id; public NodeIdPayload payload; }
+    [Serializable] private class NodeMoveEnvelope { public string event_type = "NODE_MOVE"; public string room_id; public string user_id; public NodeMovePayload payload; }
+    [Serializable] private class NodeCreateEnvelope { public string event_type = "NODE_CREATE"; public string room_id; public string user_id; public NodeCreatePayload payload; }
 }

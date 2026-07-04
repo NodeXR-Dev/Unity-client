@@ -34,6 +34,12 @@ public class NodeActionPanel : MonoBehaviour
         }
         _nodeId  = nodeId;
         _manager = manager;
+
+        // "+"(자식 추가)는 서버-known 노드에서만 허용한다. 빈 placeholder(서버 미등록)에서
+        // 자식을 만들면 그 자식의 발화 parent 가 서버에 없어 실패하므로 버튼 자체를 비활성화한다.
+        // placeholder 가 발화로 채워지면 서버 노드로 대체되고, 그 노드의 패널은 server-known → 활성.
+        if (_addButton != null)
+            _addButton.interactable = manager.IsServerKnown(nodeId);
     }
 
     private void OnEnable()
@@ -59,9 +65,15 @@ public class NodeActionPanel : MonoBehaviour
     }
 
     // + 버튼: PROPERTY 자식 노드 즉시 생성 (생성 후 노드의 LabelInputField에 키보드로 직접 입력).
+    // 서버-known 노드에서만 허용(빈 placeholder 는 버튼 비활성). 방어적으로 한 번 더 확인한다.
     public void InvokeAdd()
     {
         if (!EnsureBound("InvokeAdd")) return;
+        if (!_manager.IsServerKnown(_nodeId))
+        {
+            Debug.LogWarning($"[NodeActionPanel] 자식 추가 보류: 서버 미등록 노드입니다(먼저 발화로 채우세요). {_nodeId}");
+            return;
+        }
         string newId = _manager.RequestCreatePropertyNode(_nodeId);
         if (newId == null)
             Debug.LogWarning($"[NodeActionPanel] 자식 노드 생성 실패: {_nodeId}");

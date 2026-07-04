@@ -133,7 +133,8 @@ public class AddPartPort : MonoBehaviour,
             Debug.LogWarning("[AddPartPort] InvokeAdd 실패: PartNodeApiClient가 연결되지 않았습니다(Bind 확인).");
             return;
         }
-        _apiClient.CreatePart(label, false, ok =>
+        // position 은 이 빈 포트의 월드 위치(새 PART가 놓일 자리)를 서버에 전달한다.
+        _apiClient.CreatePart(label, false, transform.position, ok =>
         {
             if (ok) _onChanged?.Invoke();
         });

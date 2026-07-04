@@ -20,7 +20,12 @@ current_2d_asset_id = 현재 중앙에 표시 중인 2D 이미지 asset ID
 | `PROPERTY` | 디자인 속성 또는 속성의 하위 개념 | 미래지향 스타일, 식물, 베이지 |
 | `REFERENCE` | 웹뷰/검색으로 가져온 참고 이미지 노드 | 금속 다리 참고 이미지 |
 
-`ALL`은 전체 이미지에 적용되는 특수 PART이며, `data.is_global = true`로 표현한다.
+`ALL`은 전체 이미지에 적용되는 특수 PART이며, `is_global = true`로 표현한다.
+
+> **ALL 유도 규칙 (2026-07-04 확정)**: 서버 Node 에는 `is_global` 컬럼이 **없다**. 서버는 PART 를
+> 계층(루트 PART = 전체 대상 → 하위 PART = 영역)으로 저장한다. 클라는 **서버 루트 PART(`parent_node_id == null`)를 ALL 로 유도**하고, 하위 PART(`parent_node_id` 있음)는 일반 PartPort 로 표시한다.
+> 백필은 서버-known PART 에만 적용하며(`GraphManager.BackfillIsGlobal`), 로컬 생성 PART 는 넘겨받은 `is_global` 값을 유지한다.
+> 예) seed: `0001 청소 로봇(parent=NULL)` → ALL, `0002 집게 팔 / 0004 분리수거 통 / 0006 로봇 몸통` → PartPort.
 
 ```csharp
 public enum NodeType { PART, PROPERTY, REFERENCE }
@@ -49,12 +54,20 @@ style, concept, motif, color, material, texture, function, mood, ...
 엣지 타입(EdgeType)은 MVP에서 사용하지 않는다.  
 `from_node_id → to_node_id` 방향과 노드 타입 조합으로 의미를 해석한다.
 
-| from → to | 의미 |
-|-----------|------|
-| `PROPERTY → PROPERTY` | 속성 서브그래프의 세부화 |
-| `PROPERTY → PART` | 연결된 PROPERTY(가장 하위 leaf 권장)를 기점으로 상위 체인을 파트 또는 ALL에 적용 |
-| `REFERENCE → PROPERTY` | 레퍼런스가 특정 속성을 시각적으로 설명 |
-| `REFERENCE → PART` | 레퍼런스를 파트 또는 ALL에 직접 적용 |
+| from → to | 의미 | 소유·저장 |
+|-----------|------|-----------|
+| `PROPERTY → PROPERTY` | 속성 서브그래프의 세부화 | **서술** — 서버 소유(발화 생성) |
+| `PART → PROPERTY` | 파트가 이 속성을 가짐(서버 계층). 파트에 발화 시 생성 | **서술** — 서버 소유 |
+| `PART → PART` | 파트 분해(전체 대상 → 하위 파트) | **서술** — 서버 소유 |
+| `PROPERTY → PART` | 연결된 PROPERTY(가장 하위 leaf 권장)를 기점으로 상위 체인을 파트 또는 ALL에 적용 | **적용** — 클라 소유(로컬 전용) |
+| `REFERENCE → PROPERTY` | 레퍼런스가 특정 속성을 시각적으로 설명 | 서술 |
+| `REFERENCE → PART` | 레퍼런스를 파트 또는 ALL에 직접 적용 | **적용** — 클라 소유(로컬 전용) |
+
+> **서술(describe) vs 적용(apply) — 방향으로 구분 (2026-07-04 확정)**  
+> - **서술** = 서버가 발화로 만드는 그래프 엣지(`to`가 PROPERTY/PART 자식). 서버 그래프에 영속되고 `MergeServerGraph`(`AddServerEdge`)로 병합.  
+> - **적용** = 사용자가 만드는 연결. **제스처**: PART/ALL 포트에서 **더블클릭 → 엣지가 뻗어나와 → 서브그래프 맨 하위 leaf 에 드롭**(시작=PART, 끝=leaf). **데이터**: 저장 방향은 반대로 `from=PROPERTY(leaf) → to=PART`. `RequestConnectFromPort(port, subgraph)` 가 `RequestConnectNodes(subgraph, port)` 로 정규화해 저장.  
+> - 두 관계는 **`to == PART` 인지로 갈린다** → `RegenerateConnectionBuilder` 는 적용 엣지만 골라 `connection[{part_node_id, node_id}]` 로 변환. 서버 서술 엣지(`PART→PROPERTY`/`PART→PART`)는 자동 제외(충돌 없음).  
+> - **적용 엣지는 서버에 영속하지 않는다(MVP, 2026-07-04 결정)**. `GraphSyncClient` 는 `EDGE_CREATE` 미전송(서버 cross-subgraph 제약 GRAPH409). 실시간 공유는 Photon, 2D 결과물(asset)은 서버 영속. **업그레이드 경로**: 나중에 서버가 연결 영속 API 를 붙이면 동일한 `connection[{part_node_id, node_id}]` 배열을 그대로 영속 페이로드로 재사용.
 
 예시:
 

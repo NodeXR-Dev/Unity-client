@@ -5,7 +5,7 @@ using UnityEngine;
 using UnityEngine.Networking;
 
 // 파트 노드 CRUD 서버 REST 경계.
-//   생성 POST   /api/part_node/generate  { room_id, utterance }
+//   생성 POST   /api/part_node/generate  { room_id, utterance, position:[x,y,z] }
 //   수정 PATCH  /api/part_node/modify    { room_id, part_node_id, part_node_text }
 //   삭제 DELETE /api/part_node/delete     { room_id, part_node_id }
 //
@@ -28,10 +28,14 @@ public class PartNodeApiClient : MonoBehaviour
     // ─────────────────────────────────────────────
 
     // 파트 생성: utterance 로 서버 생성 요청 → 서버 발급 part_node_id/text 로 로컬 PART 생성.
+    // position 은 서버 명세 필수 필드. 위치 정보가 없으면 Vector3.zero.
     public void CreatePart(string utterance, bool isGlobal, Action<bool> onDone)
+        => CreatePart(utterance, isGlobal, Vector3.zero, onDone);
+
+    public void CreatePart(string utterance, bool isGlobal, Vector3 position, Action<bool> onDone)
     {
         if (!EnsureRefs(onDone)) return;
-        StartCoroutine(CoCreate(utterance, isGlobal, onDone));
+        StartCoroutine(CoCreate(utterance, isGlobal, position, onDone));
     }
 
     // 파트 수정: part_node_text 갱신 요청 → 성공 시 로컬 label 갱신.
@@ -52,12 +56,13 @@ public class PartNodeApiClient : MonoBehaviour
     // 코루틴 구현
     // ─────────────────────────────────────────────
 
-    private IEnumerator CoCreate(string utterance, bool isGlobal, Action<bool> onDone)
+    private IEnumerator CoCreate(string utterance, bool isGlobal, Vector3 position, Action<bool> onDone)
     {
         string body = JsonUtility.ToJson(new PartNodeGenerateRequest
         {
             room_id   = _syncClient.RoomId,
             utterance = utterance,
+            position  = new[] { position.x, position.y, position.z },
         });
 
         PartNodeResponse res = null;

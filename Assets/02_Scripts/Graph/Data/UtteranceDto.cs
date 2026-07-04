@@ -16,6 +16,17 @@ public class UtteranceRequest
     public string utterance;
 }
 
+// 루트(부모 없음) 발화용. 서버 CreateNodeUtteranceRequest.parent_node_id 는 Optional(None)이며
+// UUID | None 타입이라 빈 문자열은 422로 거부된다. JsonUtility 는 null 필드를 생략하지 못하므로
+// (null string → "", null array → []) parent_* 필드를 아예 갖지 않는 별도 DTO 로 보낸다.
+[System.Serializable]
+public class UtteranceRootRequest
+{
+    public string room_id;
+    public string user_id;
+    public string utterance;
+}
+
 [System.Serializable]
 public class UtteranceResult
 {

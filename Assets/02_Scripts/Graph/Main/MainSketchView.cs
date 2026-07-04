@@ -34,9 +34,27 @@ public class MainSketchView : MonoBehaviour
     [Header("옵션")]
     [SerializeField] private bool _refreshOnStart = true;
 
+    private bool _subscribed;
+
     private void Start()
     {
         if (_refreshOnStart) Refresh();
+    }
+
+    // 서버 그래프 로드/병합(LoadGraph·MergeServerGraph) 후 PART/ALL 포트를 다시 그린다.
+    // 발화 응답으로 서버 PART 노드가 들어오면 이 경로로 메인그래프에 반영된다.
+    private void OnEnable()
+    {
+        if (_graphManager == null || _subscribed) return;
+        _graphManager.OnGraphChanged += Refresh;
+        _subscribed = true;
+    }
+
+    private void OnDisable()
+    {
+        if (_graphManager == null || !_subscribed) return;
+        _graphManager.OnGraphChanged -= Refresh;
+        _subscribed = false;
     }
 
     public void Refresh()
