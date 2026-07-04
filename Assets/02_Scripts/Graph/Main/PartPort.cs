@@ -87,7 +87,7 @@ public class PartPort : MonoBehaviour,
         _onChanged = onChanged;
 
         if (_labelText != null)
-            _labelText.text = string.IsNullOrEmpty(partNode.label) ? "(이름 없음)" : partNode.label;
+            _labelText.text = ToTwoLines(string.IsNullOrEmpty(partNode.label) ? "(이름 없음)" : partNode.label);
 
         Collapse();
         SetConnected(isConnected);
@@ -210,10 +210,30 @@ public class PartPort : MonoBehaviour,
             {
                 var node = _manager?.GetNode(_nodeId);
                 string label = node != null ? node.label : newLabel.Trim();
-                if (_labelText != null) _labelText.text = label;
+                if (_labelText != null) _labelText.text = ToTwoLines(label);
                 _onChanged?.Invoke();
             }
         });
         Collapse();
+    }
+
+    // 서버 PART node_text 는 긴 서술 문장이라 좁은 포트 칩에서 가로로 넘쳐 겹친다.
+    // 중앙에 가장 가까운 공백에서 2줄로 나눠 가로 폭을 절반으로 줄인다(단어는 안 끊음).
+    // 짧은 이름(7자 미만)은 그대로 둔다.
+    private static string ToTwoLines(string s)
+    {
+        if (string.IsNullOrEmpty(s) || s.Length < 7) return s;
+
+        int mid = s.Length / 2;
+        int split = -1, best = int.MaxValue;
+        for (int i = 0; i < s.Length; i++)
+        {
+            if (s[i] != ' ') continue;
+            int d = System.Math.Abs(i - mid);
+            if (d < best) { best = d; split = i; }
+        }
+        if (split < 0) split = mid;   // 공백이 없으면 중앙에서 강제 분할
+
+        return s.Substring(0, split).TrimEnd() + "\n" + s.Substring(split).TrimStart();
     }
 }

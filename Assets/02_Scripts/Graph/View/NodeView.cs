@@ -48,6 +48,7 @@ public class NodeView : MonoBehaviour
     private NodeData _data;
     private GraphManager _manager;
     private int _currentDepth;
+    private string _lastSubmittedText;   // onEndEdit 중복 발화(Enter+포커스이탈) 방지용
 
     public string NodeId           => _data?.node_id;
     public int    CurrentDepth     => _currentDepth;
@@ -66,6 +67,7 @@ public class NodeView : MonoBehaviour
         }
         _data = data;
         _manager = manager;
+        _lastSubmittedText = data.label ?? "";   // 이미 반영된 텍스트 → 변경 없는 재제출은 무시
 
         if (_labelInput != null)
         {
@@ -77,19 +79,31 @@ public class NodeView : MonoBehaviour
         ApplyInitialMaterial();
     }
 
-    // 라벨 입력칸은 키보드/음성 공용 발화 입력칸이다.
-    // 편집 완료 시 텍스트를 노드에 로컬 반영하고(오프라인 즉시), 서버 utterance 확장을 요청한다.
-    //   → GraphManager.RequestNodeByUtterance: node.label/node_text 로컬 반영 + OnUtteranceNodeRequested 발행.
-    //     UtteranceApiClient가 POST /api/utterances(parent=이 노드) 후 하위 그래프를 병합한다.
+    // 라벨 입력칸은 키보드 직접 입력칸이다.
+    // 편집 완료 시 GraphManager.RequestSubmitNodeText 로 전달한다.
+    //   - 서버 미등록 노드: WS NODE_CREATE(직접 생성, 클라 node_id 그대로).
+    //   - 이미 서버 등록된 노드: NODE_TEXT_UPDATE(텍스트 수정).
+    //   (LLM 확장이 필요한 음성 발화는 별도 경로 RequestNodeByUtterance → /api/utterances.)
     // manager가 없으면(레거시/테스트) 로컬 label만 갱신한다.
     private void OnLabelSubmit(string newText)
     {
         if (_data == null) return;
 
+        string text = (newText ?? "").Trim();
+
+        // 빈 입력은 발화하지 않는다(서버가 blank utterance 를 422로 거부, 노드도 안 생김).
+        if (string.IsNullOrEmpty(text)) return;
+
+        // onEndEdit 는 Enter + 포커스 이탈로 한 입력에 여러 번 발화한다. 같은 텍스트 중복 제출을
+        // 막는다 — 안 막으면 서버에 발화가 중복 전송돼 서브그래프가 두 번 생성되고, placeholder 가
+        // 응답으로 제거된 뒤 재제출되면 "존재하지 않는 node_id" 경고가 뜬다.
+        if (text == _lastSubmittedText) return;
+        _lastSubmittedText = text;
+
         if (_manager != null)
-            _manager.RequestNodeByUtterance(_data.node_id, newText);
+            _manager.RequestSubmitNodeText(_data.node_id, text);
         else
-            _data.label = newText.Trim();
+            _data.label = text;
     }
 
     // ReflowAllSubtrees 완료 후 GraphManager 가 호출한다.
