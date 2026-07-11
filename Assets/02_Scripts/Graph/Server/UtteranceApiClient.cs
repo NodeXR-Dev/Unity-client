@@ -7,12 +7,13 @@ using UnityEngine.Networking;
 // 노드 생성(발화) 서버 REST 경계.
 //   노드 "+" → 빈 placeholder 생성 → 발화 입력 → GraphManager.OnUtteranceNodeRequested 발행 → 이 클래스가 POST.
 //   parent_node_id 는 "방금 만든 placeholder"가 아니라 그 **기존(서버-known) 부모**다(서버가 존재를 요구).
-//   부모가 없으면(루트) parent_* 필드 없는 UtteranceRootRequest 로 보낸다(서버가 새 서브그래프 생성).
-//   POST /api/utterances → 응답 graph 를 MergeServerGraph 로 병합(서버 UUID 채택, 위치는 클라 reflow) +
-//   성공 시 로컬 placeholder 제거(서버 노드가 그 자리를 대신함).
+//   부모가 없으면(루트) parent_node_id 필드 없는 UtteranceRootRequest 로 보낸다(서버가 새 서브그래프 생성).
+//   POST /api/node/generate/utterance → 응답 { node_id, node_text } 단건 →
+//   로컬 placeholder 를 그 node_id 로 rekey 하고 node_text(LLM 키워드)로 라벨 갱신(GraphManager.ApplyServerNodeId).
+//   (구 /api/utterances 전체그래프 병합 방식에서 명세 2026-07-10 기준으로 개편.)
 //
 // GraphManager는 서버를 모른다(이벤트만 발행). host/room_id/user_id 는 GraphSyncClient 재사용.
-// 서버 실패(미배포 404 등) 시에는 병합·placeholder 제거를 생략한다(입력 텍스트가 반영된 로컬 노드는 유지).
+// 서버 실패(미배포 404 등) 시에는 rekey 를 생략한다(입력 텍스트가 반영된 로컬 placeholder 는 유지).
 public class UtteranceApiClient : MonoBehaviour
 {
     [Header("연결")]
@@ -61,8 +62,12 @@ public class UtteranceApiClient : MonoBehaviour
 
     private IEnumerator CoRequest(string serverParentId, string utterance, string placeholderNodeId)
     {
-        // 서버 parent_node_id 는 "이미 서버에 존재하는" 노드여야 한다. 방금 만든 로컬 placeholder 가
-        // 아니라 그 부모다. 부모가 없으면(루트) parent_* 필드 없는 요청으로 보낸다.
+        // 요청 값은 새로 만드는 노드(placeholder) 기준: node_type/position 은 placeholder 에서 읽는다.
+        // parent_node_id 는 "이미 서버에 존재하는" 부모다(placeholder 자신이 아님). 부모가 없으면(루트) parent 필드 없는 요청.
+        var placeholder = _graphManager != null ? _graphManager.GetNode(placeholderNodeId) : null;
+        string nodeType = !string.IsNullOrEmpty(placeholder?.type) ? placeholder.type : "PROPERTY";
+        Vector3 pos     = placeholder != null ? placeholder.Position : Vector3.zero;
+
         string body;
         if (string.IsNullOrEmpty(serverParentId))
         {
@@ -70,25 +75,25 @@ public class UtteranceApiClient : MonoBehaviour
             {
                 room_id   = _syncClient.RoomId,
                 user_id   = _syncClient.UserId,
+                node_type = nodeType,
                 utterance = utterance,
+                position  = new[] { pos.x, pos.y, pos.z },
             });
         }
         else
         {
-            var parent = _graphManager != null ? _graphManager.GetNode(serverParentId) : null;
-            var parentPos = parent != null ? parent.Position : Vector3.zero;
-
             body = JsonUtility.ToJson(new UtteranceRequest
             {
-                room_id              = _syncClient.RoomId,
-                user_id              = _syncClient.UserId,
-                parent_node_id       = serverParentId,
-                parent_node_position = new[] { parentPos.x, parentPos.y, parentPos.z },
-                utterance            = utterance,
+                room_id        = _syncClient.RoomId,
+                user_id        = _syncClient.UserId,
+                node_type      = nodeType,
+                parent_node_id = serverParentId,
+                utterance      = utterance,
+                position       = new[] { pos.x, pos.y, pos.z },
             });
         }
 
-        string url = $"http://{_syncClient.Host}/api/utterances";
+        string url = $"http://{_syncClient.Host}/api/node/generate/utterance";
         using (var req = new UnityWebRequest(url, UnityWebRequest.kHttpVerbPOST))
         {
             req.uploadHandler   = new UploadHandlerRaw(Encoding.UTF8.GetBytes(body));
@@ -100,9 +105,9 @@ public class UtteranceApiClient : MonoBehaviour
 
             if (req.result != UnityWebRequest.Result.Success)
             {
-                // 입력 텍스트는 이미 GraphManager.RequestNodeByUtterance에서 노드에 로컬 반영됨.
-                // 서버 확장(하위 그래프)만 실패한 것이므로 추가 노드 생성 없이 로그만.
-                Debug.LogWarning($"[UtteranceApiClient] utterances 실패(로컬 반영은 유지됨): {req.error} (code={req.responseCode})");
+                // 입력 텍스트는 이미 GraphManager.RequestNodeByUtterance에서 placeholder 에 로컬 반영됨.
+                // 서버 생성만 실패한 것이므로 rekey 없이 로그만(placeholder 는 로컬 유지).
+                Debug.LogWarning($"[UtteranceApiClient] node/generate/utterance 실패(로컬 placeholder 유지): {req.error} (code={req.responseCode})");
                 yield break;
             }
 
@@ -113,11 +118,12 @@ public class UtteranceApiClient : MonoBehaviour
             try { res = JsonUtility.FromJson<UtteranceResponse>(raw); }
             catch (Exception e) { Debug.LogWarning($"[UtteranceApiClient] 응답 파싱 실패: {e.Message}"); }
 
-            if (res?.result?.graph != null)
-                // 서버 노드 병합 + 로컬 placeholder 제거(서버 노드가 그 자리를 대신함).
-                _graphManager.MergeServerGraph(res.result.graph, placeholderNodeId);
+            string serverNodeId = res?.result?.node_id;
+            if (!string.IsNullOrEmpty(serverNodeId))
+                // 로컬 placeholder 를 서버 node_id 로 rekey + node_text(LLM 키워드)로 라벨 갱신.
+                _graphManager.ApplyServerNodeId(placeholderNodeId, serverNodeId, res.result.node_text);
             else
-                Debug.LogWarning("[UtteranceApiClient] 응답에 result.graph 가 없습니다(로컬 반영은 유지됨).");
+                Debug.LogWarning("[UtteranceApiClient] 응답에 result.node_id 가 없습니다(로컬 placeholder 유지).");
         }
     }
 

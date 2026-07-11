@@ -1,11 +1,11 @@
 using System.Collections.Generic;
 using UnityEngine;
 
-// GraphData의 적용 엣지(PROPERTY/REFERENCE → PART)를 서버 2D regenerate 요청의 connection 배열로 변환한다.
-// 협의 계약(2026-07-01): 부분 재생성. connection = [{ part_node_id, node_id }].
+// GraphData의 적용 엣지(PROPERTY/REFERENCE → PART)를 서버 2D 그래프 스케치 요청의 connections 배열로 변환한다.
+// 명세(2026-07-10): POST /api/2d/generate/graph { room_id, user_id, connections=[{ part_node_id, node_id }] }.
 //   node_id = 사용자가 PART에 연결한 서브그래프 기점(맨 하위 leaf). 서버가 거기서 상위 체인을 탐색.
 // 규칙: 엣지 to = PART, from = PROPERTY 또는 REFERENCE 인 것만 적용 엣지로 본다.
-// [주의] 서버 2D generate 엔드포인트는 현재 미구현(주석). 이 빌더는 계약 대비 Unity 선구현.
+// [주의] 서버 /api/2d/generate/graph 배포 전엔 전송 실패 가능. 이 빌더는 계약 대비 Unity 선구현.
 public static class RegenerateConnectionBuilder
 {
     // 모든 적용 엣지를 ConnectionDto 목록으로 변환.
@@ -58,20 +58,20 @@ public static class RegenerateConnectionBuilder
         return result;
     }
 
-    // room_id / asset_id 까지 채운 요청 DTO 생성.
-    public static RegenerateRequestDto BuildRequest(
-        GraphData graph, string assetId, ICollection<string> selectedPartNodeIds = null)
+    // room_id / user_id / connections 를 채운 /api/2d/generate/graph 요청 DTO 생성.
+    public static Generate2DGraphRequest BuildGraphRequest(
+        GraphData graph, string userId, ICollection<string> selectedPartNodeIds = null)
     {
-        return new RegenerateRequestDto
+        return new Generate2DGraphRequest
         {
-            room_id    = graph?.room_id,
-            asset_id   = assetId,
-            connection = Build(graph, selectedPartNodeIds),
+            room_id     = graph?.room_id,
+            user_id     = userId,
+            connections = Build(graph, selectedPartNodeIds),
         };
     }
 
     // JsonUtility 로 요청 바디(JSON) 직렬화. (POST body)
-    public static string BuildRequestJson(
-        GraphData graph, string assetId, ICollection<string> selectedPartNodeIds = null)
-        => JsonUtility.ToJson(BuildRequest(graph, assetId, selectedPartNodeIds));
+    public static string BuildGraphRequestJson(
+        GraphData graph, string userId, ICollection<string> selectedPartNodeIds = null)
+        => JsonUtility.ToJson(BuildGraphRequest(graph, userId, selectedPartNodeIds));
 }

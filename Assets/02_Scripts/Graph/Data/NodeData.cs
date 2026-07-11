@@ -35,6 +35,9 @@ public class NodeData
     // /api/utterances 응답의 부모 노드 id. 엣지로도 유추 가능하나 응답값을 보존한다.
     public string parent_node_id;
 
+    // 서버 그래프 조회/GRAPH_UPDATED 에서 내려오는 값. 이 노드가 현재 2D 생성 문맥에 쓰였는지 여부(파싱·저장만).
+    public bool used_in_generation;
+
     // 타입별 부가 데이터. REFERENCE는 자산/이미지 정보, 그 외는 비어 있음({}).
     // 현재는 파싱·저장만 하고 화면 표시는 하지 않는다(REFERENCE NodeView 미구현).
     public NodeAssetData data;

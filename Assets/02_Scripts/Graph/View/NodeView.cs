@@ -74,6 +74,7 @@ public class NodeView : MonoBehaviour
             _labelInput.text = data.label ?? "";
             _labelInput.onEndEdit.RemoveAllListeners();
             _labelInput.onEndEdit.AddListener(OnLabelSubmit);
+            CenterLabelAlignment();
         }
 
         ApplyInitialMaterial();
@@ -88,6 +89,8 @@ public class NodeView : MonoBehaviour
     private void OnLabelSubmit(string newText)
     {
         if (_data == null) return;
+
+        CenterLabelAlignment();   // 편집 사이클에서 좌측으로 어긋난 정렬을 다시 가운데로.
 
         string text = (newText ?? "").Trim();
 
@@ -119,6 +122,17 @@ public class NodeView : MonoBehaviour
             _meshRenderer.sharedMaterial = _depthMaterials[idx];
     }
 
+    // TMP_InputField 는 편집 사이클을 거치면 텍스트 정렬이 좌측으로 어긋날 수 있다.
+    // 표시 텍스트와 placeholder 를 항상 가운데(수평+수직 중앙) 정렬로 강제한다.
+    private void CenterLabelAlignment()
+    {
+        if (_labelInput == null) return;
+        if (_labelInput.textComponent != null)
+            _labelInput.textComponent.alignment = TextAlignmentOptions.Center;
+        if (_labelInput.placeholder is TMP_Text placeholder)
+            placeholder.alignment = TextAlignmentOptions.Center;
+    }
+
     private void ApplyInitialMaterial()
     {
         if (_meshRenderer == null) return;
@@ -137,10 +151,14 @@ public class NodeView : MonoBehaviour
             case NodeType.PART:
                 return (_data.is_global && _allMaterial != null) ? _allMaterial : _partMaterial;
             case NodeType.PROPERTY:
-                // depth 머티리얼이 있으면 depth=0 을 초기값으로, 없으면 propertyMaterial
-                return (_depthMaterials != null && _depthMaterials.Length > 0 && _depthMaterials[0] != null)
-                    ? _depthMaterials[0]
-                    : _propertyMaterial;
+                // 현재 깊이(_currentDepth)의 머티리얼을 적용한다 — Bind 가 재호출돼도(예: ACK rekey) 계층 색을 유지.
+                // (depth 머티리얼 없으면 propertyMaterial fallback.)
+                if (_depthMaterials != null && _depthMaterials.Length > 0)
+                {
+                    int idx = Mathf.Clamp(_currentDepth, 0, _depthMaterials.Length - 1);
+                    if (_depthMaterials[idx] != null) return _depthMaterials[idx];
+                }
+                return _propertyMaterial;
             case NodeType.REFERENCE:
                 return _referenceMaterial;
             default:

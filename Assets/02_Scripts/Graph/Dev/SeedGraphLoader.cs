@@ -14,7 +14,8 @@ using UnityEngine;
 //   0009 REFERENCE "포스터 분위기" → 0010 PROPERTY "바닷속 배경",  0009 → 0001(REFERENCES)
 //
 // [전제] 서버 DB에 seed_all_dummy.sql 이 적용돼 있어야 하고, GraphSyncClient._roomId 를 ROOM_ID 와 일치.
-// [주의] 로컬에서 "추가"한 노드는 서버 DB에 없어(NODE_CREATE 미지원) 수정/삭제 시 서버가 NODE404.
+// [주의] 로컬에서 "추가"한 노드는 WS NODE_CREATE 로 서버 생성되며, ACK(job_id→node_id)로 서버 id 를 rekey 한 뒤에야
+//        수정/삭제가 서버에 정합된다(ACK 전 로컬 전용 노드를 수정/삭제하면 NODE404). "Test/루트 노드 생성" 참고.
 public class SeedGraphLoader : MonoBehaviour
 {
     // ── seed_all_dummy.sql 값 ──────────────────────
@@ -130,4 +131,31 @@ public class SeedGraphLoader : MonoBehaviour
 
     [ContextMenu("Test/PART delete (집게 팔)")]
     private void TestPartDelete() => _graphManager?.RequestDeleteNode(N_ARM);
+
+    // 키보드 "+" UI(개발자 2, 미구현) 대체 — 루트 PROPERTY 노드 생성 → 텍스트 제출 흐름을 코드로 트리거.
+    // Play 모드 + 서버 연결 상태에서 실행: RequestCreateRootPropertyNode(로컬 루트) →
+    //   RequestSubmitNodeText → OnSubGraphRequested → SubGraphApiClient(POST /api/sub_graph/generate) →
+    //   SubmitRootNodeWithSubGraph → WS NODE_CREATE(sub_graph_id) → ACK 로 서버 node_id rekey.
+    // 콘솔에서 [SubGraphApiClient] POST … → [GraphSyncClient] 송신 NODE_CREATE → 수신 → ApplyServerNodeId 확인.
+    [ContextMenu("Test/루트 노드 생성 (키보드+ 대체)")]
+    private void TestCreateRootNode()
+    {
+        if (_graphManager == null) _graphManager = FindObjectOfType<GraphManager>();
+        if (_graphManager == null)
+        {
+            Debug.LogWarning("[SeedGraphLoader] GraphManager를 찾을 수 없습니다.");
+            return;
+        }
+
+        string rootId = _graphManager.RequestCreateRootPropertyNode();
+        if (string.IsNullOrEmpty(rootId))
+        {
+            Debug.LogWarning("[SeedGraphLoader] 루트 노드 생성 실패.");
+            return;
+        }
+
+        _graphManager.RequestSubmitNodeText(rootId, "테스트 루트 속성");
+        Debug.Log($"[SeedGraphLoader] 루트 생성 테스트: localId={rootId} → sub_graph/generate → NODE_CREATE 흐름 시작. " +
+                  "ACK 후 이 노드의 '+'가 활성화되면 자식 추가(NodeActionPanel)로 이어서 검증하세요.");
+    }
 }

@@ -636,6 +636,10 @@ GameObject:
   - component: {fileID: 1650281632}
   - component: {fileID: 1650281633}
   - component: {fileID: 1650281634}
+  - component: {fileID: 1650281635}
+  - component: {fileID: 1650281638}
+  - component: {fileID: 1650281637}
+  - component: {fileID: 1650281636}
   m_Layer: 0
   m_Name: GraphSyncClient
   m_TagString: Untagged
@@ -689,6 +693,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   _syncClient: {fileID: 1650281630}
+  _graphManager: {fileID: 0}
   _centerImage: {fileID: 4837475978978073411}
 --- !u!114 &1650281633
 MonoBehaviour:
@@ -718,6 +723,62 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   _graphManager: {fileID: 1840588727}
+  _syncClient: {fileID: 1650281630}
+--- !u!114 &1650281635
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1650281629}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 4670de84edd684d77ab5850b7ee25258, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  _graphManager: {fileID: 1840588727}
+  _syncClient: {fileID: 1650281630}
+--- !u!114 &1650281636
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1650281629}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 29adde0ec6845438d969ebe6dfe59eb9, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  _syncClient: {fileID: 1650281630}
+  _graphManager: {fileID: 1840588727}
+  _centerImage: {fileID: 4837475978978073411}
+--- !u!114 &1650281637
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1650281629}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: a5218891bc7aa4b59a88847dad01db5c, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  _graphManager: {fileID: 1840588727}
+  _syncClient: {fileID: 1650281630}
+--- !u!114 &1650281638
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1650281629}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 2a7edd8b119b64e4db48874c4f380c2f, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
   _syncClient: {fileID: 1650281630}
 --- !u!1 &1662339465
 GameObject:
@@ -820,6 +881,14 @@ PrefabInstance:
     - target: {fileID: 2345858396339475493, guid: a58468e7eed654f20ae1958bfb57187b, type: 3}
       propertyPath: m_IsActive
       value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 2593693343449509973, guid: a58468e7eed654f20ae1958bfb57187b, type: 3}
+      propertyPath: m_SizeDelta.x
+      value: 350
+      objectReference: {fileID: 0}
+    - target: {fileID: 2593693343449509973, guid: a58468e7eed654f20ae1958bfb57187b, type: 3}
+      propertyPath: m_SizeDelta.y
+      value: 350
       objectReference: {fileID: 0}
     - target: {fileID: 3290979591413243996, guid: a58468e7eed654f20ae1958bfb57187b, type: 3}
       propertyPath: m_Name

@@ -12,8 +12,8 @@
  *
  * 클릭 흐름:
  *   1) _addButton 클릭 → BeginInput(): _isInputting=true, InputField 활성화.
- *   2) 사용자가 이름 입력 후 Enter → CommitInput(): 입력 텍스트를 utterance로 서버 REST 생성 요청
- *      (PartNodeApiClient.CreatePart → POST /api/part_node/generate). 서버 발급 UUID로 로컬 PART 생성.
+ *   2) 사용자가 이름 입력 후 Enter → CommitInput(): 입력 텍스트(키보드)로 서버 REST 생성 요청
+ *      (PartNodeApiClient.CreatePartKeyboard → POST /api/part_node/generate/keyboard). 서버 발급 UUID로 로컬 PART 생성.
  *   3) InputField가 없으면 _defaultLabel로 생성 요청.
  * [주의] 생성은 서버 응답 후 비동기 반영된다(서버가 part_node_id 발급). 로컬 즉시 생성 아님.
  */
@@ -124,7 +124,7 @@ public class AddPartPort : MonoBehaviour,
         InvokeAdd(_defaultLabel);
     }
 
-    // 파트 생성은 서버 REST(part_node/generate)로 위임한다. 입력 텍스트가 utterance.
+    // 파트 생성은 서버 REST(part_node/generate/keyboard)로 위임한다. 입력창에 타이핑한 텍스트라 키보드 경로.
     // 서버가 발급한 part_node_id 로 로컬 PART가 생성되며, 응답 후(비동기) 화면이 갱신된다.
     private void InvokeAdd(string label)
     {
@@ -134,7 +134,7 @@ public class AddPartPort : MonoBehaviour,
             return;
         }
         // position 은 이 빈 포트의 월드 위치(새 PART가 놓일 자리)를 서버에 전달한다.
-        _apiClient.CreatePart(label, false, transform.position, ok =>
+        _apiClient.CreatePartKeyboard(label, false, transform.position, ok =>
         {
             if (ok) _onChanged?.Invoke();
         });
