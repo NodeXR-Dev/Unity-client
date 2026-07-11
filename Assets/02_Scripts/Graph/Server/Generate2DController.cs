@@ -1,22 +1,25 @@
 using System.Collections;
+using System.Collections.Generic;
 using System.Text;
 using UnityEngine;
 using UnityEngine.Networking;
 using UnityEngine.UI;
 
-// 기본 2D 생성 흐름 컨트롤러.
-//   1) RequestGenerate(): POST /api/2d/generate 로 { room_id } 전송 (발화 기반 기본 생성 트리거).
-//      - 이 단계에서는 노드/connection/RegenerateConnectionBuilder 를 반영하지 않는다.
-//      - 노드 기반 부분 재생성은 별도(/api/2d/regenerate, GraphManager.BuildRegenerateRequestJson).
-//   2) 결과 이미지는 HTTP 응답이 아니라 WS 2D_GENERATED{img_url} 로 온다.
-//      GraphSyncClient.OnImage2DGenerated 를 구독해 img_url 텍스처를 중앙 RawImage 에 표시한다.
+// 2D 생성/변경 흐름 컨트롤러. (API 명세 2026-07-10)
+//   RequestGenerateFeature(): POST /api/2d/generate/feature { room_id, user_id } — 요구사항(feature) 기반 기본 스케치.
+//   RequestGenerateGraph():   POST /api/2d/generate/graph   { room_id, user_id, connections } — 그래프(PART↔속성) 기반 스케치.
+//   RequestColorChange():     POST /api/2d/color_change (multipart) { room_id, file, asset_id } — 색상 변경.
+//   결과 이미지는 HTTP 응답이 아니라 WS 2D_GENERATED{img_url} 로 온다.
+//     GraphSyncClient.OnImage2DGenerated 를 구독해 img_url 텍스처를 중앙 RawImage 에 표시한다.
 //
-// host/room_id 는 GraphSyncClient 가 이미 들고 있으므로 재사용한다.
-// [주의] 서버 /api/2d/generate 는 현재 미구현(주석). 이 컨트롤러는 계약 대비 선구현.
+// host/room_id/user_id 는 GraphSyncClient 재사용. connections 는 GraphManager 의 적용 엣지에서 빌드.
+// [주의] 서버 2D 엔드포인트 배포 전엔 실패 가능. 이 컨트롤러는 계약 대비 선구현.
 public class Generate2DController : MonoBehaviour
 {
     [Header("연결")]
     [SerializeField] private GraphSyncClient _syncClient;
+    [Tooltip("그래프 기반 스케치의 connections 빌드용")]
+    [SerializeField] private GraphManager _graphManager;
     [Tooltip("생성된 2D 이미지를 표시할 중앙 RawImage")]
     [SerializeField] private RawImage _centerImage;
 
@@ -39,48 +42,112 @@ public class Generate2DController : MonoBehaviour
     }
 
     // ─────────────────────────────────────────────
-    // 생성 요청 (발화 기반 기본 2D 생성)
+    // 생성/변경 요청 (결과는 WS 2D_GENERATED 로 별도 통보)
     // ─────────────────────────────────────────────
 
-    // 개발자 2(Voice/Interaction)가 발화 후 이 메서드를 호출한다.
-    // TODO(서버 협의 후): 발화 텍스트를 인자로 받아 Generate2DRequestDto.utterance 로 전송.
-    [ContextMenu("2D Generate 요청")]
-    public void RequestGenerate()
+    // (호환) 구 진입점 이름 유지 — dev2 Inspector(버튼 OnClick)/코드가 RequestGenerate 로 연결해둔 경우 대비.
+    // 명세상 기본 생성은 feature 기반이므로 그쪽으로 위임한다.
+    [ContextMenu("2D Generate (호환 → feature)")]
+    public void RequestGenerate() => RequestGenerateFeature();
+
+    // 요구사항(feature) 기반 기본 스케치. 개발자 2가 기능 정의 후 호출.
+    [ContextMenu("2D Generate (feature)")]
+    public void RequestGenerateFeature()
     {
-        if (_syncClient == null)
+        if (!EnsureConn("RequestGenerateFeature")) return;
+        string body = JsonUtility.ToJson(new Generate2DFeatureRequest
         {
-            Debug.LogWarning("[Generate2DController] RequestGenerate 실패: GraphSyncClient 가 연결되지 않았습니다.");
-            return;
-        }
-        if (string.IsNullOrEmpty(_syncClient.Host) || string.IsNullOrEmpty(_syncClient.RoomId))
-        {
-            Debug.LogWarning("[Generate2DController] RequestGenerate 실패: host 또는 room_id 가 비어 있습니다.");
-            return;
-        }
-        StartCoroutine(PostGenerate());
+            room_id = _syncClient.RoomId,
+            user_id = _syncClient.UserId,
+        });
+        StartCoroutine(PostJson("2d/generate/feature", body));
     }
 
-    private IEnumerator PostGenerate()
+    // 그래프(PART↔속성 연결) 기반 스케치. 선택 PART 만 부분 생성하려면 selectedPartNodeIds 지정.
+    public void RequestGenerateGraph(ICollection<string> selectedPartNodeIds = null)
     {
-        string url  = $"http://{_syncClient.Host}/api/2d/generate";
-        string body = JsonUtility.ToJson(new Generate2DRequestDto { room_id = _syncClient.RoomId });
+        if (!EnsureConn("RequestGenerateGraph")) return;
+        if (_graphManager == null)
+        {
+            Debug.LogWarning("[Generate2DController] RequestGenerateGraph 실패: GraphManager 미연결.");
+            return;
+        }
+        var req = new Generate2DGraphRequest
+        {
+            room_id     = _syncClient.RoomId,
+            user_id     = _syncClient.UserId,
+            connections = _graphManager.BuildGraphConnections(selectedPartNodeIds),
+        };
+        StartCoroutine(PostJson("2d/generate/graph", JsonUtility.ToJson(req)));
+    }
 
+    // 색상 변경(multipart). imageData/fileName/mime 는 호출부(스케치 보드 등)가 제공.
+    public void RequestColorChange(string assetId, byte[] imageData, string fileName, string mime)
+    {
+        if (!EnsureConn("RequestColorChange")) return;
+        if (imageData == null || imageData.Length == 0)
+        {
+            Debug.LogWarning("[Generate2DController] RequestColorChange 실패: 이미지 데이터가 비어 있습니다.");
+            return;
+        }
+        StartCoroutine(PostColorChange(assetId, imageData, fileName, mime));
+    }
+
+    private bool EnsureConn(string from)
+    {
+        if (_syncClient == null || string.IsNullOrEmpty(_syncClient.Host) || string.IsNullOrEmpty(_syncClient.RoomId))
+        {
+            Debug.LogWarning($"[Generate2DController] {from} 실패: GraphSyncClient(host/room_id)가 비어 있습니다.");
+            return false;
+        }
+        return true;
+    }
+
+    // JSON POST 공통(2xx만 확인, 결과 이미지는 WS 2D_GENERATED).
+    private IEnumerator PostJson(string path, string body)
+    {
+        string url = $"http://{_syncClient.Host}/api/{path}";
         using (var req = new UnityWebRequest(url, UnityWebRequest.kHttpVerbPOST))
         {
             req.uploadHandler   = new UploadHandlerRaw(Encoding.UTF8.GetBytes(body));
             req.downloadHandler = new DownloadHandlerBuffer();
             req.SetRequestHeader("Content-Type", "application/json");
 
-            Debug.Log($"[Generate2DController] 2D generate 요청 → {url} body={body}");
+            Debug.Log($"[Generate2DController] POST {url} body={body}");
             yield return req.SendWebRequest();
 
             if (req.result != UnityWebRequest.Result.Success)
             {
-                Debug.LogError($"[Generate2DController] 2D generate 실패: {req.error} (code={req.responseCode})");
+                Debug.LogError($"[Generate2DController] {path} 실패: {req.error} (code={req.responseCode})");
                 yield break;
             }
-            // 결과 이미지는 WS 2D_GENERATED 로 별도 통보됨. 여기서는 접수 로그만.
-            Debug.Log($"[Generate2DController] 2D generate 접수됨(code={req.responseCode}). 결과는 WS 2D_GENERATED 대기.");
+            Debug.Log($"[Generate2DController] {path} 접수됨(code={req.responseCode}). 결과는 WS 2D_GENERATED 대기.");
+        }
+    }
+
+    private IEnumerator PostColorChange(string assetId, byte[] imageData, string fileName, string mime)
+    {
+        var form = new List<IMultipartFormSection>
+        {
+            new MultipartFormDataSection("room_id",  _syncClient.RoomId),
+            new MultipartFormDataSection("asset_id", assetId ?? ""),
+            new MultipartFormFileSection("file", imageData,
+                string.IsNullOrEmpty(fileName) ? "sketch.png" : fileName,
+                string.IsNullOrEmpty(mime) ? "image/png" : mime),
+        };
+        string url = $"http://{_syncClient.Host}/api/2d/color_change";
+
+        using (var req = UnityWebRequest.Post(url, form))
+        {
+            Debug.Log($"[Generate2DController] POST(multipart) {url} asset_id={assetId} bytes={imageData.Length}");
+            yield return req.SendWebRequest();
+
+            if (req.result != UnityWebRequest.Result.Success)
+            {
+                Debug.LogError($"[Generate2DController] 2d/color_change 실패: {req.error} (code={req.responseCode})");
+                yield break;
+            }
+            Debug.Log($"[Generate2DController] 2d/color_change 접수됨(code={req.responseCode}). 결과는 WS 2D_GENERATED 대기.");
         }
     }
 

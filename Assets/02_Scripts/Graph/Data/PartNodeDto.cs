@@ -1,7 +1,8 @@
 // 서버 파트 노드 CRUD REST API DTO.
 // 협의(2026-07-01): PART 노드 생성/수정/삭제는 REST로 일원화(WS NODE_* 미사용).
-// 명세 확정(2026-07-04):
-//   - POST   /api/part_node/generate  { room_id, utterance, position:[x,y,z] }  → code PART_NODE200
+// 명세 확정(2026-07-04, 2026-07-10 keyboard 추가):
+//   - POST   /api/part_node/generate           { room_id, utterance, position:[x,y,z] }  → code PART_NODE200 (발화, LLM)
+//   - POST   /api/part_node/generate/keyboard  { room_id, text, position:[x,y,z] }        → code PART_NODE200 (키보드, 직접)
 //   - PATCH  /api/part_node/modify    { room_id, part_node_id, part_node_text } → code PART_NODE201
 //   - DELETE /api/part_node/delete    { room_id, part_node_id }                 → code PART_NODE202
 // 응답 봉투: { isSuccess, code, message, result:{ room_id, part_node_id, part_node_text } }
@@ -14,6 +15,15 @@ public class PartNodeGenerateRequest
 {
     public string room_id;
     public string utterance;
+    public float[] position;   // [x, y, z]
+}
+
+// 키보드 직접 생성(LLM 없음). utterance 대신 text 를 그대로 보낸다.
+[System.Serializable]
+public class PartNodeKeyboardRequest
+{
+    public string room_id;
+    public string text;
     public float[] position;   // [x, y, z]
 }
 

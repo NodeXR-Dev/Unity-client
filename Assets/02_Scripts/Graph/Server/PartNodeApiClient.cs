@@ -5,7 +5,8 @@ using UnityEngine;
 using UnityEngine.Networking;
 
 // 파트 노드 CRUD 서버 REST 경계.
-//   생성 POST   /api/part_node/generate  { room_id, utterance, position:[x,y,z] }
+//   생성(발화)   POST /api/part_node/generate           { room_id, utterance, position:[x,y,z] }
+//   생성(키보드) POST /api/part_node/generate/keyboard  { room_id, text, position:[x,y,z] }
 //   수정 PATCH  /api/part_node/modify    { room_id, part_node_id, part_node_text }
 //   삭제 DELETE /api/part_node/delete     { room_id, part_node_id }
 //
@@ -36,6 +37,16 @@ public class PartNodeApiClient : MonoBehaviour
     {
         if (!EnsureRefs(onDone)) return;
         StartCoroutine(CoCreate(utterance, isGlobal, position, onDone));
+    }
+
+    // 파트 생성(키보드): 입력 text 를 그대로 서버 생성 요청(LLM 없음) → 서버 발급 id/text 로 로컬 PART 생성.
+    public void CreatePartKeyboard(string text, bool isGlobal, Action<bool> onDone)
+        => CreatePartKeyboard(text, isGlobal, Vector3.zero, onDone);
+
+    public void CreatePartKeyboard(string text, bool isGlobal, Vector3 position, Action<bool> onDone)
+    {
+        if (!EnsureRefs(onDone)) return;
+        StartCoroutine(CoCreateKeyboard(text, isGlobal, position, onDone));
     }
 
     // 파트 수정: part_node_text 갱신 요청 → 성공 시 로컬 label 갱신.
@@ -81,6 +92,35 @@ public class PartNodeApiClient : MonoBehaviour
         {
             Debug.LogWarning("[PartNodeApiClient] generate 실패 → offlineFallback: 로컬 PART 생성(self-GUID).");
             _graphManager.RequestCreatePartNode(utterance, isGlobal);
+            onDone?.Invoke(true);
+        }
+        else onDone?.Invoke(false);
+    }
+
+    private IEnumerator CoCreateKeyboard(string text, bool isGlobal, Vector3 position, Action<bool> onDone)
+    {
+        string body = JsonUtility.ToJson(new PartNodeKeyboardRequest
+        {
+            room_id  = _syncClient.RoomId,
+            text     = text,
+            position = new[] { position.x, position.y, position.z },
+        });
+
+        PartNodeResponse res = null;
+        yield return Send("part_node/generate/keyboard", UnityWebRequest.kHttpVerbPOST, body, (ok, r) => res = ok ? r : null);
+
+        if (res?.result != null && !string.IsNullOrEmpty(res.result.part_node_id))
+        {
+            string label = string.IsNullOrEmpty(res.result.part_node_text) ? text : res.result.part_node_text;
+            _graphManager.RequestCreatePartNode(label, isGlobal, res.result.part_node_id);
+            onDone?.Invoke(true);
+            yield break;
+        }
+
+        if (_offlineFallback)
+        {
+            Debug.LogWarning("[PartNodeApiClient] generate/keyboard 실패 → offlineFallback: 로컬 PART 생성(self-GUID).");
+            _graphManager.RequestCreatePartNode(text, isGlobal);
             onDone?.Invoke(true);
         }
         else onDone?.Invoke(false);

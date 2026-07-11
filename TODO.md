@@ -1,6 +1,6 @@
 # NodeXR TODO — 개발자 3 (노드그래프 / GraphData / 서버 반영)
 
-마지막 업데이트: 2026-07-04
+마지막 업데이트: 2026-07-10
 
 ---
 
@@ -133,6 +133,61 @@
 - [x] **position 배열 통일 (2026-07-05)**: API 명세가 NODE_MOVE도 position=배열 `[x,y,z]`로 확정 → 유니티 `NodeMovePayload.position`을 `WsVec3` dict → `float[]` 배열로 변경(`WsVec3` 제거). NODE_CREATE와 동일 표준.
   - ⚠️ **[서버팀] 대기**: 현재 로컬 서버 `_handle_node_move`(296행)는 아직 `_get_required_dict`로 **dict를 읽음** → 서버도 배열로 바꿔야 함. **유니티(배열)만 앞서가면 그 사이 NODE_MOVE 실패**(둘 lockstep 배포 필요).
 - [ ] [사용자] 서버 배포 후 왕복 검증: 키보드 "+"→텍스트→NODE_CREATE 200, 이후 삭제/이동 NODE404 없는지.
+
+### E-5. NODE_CREATE/EDGE_CREATE job_id 매칭 — 서버 발급 id 채택 (2026-07-10)
+서버팀(소은) 방향 전환: **서버가 node_id/edge_id 발급**. 요청 시 유니티가 로컬 임시 id(`job_id`)를 실어 보내면 서버 ACK(요청자 대상)에 그대로 담아 되돌려줌 → 클라가 로컬 id를 서버 발급 id로 **rekey**. E-4의 "클라 UUID 발급→서버 동일 저장" 모델을 폐기하고 이 모델로 교체.
+- [x] **서버 계약 확인(코드 직독)**: `graph_interaction_service._handle_node_save`/`_handle_edge_create` + `ws_response`. 요청 payload NODE_CREATE=`{job_id, parent_node_id(루트 ""), node_text, node_type, position[x,y,z]}`(node_id 없음), EDGE_CREATE=`{job_id, from_node_id, to_node_id, label}`. ACK 봉투=`{event_type, room_id, user_id, payload:{isSuccess, code, result:{job_id, node_id|edge_id, graph_snapshot_id}}}`. 서버는 NODE_CREATE에서 parent 있으면 **트리 엣지 자동 생성**(ACK에 그 edge_id 없음).
+- [x] **GraphManager**: `ApplyServerNodeId(jobId, serverNodeId)`/`ApplyServerEdgeId(jobId, serverEdgeId)` 추가 — 레지스트리·graphData·연결 엣지 from/to·NodeView/EdgeView 맵·ActionPanel·sub_graph_id·`_serverKnownNodeIds`를 일괄 rekey. `RequestSubmitNodeText`의 **낙관적 서버-known 선반영 제거**(ACK 시점으로 이동 → 자식 "+"도 ACK 후 활성).
+- [x] **GraphSyncClient**: NODE_CREATE payload `node_id`→`job_id`. `HandleEdgeCreated` no-op→**실제 EDGE_CREATE 송신**(job_id=로컬 edge_id, 양 끝 서버-known 아니면 skip). `HandleIncoming`에 NODE_CREATE/EDGE_CREATE ACK 분기 추가 → `Apply*` 호출. ACK 파싱 DTO(`AckEnvelope/AckPayload/AckResult`) + `EdgeCreateEnvelope/Payload` 추가.
+- [ ] [사용자] Unity 컴파일 확인 + 서버 왕복 검증: 자식 노드 "+"→NODE_CREATE→ACK rekey(GameObject명 서버 UUID), 교차 엣지 연결→EDGE_CREATE→ACK rekey→AllPort X(EDGE_DELETE) 404 없는지.
+- [ ] 서버팀 확인: broadcast 없음(요청자 ACK만) → 멀티플레이 반영은 별도 과제.
+
+### E-6. 루트 생성 = 서브그래프 API + NODE_CREATE(sub_graph_id) (2026-07-10)
+전체 API 명세 수령(`docs/server-api-spec.md`). 루트 생성 방식 확정: **`POST /api/sub_graph/generate {room_id}` → sub_graph_id 발급 → WS NODE_CREATE(sub_graph_id, parent="")**. NODE_CREATE payload에서 **node_type 제거**(키보드=PROPERTY 전용). 지난 세션 "parentless NODE_CREATE 대기" 항목 대체.
+- [x] **GraphManager**: `OnNodeCreated` 4번째 인자 nodeType→**subGraphId**. `OnSubGraphRequested(rootNodeId)` 이벤트 추가. `RequestSubmitNodeText` 루트/자식 분기(루트=OnSubGraphRequested 발행 후 대기, 자식=OnNodeCreated with sub_graph_id=""). `SubmitRootNodeWithSubGraph(rootNodeId, subGraphId)` 신규(서버 sub_graph_id 반영 후 NODE_CREATE 발행).
+- [x] **GraphSyncClient**: `NodeCreatePayload` node_type 제거 + `sub_graph_id` 추가. `HandleNodeCreated` 인자 정합(subGraphId).
+- [x] **SubGraphApiClient.cs 신설**(Server/): `OnSubGraphRequested` 구독 → `POST /api/sub_graph/generate` → 성공 시 `SubmitRootNodeWithSubGraph`. 실패 시 로컬 루트 유지(취소해도 서버에 빈 sub_graph 안 생기도록 **텍스트 제출 시점**에 POST).
+- [x] (Unity Inspector) `SubGraphApiClient` 컴포넌트 추가 + `_graphManager`/`_syncClient` 연결(GraphSyncClient 오브젝트에 배선).
+- [x] Dev 검증 훅: `SeedGraphLoader` ContextMenu "Test/루트 노드 생성 (키보드+ 대체)" — 키보드 UI 없이 루트 흐름 트리거.
+- [ ] **⚠️ [서버팀] `/api/sub_graph/generate` 미배포 확인(2026-07-10, 404)**: 서버 `app/api/`에 sub_graph 라우터 없음(SUB_GRAPH200 코드 부재). 배포되면 클라 변경 없이 동작. 그 전까진 루트 404→로컬 유지(graceful degrade).
+- [ ] [사용자] 서버 배포 후 왕복 검증: 키보드 "+"(또는 Dev 훅)→sub_graph/generate 200→NODE_CREATE(sub_graph_id)→ACK rekey. 이후 그 루트에서 자식 "+" 활성화·자식 NODE_CREATE.
+- 후속(별도 세션): 없음(그래프 도메인 델타 #1~#5 반영 완료). (`docs/server-api-spec.md` 델타표)
+
+### E-7. 그래프 콜드로드 GET /api/graph + used_in_generation (2026-07-10, 델타 #3+#5)
+API 명세의 `GET /api/graph`(sub_graphs 중첩)로 서버 그래프를 받아 렌더. seed 하드코딩 대체.
+- [x] **#5 used_in_generation**: `NodeData`/`EdgeData`에 `bool used_in_generation` 추가(파싱·저장만).
+- [x] **GraphQueryDto.cs 신설**(Data/): `GraphQueryResponse`/`GraphSnapshotDto`/`CoreImageDto`/`SubGraphDto`/`GraphNodeDto`/`GraphEdgeDto` + `GraphSnapshotDto.ToGraphData()`(sub_graphs 중첩→flat 평탄화, 각 노드에 sub_graph_id 채움). GRAPH_UPDATED(#4)도 GraphSnapshotDto 재사용 예정.
+- [x] **GraphLoadApiClient.cs 신설**(Server/): `GET /api/graph?room_id=` → 파싱 → `LoadGraph`+`RenderGraph`. `_loadOnStart=false` 기본(배포 후 켬) + ContextMenu "Load Graph From Server". 실패 시 기존 그래프 유지(seed 안 덮음). core_2d_image url은 로그만(중앙 이미지 연결은 후속).
+- [ ] **⚠️ [서버팀] `GET /api/graph` 미배포 확인(2026-07-10)**: 서버에 graph 라우터/GRAPH200 없음(주석 참조만, history만 존재). 배포되면 클라 변경 없이 동작.
+- [ ] (Unity Inspector) `GraphLoadApiClient` 컴포넌트 추가 + `_graphManager`/`_syncClient` 연결. 서버 배포 후 `_loadOnStart` 켜고 `SeedGraphLoader` 비활성화.
+- [ ] [사용자] 컴파일 확인 + 배포 후 검증: ContextMenu로 GET 200→노드/엣지 수·서브그래프 렌더 확인.
+
+### E-8. GRAPH_UPDATED WS 수신 (2026-07-10, 델타 #4)
+서버가 semantic 업데이트 결과로 push 하는 전체 그래프 스냅샷 수신 → 전체 갱신.
+- [x] **GraphSyncClient**: `HandleIncoming`에 `GRAPH_UPDATED` 분기 + `HandleGraphUpdated` — `payload.graph`(GraphSnapshotDto, E-7 재사용) → `ToGraphData()` → `LoadGraph`+`RenderGraph`. 봉투 DTO(`GraphUpdatedEnvelope/Payload`) 추가.
+- ⚠️ 전체 교체 방식이라 서버 미확정 로컬 placeholder 는 push 시 사라질 수 있음(semantic push는 5분/topic drift 주기라 허용). 필요 시 merge 방식으로 후속 조정.
+- [ ] [사용자] 컴파일 확인 + 서버 GRAPH_UPDATED push 시 그래프 재렌더 확인.
+
+### E-10. 잔여 명세 갭 일괄 반영 (2026-07-10)
+전체 API 명세 대조 후 남은 내 도메인 갭 6종 처리.
+- [x] **① EDGE_DELETE 송신**: `GraphSyncClient.HandleEdgeDeleted` no-op → WS `EDGE_DELETE { edge_id }` 송신(+`EdgeDeleteEnvelope`). EDGE_CREATE ACK로 rekey된 서버 edge_id로 나감.
+- [x] **② PART 노드 생성(키보드)**: `/api/part_node/generate/keyboard { room_id, text, position }` → `PartNodeApiClient.CreatePartKeyboard`(+`PartNodeKeyboardRequest`). `AddPartPort`가 `CreatePart`→`CreatePartKeyboard`로 전환(타이핑 입력=키보드).
+- [x] **③④ 레퍼런스**: `ReferenceApiClient`+`ReferenceDto` 신설. 키워드 `/api/references/keyword`(JSON), 연결 `/api/references/generate`(multipart, 이미지 바이트는 호출부 제공). REFERENCE 노드는 그래프 동기화로 반영. R버튼 UI(ReferenceSearchPanel) 미구현이라 클라 메서드만 준비.
+- [x] **⑤ 히스토리**: `/api/history/{room_id}` → `HistoryApiClient`+`HistoryDto`(GraphSnapshotDto 재사용). 조회 + `LoadSnapshot/LoadSnapshotAt`로 과거 버전 복원. 스크러버 UI는 별도.
+- [x] **⑥ 2D URL 재정렬**: `/api/2d/generate/feature`(요구사항), `/api/2d/generate/graph`(connections), `/api/2d/color_change`(multipart)로 `Generate2DController` 재작성. 구 `/api/2d/generate`·`/regenerate` 제거. `RegenerateConnectionBuilder`→`BuildGraphRequest`(room_id/user_id/connections), `GraphManager.BuildGraphSketchRequestJson`/`BuildGraphConnections`. `Generate2DRequestDto`/`RegenerateRequestDto` 제거.
+- [ ] (Unity Inspector) 신규 컴포넌트 배선: `ReferenceApiClient`, `HistoryApiClient`(+`_graphManager`/`_syncClient`), `Generate2DController._graphManager` 추가 연결.
+- [x] **[서버 배포됨 확인 2026-07-11] 2D 생성**: `/api/2d/generate/graph`·`/feature` 서버 구현 완료(`generation.py`, `/api` prefix). 클라 요청 스키마 정확히 일치(`Generate2DGraphRequest {room_id,user_id,connections:[{part_node_id,node_id}]}`, feature `{room_id,user_id}`). → **end-to-end 테스트 가능**(feature=배선 불필요, graph=`Generate2DController._graphManager` 연결 필요). 응답 code=IMG202(클라는 2xx만 확인).
+- [ ] **⚠️ [서버팀] 미배포**: references/keyword·generate, history, 2d/color_change, part_node/generate·keyboard·modify·delete, sub_graph/generate, GET /api/graph — 배포 후 왕복 검증. (WS 그래프 CRUD·2D generate는 배포됨.)
+- [ ] [사용자] 컴파일 확인.
+
+### E-9. 발화 노드 생성 개편 (2026-07-10, 델타 #2)
+구 `POST /api/utterances`(응답=전체 그래프, MergeServerGraph) → 명세 `POST /api/node/generate/utterance`(응답 단건 `{node_id, node_text}`).
+- [x] **UtteranceDto**: 요청에 `node_type`+`position` 추가(루트/자식 DTO 분리 유지 — parent UUID|None 422 회피). `UtteranceResult`를 `{node_id, node_text}`로 변경(구 graph 제거).
+- [x] **UtteranceApiClient**: URL 변경, 요청 값 placeholder 기준(node_type/position). 응답 처리 = `MergeServerGraph` 대신 **`ApplyServerNodeId(placeholderNodeId, node_id, node_text)`**로 rekey + 라벨(LLM node_text) 갱신.
+- [x] **GraphManager.ApplyServerNodeId**: `serverNodeText` 선택 인자 추가(발화 경로에서 라벨/텍스트 갱신). NODE_CREATE ACK 경로는 기본 null로 그대로.
+- 참고: `MergeServerGraph`는 이제 미호출(정의만 남김 — 향후 필요 시 재사용). 발화 UI(음성)는 개발자2 담당·미배선이라 경로는 준비 상태.
+- [ ] **⚠️ [서버팀] `/api/node/generate/utterance` 미배포 확인**: 배포되면 클라 변경 없이 동작(루트는 parent 필드 없는 요청).
+- [ ] [사용자] 컴파일 확인 + 배포 후 검증: placeholder→발화→node_id rekey + 라벨=서버 node_text.
 
 ### E-3. 노드 생성(발화) — 서버 REST /api/utterances (2026-07-02)
 - [x] **구현**: `Data/UtteranceDto` + `UtteranceApiClient`(`POST /api/utterances`). GraphManager는 `OnUtteranceNodeRequested` 이벤트만 발행, 경계 클래스가 REST 담당 → 성공 시 `MergeServerGraph`(node_id upsert, **서버 position 미적용·reflow 배치**).
