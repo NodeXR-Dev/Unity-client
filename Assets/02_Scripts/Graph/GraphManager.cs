@@ -42,20 +42,27 @@ public class GraphManager : MonoBehaviour
     public event Action<string, string>  OnNodeTextUpdated;  // nodeId, newText (서버 기준 node_text)
 
     // 키보드 직접 노드 생성 → WS NODE_CREATE. GraphSyncClient 가 구독해 송신한다.
-    //   nodeId(클라 발급 UUID) / nodeText / parentNodeId(루트면 빈 문자열) / nodeType("PROPERTY" 등) / position
-    // 음성 발화(LLM 확장)는 이 경로가 아니라 RequestNodeByUtterance(/api/utterances)가 담당한다.
+    //   jobId(로컬 노드 id) / nodeText / parentNodeId(루트면 빈 문자열) / subGraphId(루트만 서버 발급값, 자식은 빈 문자열) / position
+    //   (키보드 NODE_CREATE 는 PROPERTY 전용이라 node_type 은 보내지 않는다 — API 명세 2026-07-10.)
+    // 음성 발화(LLM 확장)는 이 경로가 아니라 RequestNodeByUtterance 가 담당한다.
     public event Action<string, string, string, string, Vector3> OnNodeCreated;
 
-    // 그래프 구조가 통째로 바뀐 시점(LoadGraph / MergeServerGraph 완료 후) 발행.
+    // 루트 노드 첫 제출 시 발행. 서버 서브그래프 발급(/api/sub_graph/generate)을 SubGraphApiClient 에 요청한다.
+    // 발급 성공 후 SubGraphApiClient 가 SubmitRootNodeWithSubGraph 로 NODE_CREATE 를 잇는다.
+    //   rootNodeId : 서브그래프 루트가 될 로컬 노드 id.
+    public event Action<string> OnSubGraphRequested;
+
+    // 그래프 구조가 통째로 바뀐 시점(LoadGraph/RenderGraph, GRAPH_UPDATED 반영 완료 후) 발행.
     // 메인그래프 UI(MainSketchView)가 구독해 PART/ALL 포트를 다시 그린다.
     // (PROPERTY 서브그래프는 SpawnNodeView 로 이미 갱신되므로 이 이벤트는 메인 UI 재동기화용.)
     public event Action  OnGraphChanged;
 
     // 노드 "+" 발화 요청. GraphManager는 REST를 모르고 이벤트만 발행한다.
-    // UtteranceApiClient가 구독해 POST /api/utterances 후 MergeServerGraph로 반영한다.
+    // UtteranceApiClient가 구독해 POST /api/node/generate/utterance 후 응답 { node_id, node_text }로
+    //   placeholder 를 ApplyServerNodeId 로 rekey(라벨=서버 node_text)한다.
     //   serverParentId    : 발화를 붙일 "기존(서버-known) 부모" id. 루트(부모 없음)면 null.
     //   utterance         : 입력 텍스트.
-    //   placeholderNodeId : 사용자가 입력한 로컬 임시 노드 id. 서버 응답 병합 후 제거 대상.
+    //   placeholderNodeId : 사용자가 입력한 로컬 임시 노드 id. 서버 node_id 로 rekey 대상.
     public event Action<string, string, string> OnUtteranceNodeRequested;
 
     // ─────────────────────────────────────────────
@@ -68,9 +75,13 @@ public class GraphManager : MonoBehaviour
     private Dictionary<string, NodeView> _nodeViewMap;
     private Dictionary<string, EdgeView> _edgeViewMap;  // 신규: EdgeView 추적
 
-    // 서버에 실제 등록된 노드 id 집합 (LoadGraph / MergeServerGraph 로 들어온 노드).
+    // 서버에 실제 등록된 노드 id 집합 (LoadGraph 로 유입되거나 ApplyServerNodeId 로 rekey 된 노드).
     // Reflow 위치 push(NODE_MOVE)는 이 집합의 노드에만 발행한다 → 로컬 전용 노드 NODE404 방지.
     private readonly HashSet<string> _serverKnownNodeIds = new HashSet<string>();
+
+    // NODE_CREATE/서브그래프 생성 요청을 보냈으나 아직 ACK(rekey) 전인 노드. 같은 노드의 중복 생성 요청을 막는다
+    // (ACK 전 텍스트를 바꿔 재제출하면 서버에 노드가 이중 생성되는 것 방지). ApplyServerNodeId 성공 또는 RemoveNode 시 해제.
+    private readonly HashSet<string> _pendingCreateNodeIds = new HashSet<string>();
 
     // Reflow 후 위치 변화가 이 값(제곱거리) 미만이면 이동으로 보지 않는다(불필요한 NODE_MOVE 억제).
     private const float ReflowMoveEpsilonSqr = 0.001f * 0.001f;
@@ -118,10 +129,14 @@ public class GraphManager : MonoBehaviour
 
     public GraphData GetGraphData() => _graphData;
 
-    // 현재 그래프로 2D regenerate 요청 JSON 생성(부분 재생성 시 selectedPartNodeIds 지정).
-    // 협의 계약: connection = [{ part_node_id, node_id(leaf) }]. 서버 엔드포인트 구현 후 전송에 사용.
-    public string BuildRegenerateRequestJson(string assetId, ICollection<string> selectedPartNodeIds = null)
-        => RegenerateConnectionBuilder.BuildRequestJson(_graphData, assetId, selectedPartNodeIds);
+    // 현재 그래프로 2D 그래프 스케치(/api/2d/generate/graph) 요청 JSON 생성(부분 생성 시 selectedPartNodeIds 지정).
+    // 명세: connections = [{ part_node_id, node_id(leaf) }] + room_id/user_id.
+    public string BuildGraphSketchRequestJson(string userId, ICollection<string> selectedPartNodeIds = null)
+        => RegenerateConnectionBuilder.BuildGraphRequestJson(_graphData, userId, selectedPartNodeIds);
+
+    // 현재 그래프의 적용 엣지를 connections 목록으로 반환(요청 조립용).
+    public System.Collections.Generic.List<ConnectionDto> BuildGraphConnections(ICollection<string> selectedPartNodeIds = null)
+        => RegenerateConnectionBuilder.Build(_graphData, selectedPartNodeIds);
 
     // ─────────────────────────────────────────────
     // 렌더링
@@ -237,13 +252,14 @@ public class GraphManager : MonoBehaviour
         _nodeRegistry.Unregister(nodeId);
         _graphData.nodes.RemoveAll(n => n.node_id == nodeId);
         _serverKnownNodeIds.Remove(nodeId);
+        _pendingCreateNodeIds.Remove(nodeId);
         return true;
     }
 
     public NodeData GetNode(string nodeId) => _nodeRegistry.Get(nodeId);
     public List<NodeData> GetAllNodes()    => _nodeRegistry.GetAll();
 
-    // 이 노드가 서버에 등록된(LoadGraph / MergeServerGraph 로 유입된) 노드인지.
+    // 이 노드가 서버에 등록된(LoadGraph 유입 / ApplyServerNodeId rekey) 노드인지.
     // UI 는 이 값으로 "+"(자식 추가) 가능 여부를 판단한다 — 빈 placeholder(로컬 GUID)는 false.
     public bool IsServerKnown(string nodeId) => _serverKnownNodeIds.Contains(nodeId);
 
@@ -269,26 +285,6 @@ public class GraphManager : MonoBehaviour
             Debug.LogWarning($"[GraphManager] AddEdge 실패: {reason}");
             return false;
         }
-        _edgeRegistry.Register(edge);
-        _graphData.edges.Add(edge);
-        return true;
-    }
-
-    // 서버 스냅샷 병합 전용 엣지 추가. 서버가 진실의 원천이므로 CanConnect(클라 연결 규칙)를
-    // 적용하지 않는다 — 서버는 PART→PROPERTY(파트에 속성 직접 부착) 등 클라 규칙 밖 조합도
-    // 정당하게 가진다. 필수 필드 null·동일 from→to 중복만 방어한다.
-    private bool AddServerEdge(EdgeData edge)
-    {
-        if (edge == null ||
-            string.IsNullOrEmpty(edge.edge_id) ||
-            string.IsNullOrEmpty(edge.from_node_id) ||
-            string.IsNullOrEmpty(edge.to_node_id))
-        {
-            Debug.LogWarning("[GraphManager] AddServerEdge 실패: edge 또는 필수 필드가 null입니다.");
-            return false;
-        }
-        if (_edgeRegistry.HasEdge(edge.from_node_id, edge.to_node_id)) return false;  // 이미 존재(뷰 중복 방지)
-
         _edgeRegistry.Register(edge);
         _graphData.edges.Add(edge);
         return true;
@@ -552,10 +548,14 @@ public class GraphManager : MonoBehaviour
     }
 
     // 노드 라벨칸(키보드) 제출 처리 — "키보드 직접 생성" 경로.
-    //  - 서버 미등록 노드면: WS NODE_CREATE 로 직접 생성(클라 발급 node_id 그대로 저장 → 정합).
+    //  - 서버 미등록 노드면: WS NODE_CREATE 로 직접 생성. node_id 는 서버가 발급하고, 클라는 로컬 노드 id 를
+    //    job_id 로 실어 보낸다. 서버 ACK(job_id+node_id) 도착 시 ApplyServerNodeId 로 로컬 노드를 rekey 한다.
     //  - 이미 서버 등록된 노드면: NODE_TEXT_UPDATE(텍스트 수정, 새 노드 생성 아님).
-    //  - LLM 확장이 필요한 음성 발화는 이 경로가 아니라 RequestNodeByUtterance(/api/utterances)로.
-    // 서버 계약(합의): NODE_CREATE payload = { node_id, node_text, parent_node_id(루트면 ""), node_type, position[x,y,z] }.
+    //  - LLM 확장이 필요한 음성 발화는 이 경로가 아니라 RequestNodeByUtterance 로.
+    // 서버 계약(2026-07-10 API 명세): NODE_CREATE payload = { job_id, sub_graph_id(루트만), node_text, parent_node_id(루트 ""), position[x,y,z] }.
+    //   - 루트(부모 없음): OnSubGraphRequested → SubGraphApiClient 가 sub_graph 발급 후 SubmitRootNodeWithSubGraph 로 NODE_CREATE.
+    //   - 자식: OnNodeCreated 로 즉시 NODE_CREATE(sub_graph_id="" → 서버가 부모에서 유도).
+    //   → 서버-known 표시/‘+’ 활성화는 낙관적으로 하지 않고 ACK(ApplyServerNodeId)에서 한다.
     public void RequestSubmitNodeText(string nodeId, string text)
     {
         var node = _nodeRegistry.Get(nodeId);
@@ -578,20 +578,165 @@ public class GraphManager : MonoBehaviour
             return;
         }
 
+        // 이미 생성 요청이 진행 중이면(ACK 대기) 중복 발행 금지 — 로컬 텍스트만 갱신된 채 유지한다.
+        if (_pendingCreateNodeIds.Contains(nodeId))
+        {
+            Debug.Log($"[GraphManager] NODE_CREATE 재요청 무시: 이미 생성 진행 중(ACK 대기). node_id={nodeId}");
+            return;
+        }
+
         // 첫 제출 → 서버에 직접 생성. 부모는 이 노드의 PROPERTY 부모(루트면 없음).
         string parentId = GetPropertyParent(nodeId);
-        if (!string.IsNullOrEmpty(parentId) && !_serverKnownNodeIds.Contains(parentId))
+        if (string.IsNullOrEmpty(parentId))
+        {
+            // 루트(부모 없음): 먼저 서버 서브그래프를 발급받아야 한다(/api/sub_graph/generate).
+            // SubGraphApiClient 가 OnSubGraphRequested 를 구독해 POST 후 SubmitRootNodeWithSubGraph 로 NODE_CREATE 를 잇는다.
+            _pendingCreateNodeIds.Add(nodeId);
+            OnSubGraphRequested?.Invoke(nodeId);
+            return;
+        }
+        if (!_serverKnownNodeIds.Contains(parentId))
         {
             Debug.LogWarning($"[GraphManager] NODE_CREATE 보류: 부모 노드가 아직 서버 미등록입니다(부모를 먼저 입력하세요). parent={parentId}");
             return;
         }
 
-        _serverKnownNodeIds.Add(nodeId);   // 클라 발급 UUID 로 서버에 생성 → 이제 서버-known
-        OnNodeCreated?.Invoke(nodeId, t, parentId ?? "", node.type, node.Position);
+        // 자식 노드: 로컬 id 를 job_id 로 실어 NODE_CREATE 발행(서버가 node_id 발급). sub_graph_id 는 서버가 부모에서 유도하므로 빈 값.
+        // 서버-known 표시/"+"(자식 추가) 활성화는 여기서 하지 않고 ACK(ApplyServerNodeId)에서 처리한다(낙관적 선반영 금지).
+        _pendingCreateNodeIds.Add(nodeId);
+        OnNodeCreated?.Invoke(nodeId, t, parentId, "", node.Position);
+    }
 
-        // 생성 직후 이 노드의 "+"(자식 추가)를 활성화(서버-known 이 됐으므로).
-        if (_nodeViewMap.TryGetValue(nodeId, out NodeView view) && view != null && view.ActionPanel != null)
-            view.ActionPanel.Bind(nodeId, this);
+    // SubGraphApiClient 가 /api/sub_graph/generate 성공 후 호출한다. 루트 노드에 서버 sub_graph_id 를 반영하고
+    // NODE_CREATE(parent 없음 + sub_graph_id)를 발행한다. ACK 는 ApplyServerNodeId 로 rekey.
+    //   rootNodeId : OnSubGraphRequested 로 넘겼던 로컬 루트 노드 id. subGraphId : 서버 발급 sub_graph_id.
+    public void SubmitRootNodeWithSubGraph(string rootNodeId, string subGraphId)
+    {
+        var node = _nodeRegistry.Get(rootNodeId);
+        if (node == null)
+        {
+            Debug.LogWarning($"[GraphManager] SubmitRootNodeWithSubGraph 실패: 존재하지 않는 node_id ({rootNodeId})");
+            return;
+        }
+        if (string.IsNullOrEmpty(subGraphId))
+        {
+            Debug.LogWarning("[GraphManager] SubmitRootNodeWithSubGraph 실패: subGraphId 가 비어 있습니다.");
+            return;
+        }
+        if (string.IsNullOrEmpty(node.node_text))
+        {
+            Debug.LogWarning($"[GraphManager] SubmitRootNodeWithSubGraph 보류: node_text 가 비어 있습니다. (node_id={rootNodeId})");
+            return;
+        }
+
+        node.sub_graph_id = subGraphId;   // 로컬 자기참조 값 → 서버 sub_graph_id 로 교체
+        OnNodeCreated?.Invoke(rootNodeId, node.node_text, "", subGraphId, node.Position);
+    }
+
+    // 서버 NODE_CREATE ACK / 발화 노드 생성 응답 수신 시 호출한다. 요청 때 실어 보낸 job_id(로컬 노드 id)로
+    // 로컬 임시 노드를 찾아 서버가 발급한 node_id 로 rekey 한다. 이 시점에 비로소 서버-known 이 되어 자식 "+" 가 활성화된다.
+    //   jobId         : 요청 때 보낸 로컬 노드 id (현재 이 노드의 node_id).
+    //   serverNodeId  : 서버가 발급한 진짜 node_id.
+    //   serverNodeText: (선택) 발화 경로에서 서버가 LLM 으로 추출한 node_text. 주면 라벨/텍스트를 갱신한다.
+    public void ApplyServerNodeId(string jobId, string serverNodeId, string serverNodeText = null)
+    {
+        if (string.IsNullOrEmpty(jobId) || string.IsNullOrEmpty(serverNodeId))
+        {
+            Debug.LogWarning("[GraphManager] ApplyServerNodeId 실패: jobId 또는 serverNodeId 가 비어 있습니다.");
+            return;
+        }
+        if (jobId == serverNodeId)
+        {
+            _serverKnownNodeIds.Add(serverNodeId);   // 이미 같은 id → 서버-known 표시만 보장
+            return;
+        }
+
+        var node = _nodeRegistry.Get(jobId);
+        if (node == null)
+        {
+            Debug.LogWarning($"[GraphManager] ApplyServerNodeId 실패: job_id 노드를 찾을 수 없습니다. (job_id={jobId})");
+            return;
+        }
+
+        // 1) 노드 레지스트리 rekey (NodeData 는 동일 객체라 _graphData.nodes 도 함께 반영됨)
+        _nodeRegistry.Unregister(jobId);
+        node.node_id = serverNodeId;
+        _nodeRegistry.Register(node);
+
+        // 1-2) 발화 경로: 서버가 준 node_text(LLM 키워드)로 라벨/텍스트 갱신(view.Bind 전에 반영해야 라벨에 보임).
+        if (!string.IsNullOrEmpty(serverNodeText))
+        {
+            node.node_text = serverNodeText;
+            node.label     = serverNodeText;
+        }
+
+        // 2) 이 노드를 참조하는 엣지의 from/to 를 서버 id 로 치환 (EdgeData 인플레이스 → 레지스트리·graphData 동시 반영)
+        foreach (var edge in _edgeRegistry.GetEdgesConnectedTo(jobId))
+        {
+            if (edge.from_node_id == jobId) edge.from_node_id = serverNodeId;
+            if (edge.to_node_id   == jobId) edge.to_node_id   = serverNodeId;
+        }
+
+        // 서버-known 표시/생성 진행중 해제를 뷰 재바인드 **전에** 한다 —
+        // NodeActionPanel.Bind 가 IsServerKnown(nodeId) 로 "+"(자식 추가) 활성화를 결정하므로,
+        // 이 순서가 아니면 새로 만든 자식의 "+"가 비활성으로 굳는다.
+        _serverKnownNodeIds.Remove(jobId);
+        _serverKnownNodeIds.Add(serverNodeId);
+        _pendingCreateNodeIds.Remove(jobId);
+
+        // 3) NodeView 맵 키 이동 + 재바인드
+        if (_nodeViewMap.TryGetValue(jobId, out NodeView view))
+        {
+            _nodeViewMap.Remove(jobId);
+            _nodeViewMap[serverNodeId] = view;
+            if (view != null)
+            {
+                view.gameObject.name = $"Node_{serverNodeId}";
+                view.Bind(node, this);
+                if (view.ActionPanel != null) view.ActionPanel.Bind(serverNodeId, this);
+            }
+        }
+
+        // 4) 루트 자기참조 sub_graph_id 보정 후 백필
+        if (node.sub_graph_id == jobId) node.sub_graph_id = serverNodeId;
+        BackfillSubGraphIds();
+
+        Debug.Log($"[GraphManager] ApplyServerNodeId: job_id={jobId} → node_id={serverNodeId}");
+    }
+
+    // 서버 EDGE_CREATE ACK 수신 시 호출한다(GraphSyncClient). 요청 때 실어 보낸 job_id(= 로컬 edge_id)로
+    // 로컬 교차 엣지를 찾아 서버가 발급한 edge_id 로 rekey 한다. 이후 EDGE_DELETE 가 서버 edge_id 로 나가 404 를 피한다.
+    //   jobId       : 요청 때 보낸 로컬 edge_id (현재 이 엣지의 edge_id).
+    //   serverEdgeId: 서버가 발급한 진짜 edge_id.
+    public void ApplyServerEdgeId(string jobId, string serverEdgeId)
+    {
+        if (string.IsNullOrEmpty(jobId) || string.IsNullOrEmpty(serverEdgeId))
+        {
+            Debug.LogWarning("[GraphManager] ApplyServerEdgeId 실패: jobId 또는 serverEdgeId 가 비어 있습니다.");
+            return;
+        }
+        if (jobId == serverEdgeId) return;
+
+        var edge = _edgeRegistry.Get(jobId);
+        if (edge == null)
+        {
+            Debug.LogWarning($"[GraphManager] ApplyServerEdgeId 실패: job_id 엣지를 찾을 수 없습니다. (job_id={jobId})");
+            return;
+        }
+
+        // EdgeData 는 동일 객체라 edge_id 를 바꾸면 _graphData.edges 도 함께 반영된다.
+        _edgeRegistry.Unregister(jobId);
+        edge.edge_id = serverEdgeId;
+        _edgeRegistry.Register(edge);
+
+        if (_edgeViewMap.TryGetValue(jobId, out EdgeView view))
+        {
+            _edgeViewMap.Remove(jobId);
+            _edgeViewMap[serverEdgeId] = view;
+            if (view != null) view.gameObject.name = $"Edge_{serverEdgeId}";
+        }
+
+        Debug.Log($"[GraphManager] ApplyServerEdgeId: job_id={jobId} → edge_id={serverEdgeId}");
     }
 
     // 발화 입력칸(노드 텍스트칸) 제출 처리.
@@ -626,102 +771,8 @@ public class GraphManager : MonoBehaviour
         OnUtteranceNodeRequested?.Invoke(serverParentId, text, nodeId);
     }
 
-    // 서버 응답 그래프(/api/utterances 등)를 node_id 기준 upsert 병합한다.
-    //  - 새 노드: 추가 + PROPERTY면 NodeView 생성. 서버 position은 신뢰하지 않고 Reflow가 배치한다.
-    //  - 기존 노드: node_text/data/parent_node_id 갱신(위치 유지).
-    //  - 엣지: edge_id가 없을 때만 추가(+ 양쪽 View 있으면 EdgeView 생성).
-    // WS 이벤트는 발행하지 않는다(생성은 REST 경로로 서버에 이미 반영됨).
-    public void MergeServerGraph(GraphData incoming) => MergeServerGraph(incoming, null);
-
-    // placeholderNodeIdToRemove: 발화로 만든 로컬 임시 노드. 병합 성공 후 서버 노드가 그 자리를
-    //   대신하므로 제거한다(서버-known 이 아닌, 즉 서버가 발급하지 않은 로컬 노드일 때만).
-    public void MergeServerGraph(GraphData incoming, string placeholderNodeIdToRemove)
-    {
-        if (incoming?.nodes == null)
-        {
-            Debug.LogWarning("[GraphManager] MergeServerGraph 실패: incoming/nodes가 null입니다.");
-            return;
-        }
-
-        foreach (var node in incoming.nodes)
-        {
-            if (node == null || string.IsNullOrEmpty(node.node_id)) continue;
-
-            _serverKnownNodeIds.Add(node.node_id);   // 서버에서 온 노드 → 위치 push 대상
-
-            var existing = _nodeRegistry.Get(node.node_id);
-            if (existing == null)
-            {
-                // 표시는 label 우선이므로 label이 비면 node_text로 채운다.
-                if (string.IsNullOrEmpty(node.label)) node.label = node.node_text;
-
-                if (!AddNode(node)) continue;
-                if (node.NodeType == NodeType.PROPERTY && _graphRoot != null && _nodePrefab != null)
-                    SpawnNodeView(node);
-            }
-            else
-            {
-                // 위치는 유지, 텍스트/데이터/부모만 갱신.
-                existing.node_text      = node.node_text;
-                if (!string.IsNullOrEmpty(node.node_text)) existing.label = node.node_text;
-                existing.data           = node.data;
-                existing.parent_node_id = node.parent_node_id;
-
-                if (existing.NodeType == NodeType.PROPERTY &&
-                    _nodeViewMap.TryGetValue(existing.node_id, out NodeView view) && view != null)
-                    view.Bind(existing, this);   // 라벨 갱신
-            }
-        }
-
-        if (incoming.edges != null)
-        {
-            foreach (var edge in incoming.edges)
-            {
-                if (edge == null || string.IsNullOrEmpty(edge.edge_id)) continue;
-                if (_edgeRegistry.Contains(edge.edge_id)) continue;
-                // 서버 스냅샷 엣지는 서버가 진실의 원천 → CanConnect(클라 규칙) 미적용, 그대로 신뢰.
-                if (AddServerEdge(edge)) SpawnEdgeView(edge);   // SpawnEdgeView는 양쪽 View 없으면 조용히 skip
-            }
-        }
-
-        // 발화 임시 placeholder 제거: 서버가 발급한 노드가 그 자리를 대신한다.
-        // 서버-known(서버가 내려준) 노드는 절대 지우지 않는다(placeholder 는 로컬 GUID 뿐).
-        if (!string.IsNullOrEmpty(placeholderNodeIdToRemove) &&
-            _nodeRegistry.Contains(placeholderNodeIdToRemove) &&
-            !_serverKnownNodeIds.Contains(placeholderNodeIdToRemove))
-        {
-            RemoveLocalNodeWithView(placeholderNodeIdToRemove);
-        }
-
-        BackfillSubGraphIds();
-        BackfillIsGlobal();   // 루트 PART → ALL 유도
-        ReflowAllSubtrees();   // 우리 위치 규칙으로 재배치
-        OnGraphChanged?.Invoke();   // 메인그래프 UI(PART/ALL) 재동기화
-    }
-
-    // 로컬 전용 노드 1개를 View·엣지·데이터까지 정리한다. WS(OnNodeDeleted)는 발행하지 않는다
-    // (서버가 모르는 노드이므로 NODE_DELETE 를 보내면 NODE404 유발). RemoveNode 는 데이터/엣지만
-    // 지우므로 여기서 EdgeView·NodeView 파괴를 먼저 처리한다.
-    private void RemoveLocalNodeWithView(string nodeId)
-    {
-        var connectedEdges = new List<EdgeData>(_edgeRegistry.GetEdgesConnectedTo(nodeId));
-        foreach (var edge in connectedEdges)
-        {
-            if (_edgeViewMap.TryGetValue(edge.edge_id, out EdgeView ev))
-            {
-                if (ev != null) Destroy(ev.gameObject);
-                _edgeViewMap.Remove(edge.edge_id);
-            }
-        }
-
-        if (_nodeViewMap.TryGetValue(nodeId, out NodeView nv))
-        {
-            if (nv != null) Destroy(nv.gameObject);
-            _nodeViewMap.Remove(nodeId);
-        }
-
-        RemoveNode(nodeId);
-    }
+    // (구 MergeServerGraph / RemoveLocalNodeWithView 는 발화 경로가 ApplyServerNodeId rekey 로 전환되며 제거됨 —
+    //  전체 그래프 반영은 콜드로드/GRAPH_UPDATED 의 LoadGraph 경로가 담당한다.)
 
     // 메인 그래프 UI (AddPartPort) 전용 PART 노드 즉시 생성
     public string RequestCreatePartNode(string label, bool isGlobal = false)

@@ -1,15 +1,22 @@
-// 서버 2D generate(기본 생성) 요청 DTO.
-// 협의(2026-07-01): 기본 2D 생성은 이 단계에서 노드/connection/RegenerateConnectionBuilder 를
-//   반영하지 않는다. (노드 기반 부분 재생성은 /api/2d/regenerate + RegenerateRequestDto 사용.)
-// 결과 이미지는 HTTP 응답이 아니라 WS 2D_GENERATED{img_url} 로 통보된다.
-//
-// 서버 현재 스키마(2026-07-01): Generate2DRequest = { room_id } 뿐.
-//   발화(utterance)는 기능 정의 단계에서 입력되고 서버가 room_id로 그 문맥을 알고 있는 구조로 추정.
-//   → 지금은 room_id 만 보낸다. 서버 스키마 확정(협의) 후 utterance 필드 추가 예정.
-// TODO(서버 협의 후): public string utterance;  // 사용자 발화 텍스트
+using System.Collections.Generic;
+
+// 2D 스케치 생성 요청 DTO. (API 명세 2026-07-10)
+//   요구사항(feature) 기반  POST /api/2d/generate/feature  { room_id, user_id }
+//   그래프(graph) 기반      POST /api/2d/generate/graph    { room_id, user_id, connections:[{part_node_id, node_id}] }
+//   색상 변경               POST /api/2d/color_change (multipart) { room_id, file, asset_id }  ← JSON DTO 없이 form 필드
+//   결과 이미지는 HTTP 응답이 아니라 WS 2D_GENERATED{img_url} 로 통보된다.
 
 [System.Serializable]
-public class Generate2DRequestDto
+public class Generate2DFeatureRequest
 {
     public string room_id;
+    public string user_id;
+}
+
+[System.Serializable]
+public class Generate2DGraphRequest
+{
+    public string room_id;
+    public string user_id;
+    public List<ConnectionDto> connections = new List<ConnectionDto>();
 }
