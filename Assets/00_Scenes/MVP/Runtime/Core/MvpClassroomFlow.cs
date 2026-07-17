@@ -1,0 +1,3858 @@
+using System;
+using System.Collections;
+using System.Collections.Generic;
+using System.Reflection;
+using System.Text;
+using TMPro;
+using UnityEngine;
+using UnityEngine.EventSystems;
+using UnityEngine.Networking;
+using UnityEngine.UI;
+
+[DefaultExecutionOrder(-1000)]
+public class MvpClassroomFlow : MonoBehaviour
+{
+    [Header("씬 참조")]
+    [SerializeField] private GraphManager _graphManager;
+    [SerializeField] private MvpWaterRocketGraphController _waterRocketGraph;
+    [SerializeField] private GraphSyncClient _graphSyncClient;
+    [SerializeField] private Generate2DController _generate2DController;
+    [SerializeField] private MainSketchView _mainSketchView;
+    [SerializeField] private MvpWorkspaceLayout _workspaceLayout;
+
+    [Header("백엔드")]
+    [SerializeField] private string _backendHost = "127.0.0.1:8000";
+    [SerializeField] private bool _tryBackendFirst = true;
+    [SerializeField] private float _imageWaitSeconds = 9f;
+
+    private readonly MvpSessionData _session = new MvpSessionData();
+    private readonly List<MvpSketchHistoryItem> _history =
+        new List<MvpSketchHistoryItem>();
+
+    private Canvas _toolCanvas;
+    private Canvas _flowCanvas;
+    private MvpXrCanvasAnchor _flowAnchor;   // 가운데 패널을 유저 앞에 고정하는 앵커
+    private MvpRocket3DStage _rocketStage;   // 3D 단계에서 유저 앞에 조립되는 mock 3D 로켓
+    private Texture2D _workspaceMockTexture; // 워크스페이스 '2D 만들기'가 만든 로컬 mock(교체 시 파괴)
+    private bool _workspaceGenBusy;
+    [SerializeField] private MvpNetworkSession _networkSession; // room_id 기반 Fusion 멀티플레이 세션
+    private RectTransform _contentRoot;
+    private TMP_Text _modeBadge;
+    private Canvas _mainSketchCanvas;
+    private GameObject _graphRoot;
+    private TMP_Text _workspaceStatus;
+    private Button _reviewButton;
+    private Button _threeDViewButton;
+    private Button _voiceButton;   // '말로 추가' 음성 입력 토글
+    private RawImage _centerSketchImage;
+    private MvpFlowState _state;
+    private bool _requestBusy;
+    private bool _subscribed;
+    private readonly Dictionary<string, Button> _recommendationButtons =
+        new Dictionary<string, Button>();
+    private readonly HashSet<string> _resolvedRecommendations =
+        new HashSet<string>();
+
+
+    private MvpVoiceRequirementController _voiceController;
+    private MvpSpatialNodeGestureController _spatialGesture;
+    private TMP_InputField _customPartInput;
+    private bool _recommendationsDismissed;
+
+
+    private void Awake()
+    {
+        ResolveReferences();
+        PrepareExistingScene();
+        BuildFlowCanvas();
+        ShowState(MvpFlowState.Welcome);
+
+        // 노드 X(캐스케이드 삭제)는 되돌릴 수 없으므로 MVP 에서는 확인을 거친다.
+        NodeActionPanel.ConfirmDeleteHook = HandleConfirmNodeDelete;
+        // 노드 R 버튼 → 비슷한 느낌의 레퍼런스 디자인 이미지 검색(웹뷰).
+        NodeActionPanel.ReferenceHook = HandleReferenceRequest;
+    }
+
+    private void Start()
+    {
+        // EventSystem의 Awake가 끝난 뒤 ISDK 모듈을 만든다.
+        // MvpClassroomFlow의 실행 순서가 빨라 PointableCanvas.Start보다 먼저 실행된다.
+        EnsurePointableCanvasModule();
+    }
+
+
+    private void OnEnable()
+    {
+        Subscribe();
+    }
+
+    private void OnDisable()
+    {
+        Unsubscribe();
+    }
+
+    private void OnDestroy()
+    {
+        if (NodeActionPanel.ConfirmDeleteHook == HandleConfirmNodeDelete)
+            NodeActionPanel.ConfirmDeleteHook = null;
+        if (NodeActionPanel.ReferenceHook == HandleReferenceRequest)
+            NodeActionPanel.ReferenceHook = null;
+
+        foreach (MvpSketchHistoryItem item in _history)
+        {
+            if (item?.texture != null)
+                Destroy(item.texture);
+        }
+        _history.Clear();
+    }
+
+    // ─────────────────────────────────────────────
+    // 확인 팝업 (삭제·설계 마치기 등 되돌릴 수 없는 행동 앞에서)
+    // ─────────────────────────────────────────────
+
+    private Canvas _confirmCanvas;
+
+    private bool HandleConfirmNodeDelete(string nodeId, Action doDelete)
+    {
+        ShowConfirmDialog(
+            "이 노드를 지울까요?",
+            "아래에 달린 세부 조건도 함께 지워져요.\n지운 노드는 되돌릴 수 없어요.",
+            "지우기",
+            MvpStudentUiFactory.Coral,
+            doDelete);
+        return true;
+    }
+
+    private void ShowConfirmDialog(
+        string title,
+        string body,
+        string confirmLabel,
+        Color confirmColor,
+        Action onConfirm,
+        bool showCancel = true)
+    {
+        CloseConfirmDialog();
+
+        GameObject root = new GameObject(
+            "MvpConfirmCanvas",
+            typeof(RectTransform),
+            typeof(Canvas),
+            typeof(CanvasScaler),
+            typeof(GraphicRaycaster));
+        root.transform.SetParent(transform, false);
+
+        // 캔버스는 패널보다 훨씬 크게 — 남는 영역이 모달 블로커가 된다.
+        RectTransform rect = root.GetComponent<RectTransform>();
+        rect.sizeDelta = new Vector2(2400f, 1500f);
+
+        _confirmCanvas = root.GetComponent<Canvas>();
+        _confirmCanvas.renderMode = RenderMode.WorldSpace;
+        _confirmCanvas.sortingOrder = 400;   // 다른 MVP 패널 위
+        _confirmCanvas.worldCamera = Camera.main;
+
+        Camera cam = Camera.main;
+        if (cam != null)
+        {
+            Vector3 forward = cam.transform.forward;
+            forward.y = 0f;
+            if (forward.sqrMagnitude < 0.001f)
+                forward = Vector3.forward;
+            forward.Normalize();
+            root.transform.position =
+                cam.transform.position + forward * 0.85f;
+            root.transform.rotation =
+                Quaternion.LookRotation(forward);
+        }
+        root.transform.localScale = Vector3.one * 0.0009f;
+        // 사용자가 몸을 돌려도 응답을 요구하는 팝업은 시야를 따라온다.
+        root.AddComponent<MvpGentleFollow>().Configure(0.85f);
+
+        // 모달 블로커: 뒤 UI 클릭을 막고, 바깥을 누르면 취소로 처리한다.
+        Image blocker = MvpStudentUiFactory.CreatePanel(
+            root.transform,
+            "ModalBlocker",
+            Vector2.zero,
+            rect.sizeDelta,
+            new Color(0.01f, 0.02f, 0.05f, 0.55f),
+            false);
+        blocker.raycastTarget = true;
+        Button blockerButton = blocker.gameObject.AddComponent<Button>();
+        blockerButton.transition = Selectable.Transition.None;
+        blockerButton.onClick.AddListener(CloseConfirmDialog);
+
+        Image panel = MvpStudentUiFactory.CreatePanel(
+            root.transform,
+            "ConfirmPanel",
+            Vector2.zero,
+            new Vector2(720f, 380f),
+            new Color(0.045f, 0.06f, 0.09f, 0.99f),
+            true);
+        Outline rim = panel.gameObject.AddComponent<Outline>();
+        rim.effectColor = new Color(0.48f, 0.58f, 0.76f, 0.30f);
+        rim.effectDistance = new Vector2(2f, -2f);
+
+        MvpStudentUiFactory.CreateText(
+            panel.transform, "Title", title,
+            new Vector2(0f, 118f), new Vector2(640f, 56f),
+            30f, TextAlignmentOptions.Center, true,
+            new Color(0.96f, 0.98f, 1f, 1f), 1);
+
+        MvpStudentUiFactory.CreateText(
+            panel.transform, "Body", body,
+            new Vector2(0f, 22f), new Vector2(620f, 110f),
+            21f, TextAlignmentOptions.Center, false,
+            new Color(0.72f, 0.78f, 0.88f, 1f), 3);
+
+        if (showCancel)
+            MvpStudentUiFactory.CreateButton(
+                panel.transform, "Cancel", "취소",
+                new Vector2(-160f, -110f), new Vector2(250f, 74f),
+                new Color(0.14f, 0.18f, 0.26f, 1f),
+                CloseConfirmDialog, 24f);
+
+        MvpStudentUiFactory.CreateButton(
+            panel.transform, "Confirm", confirmLabel,
+            new Vector2(showCancel ? 160f : 0f, -110f),
+            new Vector2(showCancel ? 250f : 320f, 74f),
+            confirmColor,
+            () =>
+            {
+                CloseConfirmDialog();
+                onConfirm?.Invoke();
+            }, 24f);
+
+        AttachPointableCanvas(_confirmCanvas);
+    }
+
+    private void CloseConfirmDialog()
+    {
+        if (_confirmCanvas != null)
+        {
+            Destroy(_confirmCanvas.gameObject);
+            _confirmCanvas = null;
+        }
+    }
+
+    // ─────────────────────────────────────────────
+    // 노드 R 버튼 → 레퍼런스 디자인 검색 패널
+    // ─────────────────────────────────────────────
+    private MvpReferencePanel _referencePanel;
+    private ReferenceApiClient _referenceApi;
+
+    private bool HandleReferenceRequest(string nodeId)
+    {
+        if (_graphManager == null || string.IsNullOrEmpty(nodeId))
+            return false;
+
+        // 1) 즉시: 부모 체인 기반 로컬 키워드로 연다(오프라인에서도 동작).
+        string keyword = BuildLocalReferenceKeyword(nodeId);
+
+        if (_referencePanel == null)
+        {
+            _referencePanel = GetComponent<MvpReferencePanel>();
+            if (_referencePanel == null)
+                _referencePanel =
+                    gameObject.AddComponent<MvpReferencePanel>();
+        }
+        _referencePanel.OpenForNode(nodeId, keyword, AttachPointableCanvas);
+        SetWorkspaceMessage(
+            "비슷한 느낌의 디자인을 찾아볼게요. 검색어는 위 칸에서 바꿀 수 있어요.",
+            MvpStudentUiFactory.HoloCyan);
+
+        // 2) 온라인이면 서버 추천 키워드(부모 체인 반영 LLM)로 갱신을 시도한다.
+        if (_session.online &&
+            _graphSyncClient != null && _graphSyncClient.IsConnected)
+        {
+            ReferenceApiClient api = EnsureReferenceApi();
+            api?.RequestKeyword(nodeId, serverKeyword =>
+            {
+                if (!string.IsNullOrWhiteSpace(serverKeyword) &&
+                    _referencePanel != null)
+                    _referencePanel.SuggestKeyword(
+                        nodeId, serverKeyword.Trim() + " 디자인");
+            });
+        }
+        return true;
+    }
+
+    // "물로켓 {부품} {가장 구체적인 체인 라벨 최대 2개} 디자인" 형태의 검색어.
+    private string BuildLocalReferenceKeyword(string nodeId)
+    {
+        ReferenceContext context =
+            _graphManager.CollectReferenceContext(nodeId);
+
+        var words = new List<string> { "물로켓" };
+        if (!string.IsNullOrWhiteSpace(context.partLabel))
+            words.Add(context.partLabel.Trim());
+        if (context.chainLabels != null)
+        {
+            int start = Mathf.Max(0, context.chainLabels.Count - 2);
+            for (int i = start; i < context.chainLabels.Count; i++)
+            {
+                string label = context.chainLabels[i];
+                if (!string.IsNullOrWhiteSpace(label) &&
+                    !words.Contains(label.Trim()))
+                    words.Add(label.Trim());
+            }
+        }
+        words.Add("디자인");
+        return string.Join(" ", words);
+    }
+
+    private ReferenceApiClient EnsureReferenceApi()
+    {
+        if (_referenceApi != null)
+            return _referenceApi;
+
+        _referenceApi = FindFirstObjectByType<ReferenceApiClient>();
+        if (_referenceApi == null && _graphSyncClient != null)
+        {
+            _referenceApi =
+                gameObject.AddComponent<ReferenceApiClient>();
+            SetPrivateField(_referenceApi, "_syncClient", _graphSyncClient);
+        }
+        return _referenceApi;
+    }
+
+    // '방 나가기'(테이블 도크에서 호출) — 확인 후 세션을 정리하고 처음 화면으로 돌아간다.
+    public void RequestLeaveRoom()
+    {
+        ShowConfirmDialog(
+            "방에서 나갈까요?",
+            "함께 만든 그래프는 방에 남고,\n내 화면은 처음으로 돌아가요.",
+            "나가기",
+            MvpStudentUiFactory.Coral,
+            LeaveRoom);
+    }
+
+    private void LeaveRoom()
+    {
+        _networkSession?.EndSession();   // Fusion 종료 + 내 노드 잠금 반납
+        RestartFlow();                   // 그래프/기록/소켓 정리 + Welcome 으로
+    }
+
+    private void ResolveReferences()
+    {
+        if (_graphManager == null)
+            _graphManager = FindFirstObjectByType<GraphManager>();
+        if (_waterRocketGraph == null)
+            _waterRocketGraph =
+                GetComponent<MvpWaterRocketGraphController>();
+        if (_graphSyncClient == null)
+            _graphSyncClient =
+                FindFirstObjectByType<GraphSyncClient>();
+        if (_generate2DController == null)
+            _generate2DController =
+                FindFirstObjectByType<Generate2DController>();
+        if (_mainSketchView == null)
+            _mainSketchView =
+                FindFirstObjectByType<MainSketchView>();
+        if (_workspaceLayout == null)
+            _workspaceLayout =
+                FindFirstObjectByType<MvpWorkspaceLayout>();
+
+        if (_spatialGesture == null)
+            _spatialGesture =
+                GetComponent<MvpSpatialNodeGestureController>();
+        if (_spatialGesture == null)
+            _spatialGesture =
+                gameObject.AddComponent<
+                    MvpSpatialNodeGestureController>();
+
+
+        if (_voiceController == null)
+            _voiceController = GetComponent<MvpVoiceRequirementController>();
+        if (_voiceController == null)
+            _voiceController = gameObject.AddComponent<MvpVoiceRequirementController>();
+        _voiceController.Configure(_graphManager);
+        _spatialGesture.Configure(_graphManager);
+
+        if (_mainSketchView != null)
+            _mainSketchCanvas =
+                _mainSketchView.GetComponentInParent<Canvas>();
+
+        _graphRoot = GameObject.Find("GraphRoot");
+        _centerSketchImage = FindCenterSketchImage();
+    }
+
+    private void PrepareExistingScene()
+    {
+        SeedGraphLoader seed =
+            FindFirstObjectByType<SeedGraphLoader>();
+        if (seed != null)
+            seed.enabled = false;
+
+        SetPrivateField(_graphSyncClient, "_autoConnect", false);
+        SetPrivateField(_graphSyncClient, "_sendToServer", false);
+        if (_graphSyncClient != null)
+            _graphSyncClient.enabled = false;
+
+        // PointableCanvas는 활성화되는 순간 모듈을 찾으므로 먼저 준비한다.
+        EnsurePointableCanvasModule();
+        if (_mainSketchCanvas != null)
+            AttachPointableCanvas(_mainSketchCanvas);
+
+        HideLegacyHistoryDots();
+        SetMainWorkspaceVisible(false);
+    }
+
+    private void Subscribe()
+    {
+        if (_subscribed) return;
+
+        if (_waterRocketGraph != null)
+            _waterRocketGraph.OnDesignChanged +=
+                RefreshWorkspaceDock;
+        if (_spatialGesture != null)
+        {
+            _spatialGesture.OnRootNodeCreated +=
+                HandleSpatialRootCreated;
+            _spatialGesture.OnGuidanceChanged +=
+                HandleGestureGuidance;
+        }
+        if (_voiceController != null)
+            _voiceController.OnStatusChanged += HandleVoiceStatusChanged;
+        if (_networkSession != null)
+            _networkSession.OnSessionNotice += HandleSessionNotice;
+        MvpWorldKeyboard.OnOpenedGlobal += HandleKeyboardOpened;
+        MvpWorldKeyboard.OnClosedGlobal += HandleKeyboardClosed;
+        _subscribed = true;
+    }
+
+    // ─────────────────────────────────────────────
+    // 정면 레이어 겹침 중재 — 키보드가 열리면 같은 공간의 추천 패널이 비켜난다
+    // ─────────────────────────────────────────────
+    private bool _toolCanvasHiddenForKeyboard;
+
+    private void HandleKeyboardOpened()
+    {
+        if (_toolCanvas == null || !_toolCanvas.gameObject.activeSelf)
+            return;
+
+        // 추천 패널 안의 입력칸(직접 부품 추가)을 편집 중이면 패널을 유지한다.
+        TMP_InputField target = MvpWorldKeyboard.CurrentTarget;
+        if (target != null &&
+            target.transform.IsChildOf(_toolCanvas.transform))
+            return;
+
+        _toolCanvas.gameObject.SetActive(false);
+        _toolCanvasHiddenForKeyboard = true;
+    }
+
+    private void HandleKeyboardClosed()
+    {
+        if (!_toolCanvasHiddenForKeyboard)
+            return;
+        _toolCanvasHiddenForKeyboard = false;
+        if (_toolCanvas != null && !_recommendationsDismissed)
+            _toolCanvas.gameObject.SetActive(true);
+    }
+
+    // 음성 상태 문구를 안내 칩에 보여 주고, 마이크 버튼 라벨도 함께 갱신한다.
+    private void HandleVoiceStatusChanged(string message, Color color)
+    {
+        SetWorkspaceMessage(message, color);
+        RefreshVoiceButtonLabel();
+    }
+
+    private void ToggleVoiceInput()
+    {
+        if (_voiceController == null)
+        {
+            SetWorkspaceMessage(
+                "음성 입력을 아직 사용할 수 없어요.",
+                MvpStudentUiFactory.Coral);
+            return;
+        }
+
+        _voiceController.ToggleListening();
+        RefreshVoiceButtonLabel();
+    }
+
+    private MvpVoiceIndicator _voiceIndicator;
+
+    private void RefreshVoiceButtonLabel()
+    {
+        if (_voiceButton == null)
+            return;
+
+        bool listening =
+            _voiceController != null && _voiceController.IsListening;
+        bool preparing =
+            !listening &&
+            _voiceController != null && _voiceController.IsPreparingVoice;
+
+        TMP_Text label = _voiceButton.GetComponentInChildren<TMP_Text>();
+        if (label != null)
+            label.text = listening
+                ? "듣기 멈추기"
+                : preparing ? "준비 중…" : "말로 추가";
+        MvpStudentUiFactory.SetButtonColor(
+            _voiceButton,
+            listening
+                ? new Color(0.72f, 0.30f, 0.38f, 1f)   // 듣는 중엔 경고 레드로 강조
+                : MvpStudentUiFactory.GlassAction); // 평소엔 보조 글래스 톤
+
+        if (_voiceIndicator != null)
+            _voiceIndicator.SetState(
+                listening
+                    ? MvpVoiceIndicator.State.Listening
+                    : preparing
+                        ? MvpVoiceIndicator.State.Preparing
+                        : MvpVoiceIndicator.State.Idle,
+                _voiceController != null ? _voiceController.Dictation : null);
+    }
+
+    // 입장/퇴장·원격 편집 알림을 작업판 안내 칩으로 보여 준다.
+    private void HandleSessionNotice(string message)
+    {
+        SetWorkspaceMessage(message, MvpStudentUiFactory.HoloCyan);
+    }
+
+    private void Unsubscribe()
+    {
+        if (!_subscribed) return;
+
+        if (_waterRocketGraph != null)
+            _waterRocketGraph.OnDesignChanged -=
+                RefreshWorkspaceDock;
+        if (_spatialGesture != null)
+        {
+            _spatialGesture.OnRootNodeCreated -=
+                HandleSpatialRootCreated;
+            _spatialGesture.OnGuidanceChanged -=
+                HandleGestureGuidance;
+        }
+        if (_voiceController != null)
+            _voiceController.OnStatusChanged -= HandleVoiceStatusChanged;
+        if (_networkSession != null)
+            _networkSession.OnSessionNotice -= HandleSessionNotice;
+        MvpWorldKeyboard.OnOpenedGlobal -= HandleKeyboardOpened;
+        MvpWorldKeyboard.OnClosedGlobal -= HandleKeyboardClosed;
+        _subscribed = false;
+    }
+
+    private void BuildFlowCanvas()
+    {
+        Camera camera = Camera.main;
+        GameObject root = new GameObject(
+            "MvpFlowCanvas",
+            typeof(RectTransform),
+            typeof(Canvas),
+            typeof(CanvasScaler),
+            typeof(GraphicRaycaster));
+
+        RectTransform rect = root.GetComponent<RectTransform>();
+        rect.sizeDelta = new Vector2(1500f, 840f);
+
+        _flowCanvas = root.GetComponent<Canvas>();
+        _flowCanvas.renderMode = RenderMode.WorldSpace;
+        _flowCanvas.sortingOrder = 220;
+        _flowCanvas.worldCamera = camera;
+
+        CanvasScaler scaler = root.GetComponent<CanvasScaler>();
+        scaler.dynamicPixelsPerUnit = 1.4f;
+        scaler.referencePixelsPerUnit = 100f;
+
+        if (camera != null)
+        {
+            root.transform.position =
+                camera.transform.position +
+                camera.transform.forward * 1.22f +
+                camera.transform.up * -0.02f;
+            root.transform.rotation = Quaternion.LookRotation(
+                camera.transform.forward,
+                camera.transform.up);
+        }
+        root.transform.localScale = Vector3.one * 0.00135f;
+        _flowAnchor =
+            root.AddComponent<MvpXrCanvasAnchor>();
+        _flowAnchor.Configure(1.22f, -0.02f, 0.00135f);
+
+        MvpStudentUiFactory.CreatePanel(
+            rect,
+            "Backdrop",
+            Vector2.zero,
+            new Vector2(1500f, 840f),
+            MvpStudentUiFactory.Surface,
+            true);
+
+        Image topAccent = MvpStudentUiFactory.CreatePanel(
+            rect,
+            "TopAccent",
+            new Vector2(-705f, 356f),
+            new Vector2(12f, 68f),
+            MvpStudentUiFactory.Primary,
+            false);
+        topAccent.raycastTarget = false;
+
+        MvpStudentUiFactory.CreateText(
+            rect,
+            "Brand",
+            "NodeXR  ·  COLLABORATIVE DESIGN",
+            new Vector2(-435f, 356f),
+            new Vector2(510f, 62f),
+            27f,
+            TextAlignmentOptions.MidlineLeft,
+            true,
+            MvpStudentUiFactory.Ink,
+            1);
+
+        _modeBadge = MvpStudentUiFactory.CreateText(
+            rect,
+            "ModeBadge",
+            "함께 설계하기",
+            new Vector2(610f, 356f),
+            new Vector2(220f, 52f),
+            21f,
+            TextAlignmentOptions.Center,
+            true,
+            MvpStudentUiFactory.Primary,
+            1);
+
+        _contentRoot = MvpStudentUiFactory.CreateRect(
+            rect,
+            "Content",
+            new Vector2(0f, -24f),
+            new Vector2(1410f, 720f));
+
+        AttachPointableCanvas(_flowCanvas);
+        // 위치 변경은 설계 보드의 단일 작업판 버튼으로 제공한다.
+    }
+
+
+    // 회의실 책상(Table_01) 윗면 중심 x/z 와 상단 y 를 구한다.
+    private static bool TryGetDeskTop(out Vector3 center, out float topY)
+    {
+        center = Vector3.zero;
+        topY = 0f;
+        Transform table = null;
+        foreach (Transform t in Resources.FindObjectsOfTypeAll<Transform>())
+            if (t != null && t.gameObject.scene.IsValid() &&
+                t.name == "Table_01")
+            {
+                table = t;
+                break;
+            }
+        if (table == null)
+            return false;
+
+        Bounds b = new Bounds(table.position, Vector3.zero);
+        bool has = false;
+        foreach (Renderer r in table.GetComponentsInChildren<Renderer>(true))
+        {
+            if (!has) { b = r.bounds; has = true; }
+            else b.Encapsulate(r.bounds);
+        }
+        if (!has)
+            return false;
+
+        center = new Vector3(b.center.x, 0f, b.center.z);
+        topY = b.max.y;
+        return true;
+    }
+
+    private void ShowState(MvpFlowState state)
+    {
+        _state = state;
+        RestoreFlowCanvasGroup();   // 3D 조립 페이드 등 잔여 투명도 방어 복원
+        bool design = state == MvpFlowState.Design;
+
+        if (state != MvpFlowState.Design &&
+            state != MvpFlowState.ThreeD &&
+            state != MvpFlowState.Complete)
+            ClearRocketStage();
+
+        if (!design && _spatialGesture != null)
+            _spatialGesture.SetCreationEnabled(false);
+        if (_workspaceLayout != null)
+            _workspaceLayout.SetSpatialPlacementMode(design);
+
+        if (_flowCanvas != null)
+            _flowCanvas.gameObject.SetActive(!design);
+
+        SetMainWorkspaceVisible(design);
+
+        if (design)
+        {
+            BuildRequirementDock();
+            return;
+        }
+
+        ClearContent();
+        UpdateModeBadge();
+
+        switch (state)
+        {
+            case MvpFlowState.Welcome:
+                BuildWelcomePage();
+                break;
+            case MvpFlowState.CreateRoom:
+                BuildCreateRoomPage();
+                break;
+            case MvpFlowState.JoinRoom:
+                BuildJoinRoomPage();
+                break;
+            case MvpFlowState.Briefing:
+                BuildBriefingPage();
+                break;
+            case MvpFlowState.Review:
+                BuildReviewPage();
+                break;
+            case MvpFlowState.Generating:
+                BuildGeneratingPage();
+                break;
+            case MvpFlowState.Result:
+                BuildResultPage();
+                break;
+            case MvpFlowState.History:
+                BuildHistoryPage();
+                break;
+            case MvpFlowState.ThreeD:
+                BuildThreeDPage();
+                break;
+            case MvpFlowState.Complete:
+                BuildCompletePage();
+                break;
+        }
+
+        ApplyFlowVisualPass();
+    }
+
+    private void ApplyFlowVisualPass()
+    {
+        if (_flowCanvas == null || _contentRoot == null)
+            return;
+
+        Transform backdropTransform = _flowCanvas.transform.Find("Backdrop");
+        Image backdrop = backdropTransform != null
+            ? backdropTransform.GetComponent<Image>()
+            : null;
+        if (backdrop != null)
+        {
+            backdrop.color = new Color(0.025f, 0.055f, 0.13f, 0.975f);
+            backdrop.raycastTarget = false;
+
+            Outline frame = backdrop.GetComponent<Outline>();
+            if (frame == null)
+                frame = backdrop.gameObject.AddComponent<Outline>();
+            frame.effectColor = new Color(0.22f, 0.84f, 1f, 0.42f);
+            frame.effectDistance = new Vector2(2f, -2f);
+        }
+
+        Transform brandTransform = _flowCanvas.transform.Find("Brand");
+        TMP_Text brand = brandTransform != null
+            ? brandTransform.GetComponent<TMP_Text>()
+            : null;
+        if (brand != null)
+        {
+            brand.color = new Color(0.74f, 0.88f, 1f, 1f);
+            brand.fontSize = Mathf.Max(brand.fontSize, 25f);
+        }
+
+        if (_modeBadge != null)
+            _modeBadge.color = MvpStudentUiFactory.HoloCyan;
+
+        Func<Color, Color, float> colorDistance = (a, b) =>
+        {
+            float r = a.r - b.r;
+            float g = a.g - b.g;
+            float blue = a.b - b.b;
+            return r * r + g * g + blue * blue;
+        };
+
+        TMP_Text[] labels = _contentRoot.GetComponentsInChildren<TMP_Text>(true);
+        foreach (TMP_Text label in labels)
+        {
+            if (label == null ||
+                label.GetComponentInParent<Button>() != null ||
+                label.GetComponentInParent<TMP_InputField>() != null)
+                continue;
+
+            // 랜딩 인포그래픽은 작은 정보 라벨이므로 일반 본문 최소 크기
+            // 규칙을 적용하지 않는다. XR에서도 한 장의 다이어그램으로 읽힌다.
+            if (IsLandingDiagramLabel(label))
+            {
+                label.extraPadding = false;
+                label.raycastTarget = false;
+                continue;
+            }
+
+            Color current = label.color;
+            if (colorDistance(current, MvpStudentUiFactory.MutedInk) < 0.012f)
+                label.color = new Color(0.72f, 0.82f, 0.96f, 1f);
+            else if (colorDistance(current, MvpStudentUiFactory.SuccessInk) < 0.018f)
+                label.color = MvpStudentUiFactory.Mint;
+            else if (colorDistance(current, MvpStudentUiFactory.WarningInk) < 0.018f)
+                label.color = MvpStudentUiFactory.Amber;
+            else if (colorDistance(current, MvpStudentUiFactory.DangerInk) < 0.018f)
+                label.color = MvpStudentUiFactory.Coral;
+            else if (colorDistance(current, MvpStudentUiFactory.InfoInk) < 0.018f)
+                label.color = MvpStudentUiFactory.HoloCyan;
+            else
+                label.color = new Color(0.95f, 0.98f, 1f, 1f);
+
+            bool compactCopy =
+                label.name == "Body" ||
+                label.name == "Label";
+            if (compactCopy)
+            {
+                label.fontSize = Mathf.Max(label.fontSize, 17f);
+                label.fontSizeMin = 16f;
+                label.margin = new Vector4(4f, 2f, 4f, 2f);
+                label.lineSpacing = 0f;
+            }
+            else
+            {
+                label.fontSize = Mathf.Max(label.fontSize, 22f);
+                label.fontSizeMin =
+                    Mathf.Max(label.fontSizeMin, 18f);
+                label.margin = new Vector4(10f, 6f, 10f, 6f);
+                label.lineSpacing = 2f;
+            }
+            label.extraPadding = true;
+            label.raycastTarget = false;
+        }
+
+        Image[] surfaces = _contentRoot.GetComponentsInChildren<Image>(true);
+        foreach (Image surface in surfaces)
+        {
+            if (surface == null ||
+                surface.GetComponent<Button>() != null ||
+                surface.GetComponentInParent<TMP_InputField>() != null)
+                continue;
+
+            bool illustration = false;
+            Transform cursor = surface.transform;
+            while (cursor != null && cursor != _contentRoot)
+            {
+                if (cursor.name == "RocketIllustration")
+                {
+                    illustration = true;
+                    break;
+                }
+                cursor = cursor.parent;
+            }
+            if (illustration)
+                continue;
+
+            Color current = surface.color;
+            bool lightSurface =
+                current.r > 0.72f &&
+                current.g > 0.72f &&
+                current.b > 0.72f;
+            if (!lightSurface)
+                continue;
+
+            surface.color = new Color(0.075f, 0.14f, 0.27f, 0.97f);
+            surface.raycastTarget = false;
+
+            Outline outline = surface.GetComponent<Outline>();
+            if (outline == null)
+                outline = surface.gameObject.AddComponent<Outline>();
+            outline.effectColor = new Color(0.26f, 0.76f, 1f, 0.25f);
+            outline.effectDistance = new Vector2(1.5f, -1.5f);
+        }
+    }
+
+
+    private static bool IsLandingDiagramLabel(TMP_Text label)
+    {
+        if (label == null)
+            return false;
+
+        Transform current = label.transform;
+        while (current != null)
+        {
+            if (current.name == "DesignFlowIllustration")
+                return true;
+            current = current.parent;
+        }
+
+        return false;
+    }
+    private void BuildWelcomePage()
+    {
+        CreateDesignFlowIllustration(
+            _contentRoot,
+            new Vector2(-390f, -8f),
+            1.04f);
+
+        MvpStudentUiFactory.CreateText(
+            _contentRoot,
+            "WelcomeEyebrow",
+            "말로 나눈 생각이 모두의 설계가 되는 곳",
+            new Vector2(305f, 252f),
+            new Vector2(640f, 46f),
+            20f,
+            TextAlignmentOptions.Center,
+            true,
+            MvpStudentUiFactory.InfoInk,
+            1);
+
+        MvpStudentUiFactory.CreateText(
+            _contentRoot,
+            "WelcomeTitle",
+            "생각을 모아," + System.Environment.NewLine +
+            "우리의 설계를 만들어요",
+            new Vector2(305f, 145f),
+            new Vector2(650f, 150f),
+            54f,
+            TextAlignmentOptions.Center,
+            true,
+            MvpStudentUiFactory.Ink,
+            2);
+
+        MvpStudentUiFactory.CreateText(
+            _contentRoot,
+            "WelcomeBody",
+            "어떤 주제든 괜찮아요. 친구들과 나눈 생각을" +
+            System.Environment.NewLine +
+            "아이디어와 특징으로 정리하고, 함께 그림으로 확인해 보세요.",
+            new Vector2(305f, 14f),
+            new Vector2(650f, 78f),
+            24f,
+            TextAlignmentOptions.Center,
+            false,
+            MvpStudentUiFactory.MutedInk,
+            2);
+
+        MvpStudentUiFactory.CreateButton(
+            _contentRoot,
+            "CreateRoomButton",
+            "새 설계 시작하기",
+            new Vector2(305f, -88f),
+            new Vector2(438f, 78f),
+            MvpStudentUiFactory.Primary,
+            () => ShowState(MvpFlowState.CreateRoom),
+            28f);
+
+        MvpStudentUiFactory.CreateButton(
+            _contentRoot,
+            "JoinRoomButton",
+            "초대 코드로 참여하기",
+            new Vector2(305f, -182f),
+            new Vector2(438f, 70f),
+            MvpStudentUiFactory.CyanDeep,
+            () => ShowState(MvpFlowState.JoinRoom),
+            25f);
+
+        MvpStudentUiFactory.CreateButton(
+            _contentRoot,
+            "DemoButton",
+            "예시 프로젝트 열기",
+            new Vector2(305f, -268f),
+            new Vector2(438f, 62f),
+            MvpStudentUiFactory.MintDeep,
+            StartQuickDemo,
+            23f);
+    }
+
+    private void BuildCreateRoomPage()
+    {
+        MvpStudentUiFactory.CreateText(
+            _contentRoot,
+            "Title",
+            "설계방 만들기",
+            new Vector2(0f, 300f),
+            new Vector2(900f, 70f),
+            43f,
+            TextAlignmentOptions.Center,
+            true);
+
+        Image card = MvpStudentUiFactory.CreatePanel(
+            _contentRoot,
+            "CreateRoomCard",
+            new Vector2(0f, -10f),
+            new Vector2(1120f, 530f),
+            Color.white,
+            true);
+
+        TMP_InputField roomName = CreateLabeledInput(
+            card.transform,
+            "방 이름",
+            "예: 3학년 2반 프로젝트",
+            new Vector2(-250f, 130f),
+            new Vector2(460f, 66f),
+            "우리 팀 설계실");
+
+        TMP_InputField topic = CreateLabeledInput(
+            card.transform,
+            "설계 주제",
+            "예: 새로운 설계 아이디어",
+            new Vector2(250f, 130f),
+            new Vector2(460f, 66f),
+            "새로운 설계 아이디어");
+
+        TMP_InputField goal = CreateLabeledInput(
+            card.transform,
+            "오늘의 목표",
+            "예: 우리 팀만의 해결책 만들기",
+            new Vector2(0f, 5f),
+            new Vector2(960f, 66f),
+            "우리 팀만의 해결책 만들기");
+
+        TMP_InputField nickname = CreateLabeledInput(
+            card.transform,
+            "내 이름",
+            "이름 또는 별명",
+            new Vector2(-250f, -120f),
+            new Vector2(460f, 66f),
+            "선생님");
+
+
+        TMP_InputField password = CreateLabeledInput(
+            card.transform,
+            "방 비밀번호",
+            "숫자나 쉬운 단어",
+            new Vector2(250f, -120f),
+            new Vector2(460f, 66f),
+            "1234");
+        ConfigurePasswordInput(password);
+
+        TMP_Text status = MvpStudentUiFactory.CreateText(
+            card.transform,
+            "Status",
+            "백엔드가 꺼져 있어도 체험 모드로 계속할 수 있어요.",
+            new Vector2(0f, -210f),
+            new Vector2(900f, 48f),
+            19f,
+            TextAlignmentOptions.Center,
+            false,
+            MvpStudentUiFactory.MutedInk,
+            2);
+
+        MvpStudentUiFactory.CreateButton(
+            _contentRoot,
+            "Back",
+            "이전",
+            new Vector2(-230f, -318f),
+            new Vector2(210f, 64f),
+            MvpStudentUiFactory.MutedInk,
+            () => ShowState(MvpFlowState.Welcome),
+            23f);
+
+        Button create = MvpStudentUiFactory.CreateButton(
+            _contentRoot,
+            "Create",
+            "방 만들기",
+            new Vector2(110f, -318f),
+            new Vector2(430f, 72f),
+            MvpStudentUiFactory.Primary,
+            null,
+            27f);
+        create.onClick.AddListener(() =>
+            StartCoroutine(CreateRoomRoutine(
+                roomName.text,
+                topic.text,
+                goal.text,
+                nickname.text,
+                password.text,
+                status,
+                create)));
+    }
+
+    private void BuildJoinRoomPage()
+    {
+        MvpStudentUiFactory.CreateText(
+            _contentRoot,
+            "Title",
+            "설계방 입장하기",
+            new Vector2(0f, 290f),
+            new Vector2(900f, 70f),
+            43f,
+            TextAlignmentOptions.Center,
+            true);
+
+        Image card = MvpStudentUiFactory.CreatePanel(
+            _contentRoot,
+            "JoinCard",
+            new Vector2(0f, -5f),
+            new Vector2(900f, 500f),
+            Color.white,
+            true);
+
+        TMP_InputField roomCode = CreateLabeledInput(
+            card.transform,
+            "방 코드",
+            "선생님이 준 UUID 방 코드를 붙여넣기",
+            new Vector2(0f, 125f),
+            new Vector2(720f, 70f),
+            "");
+
+        TMP_InputField nickname = CreateLabeledInput(
+            card.transform,
+            "내 이름",
+            "이름 또는 별명",
+            new Vector2(-190f, -10f),
+            new Vector2(340f, 66f),
+            "학생");
+
+
+        TMP_InputField password = CreateLabeledInput(
+            card.transform,
+            "비밀번호",
+            "방 비밀번호",
+            new Vector2(190f, -10f),
+            new Vector2(340f, 66f),
+            "1234");
+        ConfigurePasswordInput(password);
+
+        TMP_Text status = MvpStudentUiFactory.CreateText(
+            card.transform,
+            "Status",
+            "방 코드는 복사해서 붙여넣으면 편해요.",
+            new Vector2(0f, -135f),
+            new Vector2(720f, 54f),
+            20f,
+            TextAlignmentOptions.Center,
+            false,
+            MvpStudentUiFactory.MutedInk,
+            2);
+
+        MvpStudentUiFactory.CreateButton(
+            _contentRoot,
+            "Back",
+            "이전",
+            new Vector2(-230f, -300f),
+            new Vector2(210f, 64f),
+            MvpStudentUiFactory.MutedInk,
+            () => ShowState(MvpFlowState.Welcome),
+            23f);
+
+        Button join = MvpStudentUiFactory.CreateButton(
+            _contentRoot,
+            "Join",
+            "입장하기",
+            new Vector2(110f, -300f),
+            new Vector2(430f, 72f),
+            MvpStudentUiFactory.CyanDeep,
+            null,
+            27f);
+        join.onClick.AddListener(() =>
+            StartCoroutine(JoinRoomRoutine(
+                roomCode.text,
+                nickname.text,
+                password.text,
+                status,
+                join)));
+    }
+
+    private void BuildBriefingPage()
+    {
+        MvpStudentUiFactory.CreateText(
+            _contentRoot,
+            "BriefingTitle",
+            "오늘의 설계 미션",
+            new Vector2(0f, 292f),
+            new Vector2(900f, 64f),
+            42f,
+            TextAlignmentOptions.Center,
+            true);
+
+        MvpStudentUiFactory.CreateText(
+            _contentRoot,
+            "RoomName",
+            string.IsNullOrEmpty(_session.roomName)
+                ? "물로켓 설계 수업"
+                : _session.roomName,
+            new Vector2(0f, 232f),
+            new Vector2(900f, 45f),
+            23f,
+            TextAlignmentOptions.Center,
+            true,
+            MvpStudentUiFactory.Primary,
+            1);
+
+        Image mission = MvpStudentUiFactory.CreatePanel(
+            _contentRoot,
+            "Mission",
+            new Vector2(0f, 140f),
+            new Vector2(1120f, 110f),
+            MvpStudentUiFactory.SurfaceBlue,
+            false);
+
+        MvpStudentUiFactory.CreateText(
+            mission.transform,
+            "MissionText",
+            "주제  " + Safe(_session.topic, "새로운 설계 아이디어") +
+            "\n목표  " + Safe(_session.goal, "안전하고 멀리 날아가기"),
+            Vector2.zero,
+            new Vector2(1050f, 90f),
+            25f,
+            TextAlignmentOptions.Center,
+            true,
+            MvpStudentUiFactory.Ink,
+            2);
+
+        CreateStepCard(-320f, -40f, "1", "부품 고르기", "AI 추천에서 필요한 부품을 골라요");
+        CreateStepCard(0f, -40f, "2", "아이디어 붙이기", "주먹을 쥐어 생각 노드를 놓아요");
+        CreateStepCard(320f, -40f, "3", "그림으로 보기", "AI가 우리 설계를 그림으로 보여줘요");
+
+        MvpStudentUiFactory.CreateText(
+            _contentRoot,
+            "ModeNotice",
+            _session.online
+                ? "서버와 연결되었습니다. 팀 활동을 시작할 수 있어요."
+                : "체험 모드입니다. 모든 단계를 로컬에서 끝까지 진행할 수 있어요.",
+            new Vector2(0f, -185f),
+            new Vector2(1000f, 44f),
+            21f,
+            TextAlignmentOptions.Center,
+            false,
+            _session.online
+                ? MvpStudentUiFactory.SuccessInk
+                : MvpStudentUiFactory.WarningInk,
+            1);
+
+        // 온라인 방일 때만 초대 코드를 노출한다. 이 코드가 있어야 친구가
+        // '초대 코드로 참여하기'로 같은 방(같은 Fusion 세션)에 들어올 수 있다.
+        if (_session.online && !string.IsNullOrEmpty(_session.roomId))
+        {
+            MvpStudentUiFactory.CreateText(
+                _contentRoot,
+                "InviteCode",
+                "초대 코드  " + _session.roomId,
+                new Vector2(-95f, -232f),
+                new Vector2(830f, 42f),
+                19f,
+                TextAlignmentOptions.Center,
+                true,
+                MvpStudentUiFactory.Primary,
+                1);
+
+            Button copy = MvpStudentUiFactory.CreateButton(
+                _contentRoot,
+                "CopyInviteCode",
+                "코드 복사",
+                new Vector2(455f, -232f),
+                new Vector2(170f, 48f),
+                MvpStudentUiFactory.CyanDeep,
+                null,
+                18f);
+            copy.onClick.AddListener(() =>
+            {
+                GUIUtility.systemCopyBuffer = _session.roomId;
+                TMP_Text label = copy.GetComponentInChildren<TMP_Text>();
+                if (label != null)
+                    StartCoroutine(FlashButtonLabel(label, "복사됨!", "코드 복사"));
+            });
+        }
+
+        MvpStudentUiFactory.CreateButton(
+            _contentRoot,
+            "StartDesign",
+            "물로켓 설계 시작",
+            new Vector2(0f, -302f),
+            new Vector2(510f, 76f),
+            MvpStudentUiFactory.Primary,
+            StartDesign,
+            28f);
+    }
+
+    private void BuildRequirementDock()
+    {
+        if (_mainSketchCanvas == null) return;
+
+        Transform oldDock =
+            _mainSketchCanvas.transform.Find("MvpRequirementDock");
+        if (oldDock != null)
+            Destroy(oldDock.gameObject);
+
+        HideOriginalGenerateControls(true);
+        HideLegacyHistoryDots();
+        BuildWorkspaceActionBar();
+        EnsureSpatialToolCanvas();
+
+        if (_recommendationsDismissed)
+        {
+            if (_toolCanvas != null)
+                _toolCanvas.gameObject.SetActive(false);
+            _spatialGesture?.SetCreationEnabled(true);
+        }
+        else
+        {
+            BuildPartRecommendationPanel();
+            _spatialGesture?.SetCreationEnabled(false);
+        }
+
+        RefreshWorkspaceDock();
+    }
+
+    private void BuildWorkspaceActionBar()
+    {
+        string[] oldNames =
+        {
+            "MvpWorkspaceActionBar",
+            "MvpFinishDesignButton",
+            "MvpWorkspaceStatus",
+            "MvpWorkspaceStatusChip"
+        };
+        foreach (string name in oldNames)
+        {
+            Transform old = _mainSketchCanvas.transform.Find(name);
+            if (old != null)
+                Destroy(old.gameObject);
+        }
+
+        Image bar = MvpStudentUiFactory.CreatePanel(
+            _mainSketchCanvas.transform,
+            "MvpWorkspaceActionBar",
+            new Vector2(-110f, -410f),
+            new Vector2(740f, 94f),
+            new Color(0.040f, 0.055f, 0.085f, 0.99f),
+            true);
+        bar.rectTransform.SetAsLastSibling();
+
+        Outline barRim = bar.gameObject.AddComponent<Outline>();
+        barRim.effectColor = new Color(0.48f, 0.58f, 0.76f, 0.20f);
+        barRim.effectDistance = new Vector2(1.25f, -1.25f);
+
+        // 안내 칩(SpatialStatus) — MvpStudentWorkspaceGuide 가 이 이름으로 찾아
+        // "지금 할 일" 안내와 음성 자막·알림(큐)을 표시한다.
+        // 액션바 리뉴얼 때 사라졌던 것을 복구(없으면 모든 안내가 조용히 버려진다).
+        Image statusChip = MvpStudentUiFactory.CreatePanel(
+            bar.transform,
+            "StatusChipBg",
+            new Vector2(0f, 74f),
+            new Vector2(720f, 42f),
+            new Color(0.02f, 0.03f, 0.06f, 0.82f),
+            false);
+        statusChip.raycastTarget = false;
+        TMP_Text statusText = MvpStudentUiFactory.CreateText(
+            bar.transform,
+            "SpatialStatus",
+            "",
+            new Vector2(0f, 74f),
+            new Vector2(690f, 38f),
+            18f,
+            TextAlignmentOptions.Center,
+            false,
+            Color.white,
+            1);
+        statusText.raycastTarget = false;
+        // 메시지는 MvpStudentWorkspaceGuide 의 큐를 거치므로
+        // _workspaceStatus 에는 연결하지 않는다(직접 쓰면 큐를 우회한다).
+
+        _reviewButton = MvpStudentUiFactory.CreateButton(
+            bar.transform,
+            "Generate2D",
+            "그림 생성하기",
+            new Vector2(-245f, 0f),
+            new Vector2(225f, 66f),
+            new Color(0.30f, 0.38f, 0.82f, 1f),
+            BeginWorkspaceGenerate,
+            19f);
+
+        // 위계: 주 행동(그림 생성하기)만 강조색, 보조 행동(3D/말로 추가)은 글래스 톤.
+        _threeDViewButton = MvpStudentUiFactory.CreateButton(
+            bar.transform,
+            "Generate3D",
+            "3D 생성하기",
+            new Vector2(0f, 0f),
+            new Vector2(225f, 66f),
+            MvpStudentUiFactory.GlassAction,
+            ToggleOrCreateWorkspace3D,
+            19f);
+
+        _voiceButton = MvpStudentUiFactory.CreateButton(
+            bar.transform,
+            "VoiceInput",
+            "말로 추가",
+            new Vector2(245f, 0f),
+            new Vector2(225f, 66f),
+            MvpStudentUiFactory.GlassAction,
+            ToggleVoiceInput,
+            19f);
+        _voiceIndicator = MvpVoiceIndicator.Attach(
+            _voiceButton.transform, new Vector2(-86f, 0f), 16f);
+        RefreshVoiceButtonLabel();
+
+        _workspaceStatus = null;
+
+        Button finish = MvpStudentUiFactory.CreateButton(
+            _mainSketchCanvas.transform,
+            "MvpFinishDesignButton",
+            "설계 마치기",
+            new Vector2(625f, -410f),
+            new Vector2(230f, 66f),
+            new Color(0.12f, 0.40f, 0.34f, 1f),
+            () => ShowConfirmDialog(
+                "설계를 마칠까요?",
+                "마치면 완료 화면으로 이동해요.\n계속 수정하려면 취소를 누르세요.",
+                "설계 마치기",
+                MvpStudentUiFactory.Mint,
+                () => ShowState(MvpFlowState.Complete)),
+            20f);
+
+        foreach (Button button in new[] { _reviewButton, _threeDViewButton, _voiceButton, finish })
+        {
+            if (button == null) continue;
+            Outline outline = button.GetComponent<Outline>();
+            if (outline != null)
+            {
+                outline.effectColor = new Color(0.78f, 0.86f, 1f, 0.18f);
+                outline.effectDistance = new Vector2(1f, -1f);
+            }
+        }
+
+        RefreshThreeDViewButton();
+    }
+
+
+    private void RecordWorkspaceSketch(Texture2D source)
+    {
+        if (source == null)
+            return;
+
+        Texture2D historyCopy = CloneTexture(source);
+        if (historyCopy == null)
+            return;
+
+        _history.Add(new MvpSketchHistoryItem
+        {
+            texture = historyCopy,
+            title = "그림 " + (_history.Count + 1),
+            summary = _waterRocketGraph != null
+                ? _waterRocketGraph.GetDesignSummary()
+                : "현재 설계"
+        });
+
+        while (_history.Count > 8)
+        {
+            MvpSketchHistoryItem oldest = _history[0];
+            _history.RemoveAt(0);
+            if (oldest?.texture != null)
+                Destroy(oldest.texture);
+        }
+    }
+
+
+    // 중앙 스케치 자리표시자('아직 그림이 없어요')를 숨긴다.
+    private void HideSketchPlaceholder()
+    {
+        if (_mainSketchCanvas == null) return;
+        foreach (Transform t in
+                 _mainSketchCanvas.GetComponentsInChildren<Transform>(true))
+        {
+            if (t != null && t.name == "SketchPlaceholder")
+            {
+                t.gameObject.SetActive(false);
+                return;
+            }
+        }
+    }
+
+    // 3D는 매번 새로 만들지 않는다. 이미 있으면 토글해 회의 중 비교할 수 있다.
+    private void ToggleOrCreateWorkspace3D()
+    {
+        if (_rocketStage == null)
+        {
+            BeginWorkspace3D();
+            return;
+        }
+
+        ToggleRocketVisibility();
+    }
+
+
+    public void RecenterWorkspaceFromWrist()
+    {
+        _workspaceLayout?.RecenterWorkspaceToActiveView();
+        SetWorkspaceMessage(
+            "작업판을 현재 자리 기준으로 다시 맞췄어요.",
+            MvpStudentUiFactory.Mint);
+    }
+
+    public int GetPersonalSketchCount()
+    {
+        return _history.Count;
+    }
+
+    public string GetPersonalSketchTitle(int index)
+    {
+        if (index < 0 || index >= _history.Count)
+            return "저장된 그림이 없어요";
+        return string.IsNullOrEmpty(_history[index]?.title)
+            ? "그림 " + (index + 1)
+            : _history[index].title;
+    }
+
+
+    public Texture GetPersonalSketchTexture(int index)
+    {
+        if (index < 0 || index >= _history.Count)
+            return null;
+        return _history[index]?.texture;
+    }
+
+
+    private void RefreshThreeDViewButton()
+    {
+        if (_threeDViewButton == null)
+            return;
+
+        bool hasModel = _rocketStage != null;
+        bool visible =
+            hasModel && _rocketStage.gameObject.activeSelf;
+
+        TMP_Text label =
+            _threeDViewButton.GetComponentInChildren<TMP_Text>();
+        if (label != null)
+            label.text = !hasModel
+                ? "3D 생성하기"
+                : visible
+                    ? "3D 숨기기"
+                    : "3D 보기";
+
+        Color stateColor = !hasModel
+            ? MvpStudentUiFactory.GlassAction   // 기본: 보조 글래스 톤(위계 유지)
+            : visible
+                ? new Color(0.32f, 0.28f, 0.66f, 1f)
+                : new Color(0.10f, 0.48f, 0.42f, 1f);
+        MvpStudentUiFactory.SetButtonColor(
+            _threeDViewButton,
+            stateColor);
+    }
+    // 생성된 3D 모델 보이기/숨기기 토글.
+    private void ToggleRocketVisibility()
+    {
+        if (_rocketStage == null)
+        {
+            SetWorkspaceMessage(
+                "먼저 '3D 만들기'로 모델을 만들어요.",
+                MvpStudentUiFactory.Amber);
+            return;
+        }
+        bool show = !_rocketStage.gameObject.activeSelf;
+        _rocketStage.gameObject.SetActive(show);
+        if (MvpAudioCue.Instance != null)
+            MvpAudioCue.Instance.Play(MvpAudioCue.Cue.KeyClick);
+        SetWorkspaceMessage(
+            show ? "3D 모델을 보입니다." : "3D 모델을 숨겼어요.",
+            MvpStudentUiFactory.Cyan);
+        RefreshThreeDViewButton();
+    }
+
+    // '2D 만들기': 다음 단계로 넘어가지 않고, 지금 연결·활성화된 노드로 중앙 그림을 다시 만든다.
+    // 오프라인이면 설계 반영 mock을 즉시 표시하고, 온라인이면 서버 AI 이미지도 함께 요청한다.
+    private void BeginWorkspaceGenerate()
+    {
+        if (_workspaceGenBusy) return;
+        StartCoroutine(WorkspaceGenerateRoutine());
+    }
+
+    private IEnumerator WorkspaceGenerateRoutine()
+    {
+        _workspaceGenBusy = true;
+
+        if (_centerSketchImage == null)
+            _centerSketchImage = FindCenterSketchImage();
+
+        MvpRocketDesign design =
+            _waterRocketGraph != null
+                ? _waterRocketGraph.GetRocketDesign(_history.Count)
+                : new MvpRocketDesign();
+
+        // 즉시: 설계(연결+활성 노드) 반영 mock을 가운데에 표시.
+        Texture2D sketch =
+            MvpFallbackSketchGenerator.CreateWaterRocketSketch(design);
+        if (_centerSketchImage != null)
+        {
+            _centerSketchImage.texture = sketch;
+            _centerSketchImage.enabled = true;
+            _centerSketchImage.color = Color.white;
+        }
+        HideSketchPlaceholder();   // '아직 그림이 없어요' 문구 제거
+        RecordWorkspaceSketch(sketch);   // 개인 손목 히스토리에만 저장
+        if (_workspaceMockTexture != null)
+            Destroy(_workspaceMockTexture);
+        _workspaceMockTexture = sketch;
+
+        if (MvpAudioCue.Instance != null)
+            MvpAudioCue.Instance.Play(MvpAudioCue.Cue.Success);
+        SetWorkspaceMessage(
+            "가운데에 새 설계 그림을 만들었어요.",
+            MvpStudentUiFactory.Mint);
+
+        // 온라인이면 서버 AI 이미지 요청 — 도착하면 Generate2DController가 중앙 이미지를 교체.
+        if (_session.online &&
+            _graphSyncClient != null &&
+            _graphSyncClient.IsConnected &&
+            _generate2DController != null)
+            _generate2DController.RequestGenerateGraphAll();
+
+        yield return null;
+        _workspaceGenBusy = false;
+    }
+
+    // '3D 만들기': 앞 공간에 지금 설계로 3D 모델을 다시 만든다(반복 가능).
+    private void BeginWorkspace3D()
+    {
+        MvpRocketDesign design =
+            _waterRocketGraph != null
+                ? _waterRocketGraph.GetRocketDesign(_history.Count)
+                : new MvpRocketDesign();
+
+        SpawnRocketStage(design);
+
+        if (MvpAudioCue.Instance != null)
+            MvpAudioCue.Instance.Play(MvpAudioCue.Cue.Commit);
+        SetWorkspaceMessage(
+            "공동 테이블 위에 3D 모델을 만들었어요.",
+            MvpStudentUiFactory.Cyan);
+    }
+
+    private void BuildPartRecommendationPanel()
+    {
+        EnsureSpatialToolCanvas();
+        if (_toolCanvas == null) return;
+
+        for (int i = _toolCanvas.transform.childCount - 1; i >= 0; i--)
+            Destroy(_toolCanvas.transform.GetChild(i).gameObject);
+
+        _toolCanvas.gameObject.SetActive(true);
+        PositionSpatialToolCanvas();
+
+        Image panel = MvpStudentUiFactory.CreatePanel(
+            _toolCanvas.transform,
+            "MvpPartRecommendationPanel",
+            Vector2.zero,
+            new Vector2(960f, 548f),
+            new Color(0.035f, 0.050f, 0.080f, 0.995f),
+            true);
+
+        Outline rim = panel.gameObject.AddComponent<Outline>();
+        rim.effectColor = new Color(0.48f, 0.58f, 0.76f, 0.28f);
+        rim.effectDistance = new Vector2(2f, -2f);
+
+        MvpStudentUiFactory.CreateText(
+            panel.transform, "Eyebrow", "AI 부품 제안",
+            new Vector2(-365f, 232f), new Vector2(180f, 32f),
+            17f, TextAlignmentOptions.MidlineLeft, true,
+            new Color(0.50f, 0.72f, 1f, 1f), 1);
+
+        MvpStudentUiFactory.CreateText(
+            panel.transform, "Title", "어떤 부품으로 시작할까요?",
+            new Vector2(-155f, 190f), new Vector2(600f, 48f),
+            29f, TextAlignmentOptions.MidlineLeft, true,
+            new Color(0.96f, 0.98f, 1f, 1f), 1);
+
+        MvpStudentUiFactory.CreateText(
+            panel.transform, "Topic",
+            "주제  ·  " + Safe(_session.topic, "새로운 설계 아이디어"),
+            new Vector2(-155f, 151f), new Vector2(600f, 32f),
+            17f, TextAlignmentOptions.MidlineLeft, false,
+            new Color(0.65f, 0.71f, 0.82f, 1f), 1);
+
+        MvpStudentUiFactory.CreateButton(
+            panel.transform, "Close", "나중에",
+            new Vector2(393f, 218f), new Vector2(118f, 46f),
+            new Color(0.10f, 0.14f, 0.22f, 1f),
+            DismissPartRecommendations, 16f);
+
+        _recommendationButtons.Clear();
+        CreateRecommendationCard(
+            panel.transform, "몸통", "물을 담고 압력을 버티는 중심 부품", -290f);
+        CreateRecommendationCard(
+            panel.transform, "날개", "흔들림을 줄이고 방향을 잡는 부품", 0f);
+        CreateRecommendationCard(
+            panel.transform, "노즈콘", "공기 저항을 줄이는 앞쪽 부품", 290f);
+
+        _customPartInput = MvpStudentUiFactory.CreateInput(
+            panel.transform, "CustomPartInput", "직접 추가할 부품 이름",
+            new Vector2(-210f, -218f), new Vector2(460f, 56f), 19f);
+
+        Image customInputSurface = _customPartInput.GetComponent<Image>();
+        if (customInputSurface != null)
+            customInputSurface.color = new Color(0.075f, 0.095f, 0.145f, 1f);
+        if (_customPartInput.textComponent != null)
+            _customPartInput.textComponent.color =
+                new Color(0.94f, 0.96f, 1f, 1f);
+        if (_customPartInput.placeholder is TMP_Text customPlaceholder)
+            customPlaceholder.color =
+                new Color(0.55f, 0.62f, 0.74f, 1f);
+
+        MvpXrKeyboardInput customInputBridge =
+            _customPartInput.GetComponent<MvpXrKeyboardInput>();
+        if (customInputBridge == null)
+            customInputBridge =
+                _customPartInput.gameObject.AddComponent<MvpXrKeyboardInput>();
+        customInputBridge.Configure(_customPartInput);
+        _customPartInput.onEndEdit.AddListener(SubmitCustomPartFromWorldKeyboard);
+
+        MvpStudentUiFactory.CreateButton(
+            panel.transform, "AddCustomPart", "직접 추가",
+            new Vector2(112f, -218f), new Vector2(158f, 56f),
+            new Color(0.12f, 0.42f, 0.54f, 1f),
+            AddCustomPart, 18f);
+
+        MvpStudentUiFactory.CreateButton(
+            panel.transform, "StartSpatialDesign", "설계 시작",
+            new Vector2(335f, -218f), new Vector2(240f, 56f),
+            new Color(0.30f, 0.38f, 0.82f, 1f),
+            DismissPartRecommendations, 19f);
+    }
+
+    private void CreateRecommendationCard(
+        Transform parent,
+        string part,
+        string reason,
+        float x)
+    {
+        Image card = MvpStudentUiFactory.CreatePanel(
+            parent,
+            "Recommendation_" + part,
+            new Vector2(x, 5f),
+            new Vector2(270f, 218f),
+            new Color(0.065f, 0.085f, 0.130f, 1f),
+            true);
+
+        Outline border = card.gameObject.AddComponent<Outline>();
+        border.effectColor = new Color(0.48f, 0.58f, 0.76f, 0.20f);
+        border.effectDistance = new Vector2(1f, -1f);
+
+        MvpStudentUiFactory.CreateText(
+            card.transform, "PartName", part,
+            new Vector2(0f, 62f), new Vector2(220f, 40f),
+            25f, TextAlignmentOptions.Center, true,
+            new Color(0.96f, 0.98f, 1f, 1f), 1);
+
+        MvpStudentUiFactory.CreateText(
+            card.transform, "Reason", reason,
+            new Vector2(0f, 15f), new Vector2(224f, 62f),
+            16f, TextAlignmentOptions.Center, false,
+            new Color(0.66f, 0.72f, 0.83f, 1f), 2);
+
+        Button add = MvpStudentUiFactory.CreateButton(
+            card.transform, "Accept", "추가하기",
+            new Vector2(-48f, -69f), new Vector2(150f, 50f),
+            new Color(0.30f, 0.38f, 0.82f, 1f),
+            () => AcceptRecommendedPart(part), 18f);
+        _recommendationButtons[part] = add;
+
+        MvpStudentUiFactory.CreateButton(
+            card.transform, "Reject", "제외",
+            new Vector2(88f, -69f), new Vector2(92f, 50f),
+            new Color(0.12f, 0.15f, 0.22f, 1f),
+            () => RejectRecommendedPart(part), 17f);
+
+        if (_resolvedRecommendations.Contains(part))
+            UpdateRecommendationButton(part);
+    }
+
+    private void AcceptRecommendedPart(string part)
+    {
+        bool added =
+            _waterRocketGraph != null &&
+            _waterRocketGraph.AddPart(part);
+        if (!added)
+        {
+            SetWorkspaceMessage(
+                part + " 부품을 추가하지 못했어요.",
+                MvpStudentUiFactory.Coral);
+            return;
+        }
+
+        _resolvedRecommendations.Add(part);
+        UpdateRecommendationButton(part);
+        SetWorkspaceMessage(
+            part + " 부품을 설계 보드에 추가했어요.",
+            MvpStudentUiFactory.Mint);
+        RefreshWorkspaceDock();
+    }
+
+    private void RejectRecommendedPart(string part)
+    {
+        _resolvedRecommendations.Add(part);
+        UpdateRecommendationButton(part);
+        SetWorkspaceMessage(
+            part + " 추천은 제외했어요. 나중에 다시 열 수 있어요.",
+            MvpStudentUiFactory.Amber);
+    }
+
+    private void UpdateRecommendationButton(string part)
+    {
+        if (!_recommendationButtons.TryGetValue(
+                part,
+                out Button button) ||
+            button == null)
+            return;
+
+        bool added =
+            _waterRocketGraph != null &&
+            _waterRocketGraph.HasPart(part);
+        button.interactable = false;
+        MvpStudentUiFactory.SetButtonColor(
+            button,
+            added
+                ? MvpStudentUiFactory.Mint
+                : MvpStudentUiFactory.MutedInk);
+
+        TMP_Text label = button.GetComponentInChildren<TMP_Text>();
+        if (label != null)
+            label.text = added ? "추가됨" : "제외됨";
+    }
+
+    private void AddCustomPart()
+    {
+        if (_customPartInput == null ||
+            string.IsNullOrWhiteSpace(_customPartInput.text))
+        {
+            SetWorkspaceMessage(
+                "추가할 부품 이름을 입력해 주세요.",
+                MvpStudentUiFactory.Coral);
+            return;
+        }
+
+        string label = _customPartInput.text.Trim();
+        bool added =
+            _waterRocketGraph != null &&
+            _waterRocketGraph.AddPart(label);
+        if (!added)
+        {
+            SetWorkspaceMessage(
+                "부품을 추가하지 못했어요. 다시 시도해 주세요.",
+                MvpStudentUiFactory.Coral);
+            return;
+        }
+
+        _customPartInput.text = "";
+        SetWorkspaceMessage(
+            label + " 부품을 직접 추가했어요.",
+            MvpStudentUiFactory.Mint);
+        RefreshWorkspaceDock();
+    }
+
+    // 월드 키보드의 enter는 이 입력칸의 onEndEdit을 호출한다.
+    // 일반 포인터로 "직접 추가"를 누를 때의 중복 제출은 막는다.
+    private void SubmitCustomPartFromWorldKeyboard(string ignored)
+    {
+        if (MvpWorldKeyboard.IsOpen)
+            AddCustomPart();
+    }
+
+    private void DismissPartRecommendations()
+    {
+        _recommendationsDismissed = true;
+        if (_toolCanvas != null)
+            _toolCanvas.gameObject.SetActive(false);
+        _spatialGesture?.SetCreationEnabled(true);
+        SetWorkspaceMessage(
+            "공간 설계를 시작했어요.",
+            MvpStudentUiFactory.HoloCyan);
+        ShowGestureCoachOnce();
+    }
+
+    // 손 조작(주먹 생성·손목 메뉴)은 눈에 보이지 않는 기능이라, 설계를 처음 시작할 때
+    // 한 번만 짧게 알려 준다. (기기당 1회 — PlayerPrefs)
+    private void ShowGestureCoachOnce()
+    {
+        const string coachKey = "Mvp.GestureCoachShown";
+        if (PlayerPrefs.GetInt(coachKey, 0) == 1)
+            return;
+
+        ShowConfirmDialog(
+            "손으로 이렇게 만들어요",
+            "주먹을 2초 쥐면 새 아이디어 노드가 생겨요.\n" +
+            "왼손바닥을 바라보면 내 메뉴(그림 기록)가 열려요.\n" +
+            "아래 '말로 추가' 버튼으로 말해서 만들 수도 있어요.",
+            "알겠어요",
+            MvpStudentUiFactory.Primary,
+            // 실제로 '알겠어요'를 눌러 확인했을 때만 1회 소진 처리한다.
+            // (표시 직전에 소진하면, 곧바로 다른 팝업에 덮여 못 본 채 사라질 수 있다.)
+            () => PlayerPrefs.SetInt(coachKey, 1),
+            false);
+    }
+
+    private void HandleSpatialRootCreated(
+        string nodeId,
+        Vector3 position)
+    {
+        _mainSketchView?.Refresh();
+        SetWorkspaceMessage(
+            "새 아이디어가 생겼어요. 이름을 바꾸거나 +로 생각을 더 붙여 보세요.",
+            MvpStudentUiFactory.Mint);
+        RefreshWorkspaceDock();
+    }
+
+    private void HandleGestureGuidance(string message)
+    {
+        if (_state != MvpFlowState.Design)
+            return;
+        SetWorkspaceMessage(
+            message,
+            MvpStudentUiFactory.HoloCyan);
+    }
+
+    private void HideLegacyHistoryDots()
+    {
+        if (_mainSketchCanvas == null) return;
+
+        Transform[] children =
+            _mainSketchCanvas.GetComponentsInChildren<Transform>(true);
+        foreach (Transform child in children)
+        {
+            if (child == null ||
+                child == _mainSketchCanvas.transform)
+                continue;
+
+            if (child.name.IndexOf(
+                    "History",
+                    StringComparison.OrdinalIgnoreCase) >= 0)
+                child.gameObject.SetActive(false);
+        }
+    }
+
+    private void EnsureSpatialToolCanvas()
+    {
+        if (_toolCanvas != null)
+        {
+            PositionSpatialToolCanvas();
+            return;
+        }
+
+        GameObject root = new GameObject(
+            "MvpPartRecommendationCanvas",
+            typeof(RectTransform),
+            typeof(Canvas),
+            typeof(CanvasScaler),
+            typeof(GraphicRaycaster));
+        root.transform.SetParent(transform, false);
+
+        RectTransform rect = root.GetComponent<RectTransform>();
+        rect.sizeDelta = new Vector2(900f, 540f);
+
+        _toolCanvas = root.GetComponent<Canvas>();
+        _toolCanvas.renderMode = RenderMode.WorldSpace;
+        _toolCanvas.sortingOrder = 320;
+        _toolCanvas.worldCamera = Camera.main;
+
+        CanvasScaler scaler = root.GetComponent<CanvasScaler>();
+        scaler.dynamicPixelsPerUnit = 2f;
+        scaler.referencePixelsPerUnit = 100f;
+
+        PositionSpatialToolCanvas();
+        AttachPointableCanvas(_toolCanvas);
+        // 손을 패널 너머로 뻗으면 반투명해지며 뒤 노드/보드 조작을 허용한다.
+        root.AddComponent<MvpPanelXray>();
+    }
+
+    private void PositionSpatialToolCanvas()
+    {
+        if (_toolCanvas == null)
+            return;
+
+        Transform board =
+            _workspaceLayout != null
+                ? _workspaceLayout.MainSketchPanel
+                : null;
+        MvpXrCanvasAnchor anchor =
+            _toolCanvas.GetComponent<MvpXrCanvasAnchor>();
+
+        if (board != null)
+        {
+            if (anchor != null)
+                anchor.enabled = false;
+
+            MvpWorkspaceSidePanelFollower follower =
+                _toolCanvas.GetComponent<
+                    MvpWorkspaceSidePanelFollower>();
+            if (follower == null)
+                follower =
+                    _toolCanvas.gameObject.AddComponent<
+                        MvpWorkspaceSidePanelFollower>();
+            follower.enabled = true;
+            follower.Configure(
+                board,
+                0.00080f,
+                0.10f,
+                -0.19f);
+            return;
+        }
+
+        MvpWorkspaceSidePanelFollower existingFollower =
+            _toolCanvas.GetComponent<
+                MvpWorkspaceSidePanelFollower>();
+        if (existingFollower != null)
+            existingFollower.enabled = false;
+
+        if (anchor == null)
+            anchor =
+                _toolCanvas.gameObject.AddComponent<
+                    MvpXrCanvasAnchor>();
+        anchor.enabled = true;
+        anchor.Configure(1.30f, 0.02f, 0.00105f);
+        anchor.Recenter();
+    }
+
+    private void BuildReviewPage()
+    {
+        MvpStudentUiFactory.CreateText(
+            _contentRoot,
+            "Title",
+            "그림으로 만들기 전에 확인해요",
+            new Vector2(0f, 300f),
+            new Vector2(900f, 62f),
+            42f,
+            TextAlignmentOptions.Center,
+            true);
+
+        int requirements =
+            _waterRocketGraph != null
+                ? _waterRocketGraph.RequirementCount
+                : 0;
+        int parts =
+            _waterRocketGraph != null
+                ? _waterRocketGraph.CorePartConnectionCount
+                : 0;
+
+        CreateMetricCard(-270f, 205f, requirements + "개",
+            "모은 아이디어", MvpStudentUiFactory.Primary);
+        CreateMetricCard(0f, 205f, parts + "/3",
+            "아이디어를 붙인 부품", MvpStudentUiFactory.Cyan);
+        CreateMetricCard(270f, 205f,
+            _waterRocketGraph != null &&
+            _waterRocketGraph.HasMinimumDesign
+                ? "준비 완료"
+                : "조금 더",
+            "그림 준비",
+            _waterRocketGraph != null &&
+            _waterRocketGraph.HasMinimumDesign
+                ? MvpStudentUiFactory.Mint
+                : MvpStudentUiFactory.Amber);
+
+        Image summaryCard = MvpStudentUiFactory.CreatePanel(
+            _contentRoot,
+            "SummaryCard",
+            new Vector2(0f, 15f),
+            new Vector2(1080f, 260f),
+            Color.white,
+            true);
+
+        MvpStudentUiFactory.CreateText(
+            summaryCard.transform,
+            "SummaryTitle",
+            "우리 팀의 최종 설계",
+            new Vector2(0f, 95f),
+            new Vector2(960f, 42f),
+            26f,
+            TextAlignmentOptions.Center,
+            true,
+            MvpStudentUiFactory.Ink,
+            1);
+
+        MvpStudentUiFactory.CreateText(
+            summaryCard.transform,
+            "Summary",
+            _waterRocketGraph != null
+                ? _waterRocketGraph.GetDesignSummary()
+                : "설계 정보를 확인할 수 없습니다.",
+            new Vector2(0f, -25f),
+            new Vector2(940f, 165f),
+            23f,
+            TextAlignmentOptions.TopLeft,
+            false,
+            MvpStudentUiFactory.Ink,
+            6);
+
+        MvpStudentUiFactory.CreateButton(
+            _contentRoot,
+            "BackToDesign",
+            "설계 수정하기",
+            new Vector2(-240f, -265f),
+            new Vector2(300f, 68f),
+            MvpStudentUiFactory.MutedInk,
+            () => ShowState(MvpFlowState.Design),
+            23f);
+
+        MvpStudentUiFactory.CreateButton(
+            _contentRoot,
+            "Generate",
+            "물로켓 그림 만들기",
+            new Vector2(190f, -265f),
+            new Vector2(440f, 74f),
+            MvpStudentUiFactory.Primary,
+            BeginGenerate,
+            27f);
+    }
+
+    private void BuildGeneratingPage()
+    {
+        CreateRocketIllustration(
+            _contentRoot,
+            new Vector2(-300f, 10f),
+            0.95f);
+
+        MvpStudentUiFactory.CreateText(
+            _contentRoot,
+            "Title",
+            "물로켓 그림을 만들고 있어요",
+            new Vector2(260f, 160f),
+            new Vector2(700f, 80f),
+            39f,
+            TextAlignmentOptions.Center,
+            true);
+
+        MvpStudentUiFactory.CreateText(
+            _contentRoot,
+            "Body",
+            _session.online
+                ? "서버 결과를 기다리는 중이에요.\n시간이 오래 걸리면 체험용 스케치로 이어집니다."
+                : "부품과 아이디어를 한 장의 그림으로 바꾸고 있어요.",
+            new Vector2(260f, 50f),
+            new Vector2(650f, 110f),
+            24f,
+            TextAlignmentOptions.Center,
+            false,
+            MvpStudentUiFactory.MutedInk,
+            3);
+
+        Image progress = MvpStudentUiFactory.CreatePanel(
+            _contentRoot,
+            "ProgressTrack",
+            new Vector2(260f, -75f),
+            new Vector2(520f, 24f),
+            MvpStudentUiFactory.Border,
+            false);
+
+        Image fill = MvpStudentUiFactory.CreatePanel(
+            progress.transform,
+            "ProgressFill",
+            new Vector2(-130f, 0f),
+            new Vector2(250f, 18f),
+            MvpStudentUiFactory.Cyan,
+            false);
+        fill.rectTransform.localRotation = Quaternion.identity;
+        // 멈춘 것처럼 보이지 않게 좌우 왕복 애니메이션(페이지가 지워지면 함께 종료).
+        StartCoroutine(AnimateProgressPulse(fill.rectTransform));
+
+        MvpStudentUiFactory.CreateText(
+            _contentRoot,
+            "Tip",
+            "Tip  물의 양과 공기 압력은 실제 실험에서 꼭 안전 수칙을 지켜요.",
+            new Vector2(260f, -185f),
+            new Vector2(700f, 80f),
+            21f,
+            TextAlignmentOptions.Center,
+            true,
+            MvpStudentUiFactory.WarningInk,
+            2);
+    }
+
+    // 버튼 라벨을 잠깐 바꿨다가 되돌린다(복사됨! 등 1회성 피드백).
+    private IEnumerator FlashButtonLabel(
+        TMP_Text label, string flash, string normal)
+    {
+        label.text = flash;
+        yield return new WaitForSecondsRealtime(1.6f);
+        if (label != null)
+            label.text = normal;
+    }
+
+    // 트랙(520) 안에서 fill(250)을 좌우로 왕복시킨다. 페이지 전환으로 fill 이 파괴되면 종료.
+    private IEnumerator AnimateProgressPulse(RectTransform fill)
+    {
+        const float travel = 130f;   // (520 - 250) / 2
+        float t = 0f;
+        while (fill != null)
+        {
+            t += Time.unscaledDeltaTime;
+            float x = Mathf.PingPong(t * 170f, travel * 2f) - travel;
+            fill.anchoredPosition = new Vector2(x, 0f);
+            yield return null;
+        }
+    }
+
+    private void BuildResultPage()
+    {
+        MvpStudentUiFactory.CreateText(
+            _contentRoot,
+            "Title",
+            "물로켓 설계 그림 완성",
+            new Vector2(0f, 300f),
+            new Vector2(900f, 64f),
+            42f,
+            TextAlignmentOptions.Center,
+            true);
+
+        Image imageCard = MvpStudentUiFactory.CreatePanel(
+            _contentRoot,
+            "ImageCard",
+            new Vector2(-315f, 5f),
+            new Vector2(650f, 470f),
+            Color.white,
+            true);
+
+        RawImage preview = MvpStudentUiFactory.CreateRawImage(
+            imageCard.transform,
+            "Preview",
+            Vector2.zero,
+            new Vector2(610f, 420f));
+        preview.texture =
+            _history.Count > 0
+                ? _history[_history.Count - 1].texture
+                : _centerSketchImage?.texture;
+
+        Image summaryCard = MvpStudentUiFactory.CreatePanel(
+            _contentRoot,
+            "ResultSummary",
+            new Vector2(385f, 35f),
+            new Vector2(520f, 400f),
+            MvpStudentUiFactory.SurfaceBlue,
+            false);
+
+        MvpStudentUiFactory.CreateText(
+            summaryCard.transform,
+            "Badge",
+            _history.Count > 0 &&
+            _history[_history.Count - 1].fromServer
+                ? "AI가 만든 그림"
+                : "체험용 설계 그림",
+            new Vector2(0f, 145f),
+            new Vector2(420f, 42f),
+            20f,
+            TextAlignmentOptions.Center,
+            true,
+            _history.Count > 0 &&
+            _history[_history.Count - 1].fromServer
+                ? MvpStudentUiFactory.SuccessInk
+                : MvpStudentUiFactory.WarningInk,
+            1);
+
+        MvpStudentUiFactory.CreateText(
+            summaryCard.transform,
+            "SummaryTitle",
+            "그림에 반영된 설계",
+            new Vector2(0f, 90f),
+            new Vector2(430f, 48f),
+            27f,
+            TextAlignmentOptions.Center,
+            true);
+
+        MvpStudentUiFactory.CreateText(
+            summaryCard.transform,
+            "Summary",
+            _waterRocketGraph != null
+                ? _waterRocketGraph.GetDesignSummary()
+                : "",
+            new Vector2(0f, -35f),
+            new Vector2(430f, 205f),
+            20f,
+            TextAlignmentOptions.TopLeft,
+            false,
+            MvpStudentUiFactory.Ink,
+            7);
+
+        MvpStudentUiFactory.CreateButton(
+            _contentRoot,
+            "Modify",
+            "설계 수정",
+            new Vector2(-350f, -285f),
+            new Vector2(260f, 62f),
+            MvpStudentUiFactory.MutedInk,
+            () => ShowState(MvpFlowState.Design),
+            22f);
+
+        MvpStudentUiFactory.CreateButton(
+            _contentRoot,
+            "History",
+            "히스토리",
+            new Vector2(-35f, -285f),
+            new Vector2(260f, 62f),
+            MvpStudentUiFactory.CyanDeep,
+            () => ShowState(MvpFlowState.History),
+            22f);
+
+        MvpStudentUiFactory.CreateButton(
+            _contentRoot,
+            "ThreeD",
+            "3D 단계 보기",
+            new Vector2(330f, -285f),
+            new Vector2(340f, 66f),
+            MvpStudentUiFactory.Primary,
+            () => ShowState(MvpFlowState.ThreeD),
+            24f);
+    }
+
+    private void BuildHistoryPage()
+    {
+        MvpStudentUiFactory.CreateText(
+            _contentRoot,
+            "Title",
+            "설계 그림 기록",
+            new Vector2(0f, 300f),
+            new Vector2(900f, 64f),
+            42f,
+            TextAlignmentOptions.Center,
+            true);
+
+        if (_history.Count == 0)
+        {
+            MvpStudentUiFactory.CreateText(
+                _contentRoot,
+                "Empty",
+                "아직 만든 설계 그림이 없어요.",
+                Vector2.zero,
+                new Vector2(800f, 80f),
+                28f,
+                TextAlignmentOptions.Center,
+                true,
+                MvpStudentUiFactory.MutedInk,
+                2);
+        }
+        else
+        {
+            MvpSketchHistoryItem current =
+                _history[_history.Count - 1];
+
+            Image previewCard = MvpStudentUiFactory.CreatePanel(
+                _contentRoot,
+                "PreviewCard",
+                new Vector2(0f, 45f),
+                new Vector2(760f, 440f),
+                Color.white,
+                true);
+            RawImage preview = MvpStudentUiFactory.CreateRawImage(
+                previewCard.transform,
+                "Preview",
+                Vector2.zero,
+                new Vector2(720f, 390f));
+            preview.texture = current.texture;
+
+            float totalWidth =
+                Mathf.Min(1000f, _history.Count * 150f);
+            float startX = -totalWidth * 0.5f + 75f;
+            for (int i = 0; i < _history.Count; i++)
+            {
+                int index = i;
+                Button thumbButton =
+                    MvpStudentUiFactory.CreateButton(
+                        _contentRoot,
+                        "History_" + i,
+                        "",
+                        new Vector2(startX + i * 150f, -225f),
+                        new Vector2(132f, 92f),
+                        i == _history.Count - 1
+                            ? MvpStudentUiFactory.Primary
+                            : MvpStudentUiFactory.SurfaceBlue,
+                        () =>
+                        {
+                            preview.texture =
+                                _history[index].texture;
+                        },
+                        16f);
+                RawImage thumb =
+                    MvpStudentUiFactory.CreateRawImage(
+                        thumbButton.transform,
+                        "Thumbnail",
+                        Vector2.zero,
+                        new Vector2(116f, 76f));
+                thumb.texture = _history[i].texture;
+            }
+        }
+
+        MvpStudentUiFactory.CreateButton(
+            _contentRoot,
+            "Back",
+            "결과로 돌아가기",
+            new Vector2(0f, -315f),
+            new Vector2(350f, 62f),
+            MvpStudentUiFactory.MutedInk,
+            () => ShowState(MvpFlowState.Result),
+            23f);
+    }
+
+    private Coroutine _threeDRoutine;
+
+    private void BuildThreeDPage()
+    {
+        // 빠른 상태 왕복으로 이전 조립 루틴이 살아 있으면 정리한다(진행바·페이드 이중 구동 방지).
+        if (_threeDRoutine != null)
+        {
+            StopCoroutine(_threeDRoutine);
+            RestoreFlowCanvasGroup();
+        }
+        _threeDRoutine = StartCoroutine(ThreeDGenerateRoutine());
+    }
+
+    // 3D "생성" 단계: 유저 앞에 프리미티브 로켓을 조립(팝인)하며 진행률을 보여주고,
+    // 완성되면 완료 화면으로 전환한다. (mock — 설계값을 반영한 절차적 3D)
+    // 조립되는 로켓이 주인공이므로, 조립 동안 패널은 반투명하게 비켜나
+    // "앞쪽 공간을 바라보세요" 안내와 화면이 모순되지 않게 한다.
+    private IEnumerator ThreeDGenerateRoutine()
+    {
+        RectTransform fill = BuildThreeDGeneratingContent();
+
+        MvpRocketDesign design =
+            _waterRocketGraph != null
+                ? _waterRocketGraph.GetRocketDesign(
+                    Mathf.Max(0, _history.Count - 1))
+                : new MvpRocketDesign();
+
+        SpawnRocketStage(design);
+
+        CanvasGroup panelGroup = EnsureFlowCanvasGroup();
+
+        float elapsed = 0f;
+        float minTime = 2.2f;
+        while (elapsed < minTime ||
+               (_rocketStage != null && !_rocketStage.BuildComplete))
+        {
+            if (_state != MvpFlowState.ThreeD)
+            {
+                RestoreFlowCanvasGroup();
+                yield break;
+            }
+            elapsed += Time.unscaledDeltaTime;
+            if (fill != null)
+                fill.sizeDelta = new Vector2(
+                    Mathf.Lerp(0f, 460f, Mathf.Clamp01(elapsed / minTime)),
+                    fill.sizeDelta.y);
+
+            if (panelGroup != null)
+            {
+                // 첫 0.9초는 안내 문구를 읽을 시간을 주고, 그 뒤 로켓에게 자리를 내준다.
+                float target = elapsed < 0.9f ? 1f : 0.16f;
+                panelGroup.alpha = Mathf.Lerp(
+                    panelGroup.alpha, target,
+                    3.2f * Time.unscaledDeltaTime);
+                panelGroup.blocksRaycasts = panelGroup.alpha > 0.7f;
+            }
+            yield return null;
+        }
+
+        RestoreFlowCanvasGroup();
+
+        if (_state != MvpFlowState.ThreeD)
+            yield break;
+
+        if (MvpAudioCue.Instance != null)
+            MvpAudioCue.Instance.Play(MvpAudioCue.Cue.Success);
+        BuildThreeDResultContent(design);
+    }
+
+    private CanvasGroup EnsureFlowCanvasGroup()
+    {
+        if (_flowCanvas == null)
+            return null;
+        CanvasGroup group = _flowCanvas.GetComponent<CanvasGroup>();
+        if (group == null)
+            group = _flowCanvas.gameObject.AddComponent<CanvasGroup>();
+        return group;
+    }
+
+    private void RestoreFlowCanvasGroup()
+    {
+        CanvasGroup group =
+            _flowCanvas != null
+                ? _flowCanvas.GetComponent<CanvasGroup>()
+                : null;
+        if (group == null)
+            return;
+        group.alpha = 1f;
+        group.blocksRaycasts = true;
+    }
+
+    private RectTransform BuildThreeDGeneratingContent()
+    {
+        MvpStudentUiFactory.CreateText(
+            _contentRoot,
+            "Eyebrow",
+            "3D 생성",
+            new Vector2(0f, 300f),
+            new Vector2(620f, 42f),
+            20f,
+            TextAlignmentOptions.Center,
+            true,
+            MvpStudentUiFactory.InfoInk,
+            1);
+
+        MvpStudentUiFactory.CreateText(
+            _contentRoot,
+            "Title",
+            "3D 물로켓을 만드는 중…",
+            new Vector2(0f, 235f),
+            new Vector2(820f, 72f),
+            40f,
+            TextAlignmentOptions.Center,
+            true);
+
+        MvpStudentUiFactory.CreateText(
+            _contentRoot,
+            "Body",
+            "여러분의 설계를 바탕으로 눈앞에서 부품을 조립하고 있어요.\n앞쪽 공간을 바라보세요.",
+            new Vector2(0f, -235f),
+            new Vector2(780f, 90f),
+            23f,
+            TextAlignmentOptions.Center,
+            false,
+            MvpStudentUiFactory.MutedInk,
+            2);
+
+        MvpStudentUiFactory.CreatePanel(
+            _contentRoot,
+            "ProgressTrack",
+            new Vector2(0f, -305f),
+            new Vector2(480f, 22f),
+            MvpStudentUiFactory.SurfaceBlue,
+            false);
+
+        RectTransform fill = MvpStudentUiFactory.CreateRect(
+            _contentRoot,
+            "ProgressFill",
+            new Vector2(-240f, -305f),
+            new Vector2(0f, 22f));
+        fill.pivot = new Vector2(0f, 0.5f);
+        fill.anchoredPosition = new Vector2(-240f, -305f);
+        Image fillImage = fill.gameObject.AddComponent<Image>();
+        fillImage.color = MvpStudentUiFactory.Primary;
+        fillImage.raycastTarget = false;
+        return fill;
+    }
+
+    private void BuildThreeDResultContent(MvpRocketDesign design)
+    {
+        ClearContent();
+
+        MvpStudentUiFactory.CreateText(
+            _contentRoot,
+            "Eyebrow",
+            "완성",
+            new Vector2(0f, 305f),
+            new Vector2(620f, 42f),
+            20f,
+            TextAlignmentOptions.Center,
+            true,
+            MvpStudentUiFactory.SuccessInk,
+            1);
+
+        MvpStudentUiFactory.CreateText(
+            _contentRoot,
+            "Title",
+            "우리 팀 3D 물로켓 완성!",
+            new Vector2(0f, 240f),
+            new Vector2(860f, 72f),
+            42f,
+            TextAlignmentOptions.Center,
+            true);
+
+        int fins = design != null ? design.finCount : 3;
+        string noseText =
+            design != null && !design.pointedNose ? "둥근 노즈콘" : "뾰족한 노즈콘";
+        MvpStudentUiFactory.CreateText(
+            _contentRoot,
+            "Summary",
+            $"부품 {(design != null ? design.partCount : 0)}개 · " +
+            $"아이디어 {(design != null ? design.requirementCount : 0)}개 · " +
+            $"날개 {fins}장 · {noseText}",
+            new Vector2(0f, 170f),
+            new Vector2(820f, 46f),
+            22f,
+            TextAlignmentOptions.Center,
+            false,
+            MvpStudentUiFactory.InfoInk,
+            1);
+
+        MvpStudentUiFactory.CreateText(
+            _contentRoot,
+            "Hint",
+            "앞에 떠 있는 3D 모델이 천천히 돌아갑니다. 가까이서 살펴보세요.",
+            new Vector2(0f, -235f),
+            new Vector2(820f, 60f),
+            22f,
+            TextAlignmentOptions.Center,
+            false,
+            MvpStudentUiFactory.MutedInk,
+            2);
+
+        MvpStudentUiFactory.CreateButton(
+            _contentRoot,
+            "Back",
+            "2D 결과 보기",
+            new Vector2(-180f, -305f),
+            new Vector2(280f, 62f),
+            MvpStudentUiFactory.MutedInk,
+            () => ShowState(MvpFlowState.Result),
+            22f);
+
+        MvpStudentUiFactory.CreateButton(
+            _contentRoot,
+            "Finish",
+            "수업 마치기",
+            new Vector2(180f, -305f),
+            new Vector2(280f, 66f),
+            MvpStudentUiFactory.Primary,
+            () => ShowState(MvpFlowState.Complete),
+            24f);
+    }
+
+    private void SpawnRocketStage(MvpRocketDesign design)
+    {
+        ClearRocketStage();
+
+        GameObject go = new GameObject("MvpRocket3DStage");
+        _rocketStage = go.AddComponent<MvpRocket3DStage>();
+
+        // 카메라 개인 좌표가 아니라 공용 보드 앞 테이블 공간에 둔다.
+        // 모든 참가자가 같은 위치에서 보고, 보드나 키보드 뒤에 가리지 않는다.
+        Transform board =
+            _workspaceLayout != null
+                ? _workspaceLayout.MainSketchPanel
+                : null;
+        if (board != null)
+        {
+            go.transform.position =
+                board.position +
+                board.right * 0.55f -
+                board.forward * 0.38f +
+                Vector3.up * 0.05f;
+            go.transform.rotation =
+                Quaternion.LookRotation(board.forward, Vector3.up);
+        }
+        else
+        {
+            Camera cam = Camera.main;
+            if (cam != null)
+            {
+                Vector3 forward = Vector3.ProjectOnPlane(
+                    cam.transform.forward,
+                    Vector3.up).normalized;
+                if (forward.sqrMagnitude < 0.001f)
+                    forward = Vector3.forward;
+
+                go.transform.position =
+                    cam.transform.position +
+                    forward * 1.05f -
+                    Vector3.up * 0.28f;
+                go.transform.rotation =
+                    Quaternion.LookRotation(forward, Vector3.up);
+            }
+        }
+
+        go.transform.localScale = Vector3.one * 1.25f;
+        go.SetActive(true);
+        _rocketStage.Build(design);
+        RefreshThreeDViewButton();
+    }
+
+    private void ClearRocketStage()
+    {
+        if (_rocketStage != null)
+        {
+            Destroy(_rocketStage.gameObject);
+            _rocketStage = null;
+        }
+
+        RefreshThreeDViewButton();
+    }
+
+    private void BuildCompletePage()
+    {
+        for (int i = 0; i < 7; i++)
+        {
+            Color color =
+                i % 3 == 0
+                    ? MvpStudentUiFactory.Primary
+                    : i % 3 == 1
+                        ? MvpStudentUiFactory.Cyan
+                        : MvpStudentUiFactory.Amber;
+            Image dot = MvpStudentUiFactory.CreatePanel(
+                _contentRoot,
+                "Confetti_" + i,
+                new Vector2(-500f + i * 165f,
+                    220f - (i % 2) * 55f),
+                new Vector2(24f, 54f),
+                color,
+                false);
+            dot.rectTransform.localRotation =
+                Quaternion.Euler(0f, 0f, -25f + i * 8f);
+        }
+
+        MvpStudentUiFactory.CreateText(
+            _contentRoot,
+            "Title",
+            "물로켓 설계 완료!",
+            new Vector2(0f, 145f),
+            new Vector2(1000f, 90f),
+            52f,
+            TextAlignmentOptions.Center,
+            true);
+
+        MvpStudentUiFactory.CreateText(
+            _contentRoot,
+            "Body",
+            Safe(_session.nickname, "우리 팀") +
+            "의 아이디어가 부품과 속성으로 정리되었어요.\n" +
+            "실제 제작에서는 보안경을 쓰고 선생님의 안전 지도를 따라요.",
+            new Vector2(0f, 35f),
+            new Vector2(1000f, 105f),
+            25f,
+            TextAlignmentOptions.Center,
+            false,
+            MvpStudentUiFactory.MutedInk,
+            3);
+
+        CreateMetricCard(-220f, -95f,
+            (_waterRocketGraph?.RequirementCount ?? 0) + "개",
+            "모은 아이디어", MvpStudentUiFactory.Primary);
+        CreateMetricCard(220f, -95f,
+            _history.Count + "장",
+            "만든 설계 그림", MvpStudentUiFactory.Cyan);
+
+        MvpStudentUiFactory.CreateButton(
+            _contentRoot,
+            "Restart",
+            "처음부터 다시하기",
+            new Vector2(0f, -280f),
+            new Vector2(470f, 72f),
+            MvpStudentUiFactory.MintDeep,
+            RestartFlow,
+            25f);
+    }
+
+    private IEnumerator CreateRoomRoutine(
+        string roomName,
+        string topic,
+        string goal,
+        string nickname,
+        string password,
+        TMP_Text status,
+        Button submit)
+    {
+        if (_requestBusy) yield break;
+
+        if (string.IsNullOrWhiteSpace(roomName) ||
+            string.IsNullOrWhiteSpace(topic) ||
+            string.IsNullOrWhiteSpace(goal) ||
+            string.IsNullOrWhiteSpace(nickname) ||
+            string.IsNullOrWhiteSpace(password))
+        {
+            status.text = "모든 칸을 채워 주세요.";
+            status.color = MvpStudentUiFactory.DangerInk;
+            yield break;
+        }
+
+        _requestBusy = true;
+        submit.interactable = false;
+        status.text = "수업방을 준비하고 있어요...";
+        status.color = MvpStudentUiFactory.Primary;
+
+        _session.roomName = roomName.Trim();
+        _session.topic = topic.Trim();
+        _session.goal = goal.Trim();
+        _session.nickname = nickname.Trim();
+        _session.password = password.Trim();
+        _session.online = false;
+
+        bool created = false;
+        if (_tryBackendFirst)
+        {
+            string roomTopic =
+                "[" + _session.roomName + "] " +
+                _session.topic + " | 수업 목표: " + _session.goal;
+            MvpCreateRoomRequest payload =
+                new MvpCreateRoomRequest
+                {
+                    room_topic = roomTopic,
+                    password = _session.password,
+                    nickname = _session.nickname
+                };
+
+            using (UnityWebRequest request = CreateJsonRequest(
+                       "http://" + _backendHost +
+                       "/api/rooms/generate",
+                       JsonUtility.ToJson(payload)))
+            {
+                request.timeout = 5;
+                yield return request.SendWebRequest();
+
+                if (request.result ==
+                    UnityWebRequest.Result.Success)
+                {
+                    MvpCreateRoomEnvelope envelope = null;
+                    try
+                    {
+                        envelope =
+                            JsonUtility.FromJson<MvpCreateRoomEnvelope>(
+                                request.downloadHandler.text);
+                    }
+                    catch (Exception exception)
+                    {
+                        Debug.LogWarning(
+                            "[MVP Flow] 방 생성 응답 파싱 실패: " +
+                            exception.Message);
+                    }
+
+                    if (envelope != null &&
+                        envelope.isSuccess &&
+                        envelope.result != null &&
+                        !string.IsNullOrEmpty(
+                            envelope.result.room_id))
+                    {
+                        _session.roomId =
+                            envelope.result.room_id;
+                        created = true;
+                    }
+                }
+                else
+                {
+                    Debug.LogWarning(
+                        "[MVP Flow] 방 생성 실패 → 체험 모드: " +
+                        request.error +
+                        " (code=" + request.responseCode + ")");
+                }
+            }
+        }
+
+        if (created)
+        {
+            bool entered = false;
+            string serverUserId = "";
+            yield return TryEnterRoom(
+                _session.roomId,
+                _session.nickname,
+                _session.password,
+                (ok, userId) =>
+                {
+                    entered = ok;
+                    serverUserId = userId;
+                });
+
+            _session.online = entered;
+            _session.userId = entered
+                ? serverUserId
+                : Guid.NewGuid().ToString();
+        }
+        else
+        {
+            _session.roomId = Guid.NewGuid().ToString();
+            _session.userId = Guid.NewGuid().ToString();
+            _session.online = false;
+        }
+
+        if (_session.online)
+            ConfigureGraphSocket();
+
+        _requestBusy = false;
+        submit.interactable = true;
+        ShowState(MvpFlowState.Briefing);
+    }
+
+    private IEnumerator JoinRoomRoutine(
+        string roomId,
+        string nickname,
+        string password,
+        TMP_Text status,
+        Button submit)
+    {
+        if (_requestBusy) yield break;
+        if (!Guid.TryParse(roomId?.Trim(), out Guid parsedRoomId) ||
+            string.IsNullOrWhiteSpace(nickname) ||
+            string.IsNullOrWhiteSpace(password))
+        {
+            status.text =
+                "올바른 방 코드와 이름, 비밀번호를 입력해 주세요.";
+            status.color = MvpStudentUiFactory.DangerInk;
+            yield break;
+        }
+
+        _requestBusy = true;
+        submit.interactable = false;
+        status.text = "방에 입장하고 있어요...";
+        status.color = MvpStudentUiFactory.Primary;
+
+        bool entered = false;
+        string userId = "";
+        yield return TryEnterRoom(
+            parsedRoomId.ToString(),
+            nickname.Trim(),
+            password.Trim(),
+            (ok, id) =>
+            {
+                entered = ok;
+                userId = id;
+            });
+
+        if (!entered)
+        {
+            status.text =
+                "방을 찾지 못했어요. 코드와 비밀번호를 확인해 주세요.";
+            status.color = MvpStudentUiFactory.DangerInk;
+            _requestBusy = false;
+            submit.interactable = true;
+            yield break;
+        }
+
+        _session.roomId = parsedRoomId.ToString();
+        _session.roomName = "함께하는 물로켓 수업";
+        _session.topic = "새로운 설계 아이디어";
+        _session.goal = "우리 팀만의 해결책 만들기";
+        _session.nickname = nickname.Trim();
+        _session.password = password.Trim();
+        _session.userId = userId;
+        _session.online = true;
+
+        ConfigureGraphSocket();
+        _requestBusy = false;
+        submit.interactable = true;
+        ShowState(MvpFlowState.Briefing);
+    }
+
+    private IEnumerator TryEnterRoom(
+        string roomId,
+        string nickname,
+        string password,
+        Action<bool, string> onDone)
+    {
+        MvpEnterRoomRequest payload =
+            new MvpEnterRoomRequest
+            {
+                room_id = roomId,
+                nickname = nickname,
+                password = password
+            };
+
+        using (UnityWebRequest request = CreateJsonRequest(
+                   "http://" + _backendHost + "/api/rooms/enter",
+                   JsonUtility.ToJson(payload)))
+        {
+            request.timeout = 5;
+            yield return request.SendWebRequest();
+
+            if (request.result !=
+                UnityWebRequest.Result.Success)
+            {
+                Debug.LogWarning(
+                    "[MVP Flow] 방 입장 실패: " +
+                    request.error +
+                    " (code=" + request.responseCode + ")");
+                onDone?.Invoke(false, "");
+                yield break;
+            }
+
+            MvpEnterRoomEnvelope envelope = null;
+            try
+            {
+                envelope =
+                    JsonUtility.FromJson<MvpEnterRoomEnvelope>(
+                        request.downloadHandler.text);
+            }
+            catch (Exception exception)
+            {
+                Debug.LogWarning(
+                    "[MVP Flow] 방 입장 응답 파싱 실패: " +
+                    exception.Message);
+            }
+
+            bool ok =
+                envelope != null &&
+                envelope.isSuccess &&
+                envelope.result != null &&
+                !string.IsNullOrEmpty(
+                    envelope.result.user_id);
+            onDone?.Invoke(
+                ok,
+                ok ? envelope.result.user_id : "");
+        }
+    }
+
+    private void StartQuickDemo()
+    {
+        _session.roomId = Guid.NewGuid().ToString();
+        _session.userId = Guid.NewGuid().ToString();
+        _session.roomName = "우리 팀 설계실";
+        _session.topic = "새로운 설계 아이디어";
+        _session.goal = "우리 팀만의 해결책 만들기";
+        _session.nickname = "학생";
+        _session.password = "1234";
+        _session.online = false;
+        ShowState(MvpFlowState.Briefing);
+    }
+
+    private void StartDesign()
+    {
+        _recommendationsDismissed = false;
+        _resolvedRecommendations.Clear();
+
+        // 테이블 위 '내 자리 설정' 도크(작업판 크기·자리 복귀·방 나가기)를 만들고 보인다.
+        MvpTableSettingsDock dock =
+            FindFirstObjectByType<MvpTableSettingsDock>();
+        if (dock == null)
+            dock = gameObject.AddComponent<MvpTableSettingsDock>();
+        dock.ShowCollapsed();
+
+        if (_centerSketchImage != null)
+        {
+            _centerSketchImage.texture = null;
+            _centerSketchImage.color = Color.white;
+        }
+
+        if (_waterRocketGraph != null)
+            _waterRocketGraph.InitializeWaterRocketGraph();
+
+        if (_workspaceLayout != null)
+        {
+            _workspaceLayout.RecenterWorkspaceToActiveView();
+            _workspaceLayout.ArrangeWorkspace();
+        }
+
+        HideLegacyHistoryDots();
+        ShowState(MvpFlowState.Design);
+    }
+
+
+    private void BeginGenerate()
+    {
+        ShowState(MvpFlowState.Generating);
+        StartCoroutine(GenerateSketchRoutine());
+    }
+
+    private IEnumerator GenerateSketchRoutine()
+    {
+        Texture before =
+            _centerSketchImage != null
+                ? _centerSketchImage.texture
+                : null;
+        bool fromServer = false;
+
+        if (_session.online &&
+            _graphSyncClient != null &&
+            _graphSyncClient.IsConnected &&
+            _generate2DController != null)
+        {
+            _generate2DController.RequestGenerateGraphAll();
+            float elapsed = 0f;
+            while (elapsed < Mathf.Max(3f, _imageWaitSeconds))
+            {
+                elapsed += Time.unscaledDeltaTime;
+                Texture current =
+                    _centerSketchImage != null
+                        ? _centerSketchImage.texture
+                        : null;
+                if (current != null && current != before)
+                {
+                    fromServer = true;
+                    break;
+                }
+                yield return null;
+            }
+        }
+        else
+        {
+            yield return new WaitForSecondsRealtime(1.15f);
+        }
+
+        // 노드 그래프에서 이번 설계를 읽어 2D 스케치·3D에 반영한다.
+        MvpRocketDesign design =
+            _waterRocketGraph != null
+                ? _waterRocketGraph.GetRocketDesign(_history.Count)
+                : new MvpRocketDesign { accentIndex = _history.Count };
+
+        Texture2D result;
+        if (fromServer &&
+            _centerSketchImage != null &&
+            _centerSketchImage.texture != null)
+        {
+            result = CloneTexture(_centerSketchImage.texture);
+        }
+        else
+        {
+            result = MvpFallbackSketchGenerator
+                .CreateWaterRocketSketch(design);
+            if (_centerSketchImage != null)
+            {
+                _centerSketchImage.texture = result;
+                _centerSketchImage.enabled = true;
+                _centerSketchImage.color = Color.white;
+            }
+        }
+
+        Texture2D historyCopy =
+            result != null ? CloneTexture(result) : null;
+        if (historyCopy == null)
+            historyCopy =
+                MvpFallbackSketchGenerator
+                    .CreateWaterRocketSketch(design);
+
+        _history.Add(new MvpSketchHistoryItem
+        {
+            texture = historyCopy,
+            title = "설계 그림 " + (_history.Count + 1),
+            summary = _waterRocketGraph != null
+                ? _waterRocketGraph.GetDesignSummary()
+                : "",
+            createdAt = DateTime.Now,
+            fromServer = fromServer
+        });
+
+        if (MvpAudioCue.Instance != null)
+            MvpAudioCue.Instance.Play(MvpAudioCue.Cue.Success);
+        ShowState(MvpFlowState.Result);
+    }
+
+    private void RestartFlow()
+    {
+        // 듣는 중이던 음성 입력이 있으면 정지한다(마이크 점유가 다음 세션까지 남는 것 방지).
+        if (_voiceController != null && _voiceController.IsListening)
+            _voiceController.ToggleListening();
+
+        _spatialGesture?.SetCreationEnabled(false);
+        _workspaceLayout?.SetSpatialPlacementMode(false);
+        _waterRocketGraph?.ClearGraph();
+        ClearRocketStage();
+        if (_workspaceMockTexture != null)
+        {
+            Destroy(_workspaceMockTexture);
+            _workspaceMockTexture = null;
+        }
+        foreach (MvpSketchHistoryItem item in _history)
+        {
+            if (item?.texture != null)
+                Destroy(item.texture);
+        }
+        _history.Clear();
+
+        if (_centerSketchImage != null)
+            _centerSketchImage.texture = null;
+
+        if (_graphSyncClient != null)
+            _graphSyncClient.enabled = false;
+
+        _recommendationsDismissed = false;
+        _resolvedRecommendations.Clear();
+        _session.Reset();
+        FindFirstObjectByType<MvpTableSettingsDock>()?.HideDock();
+        HideOriginalGenerateControls(false);
+        HideLegacyHistoryDots();
+        ShowState(MvpFlowState.Welcome);
+    }
+
+    private void RefreshWorkspaceDock()
+    {
+        if (_waterRocketGraph == null)
+            return;
+
+        // 생성 버튼 활성 조건은 안내 칩(MvpStudentWorkspaceGuide.RefreshGuide)과
+        // 동일하게 유지한다 — 두 곳이 다른 규칙로 쓰면 0.25s 마다 깜빡인다.
+        if (_reviewButton != null)
+            _reviewButton.interactable =
+                _waterRocketGraph.PartCount > 0 &&
+                _waterRocketGraph.RequirementCount > 0 &&
+                _waterRocketGraph.AppliedConnectionCount > 0;
+    }
+
+    private void SetWorkspaceMessage(string text, Color color)
+    {
+        if (_workspaceStatus != null)
+        {
+            _workspaceStatus.text = text;
+            _workspaceStatus.color = color;
+            return;
+        }
+
+        // 상태 칩이 없는 현 레이아웃에서는 학생 안내 칩으로 보여 준다.
+        // (이 폴백이 없으면 음성/네트워크 안내가 전부 조용히 사라진다.)
+        MvpStudentWorkspaceGuide guide =
+            FindFirstObjectByType<MvpStudentWorkspaceGuide>();
+        if (guide != null)
+            guide.ShowLinkFeedback(text, color);
+    }
+
+    private TMP_InputField CreateLabeledInput(
+            Transform parent,
+            string label,
+            string placeholder,
+            Vector2 position,
+            Vector2 size,
+            string defaultValue)
+    {
+        MvpStudentUiFactory.CreateText(
+            parent,
+            "Label_" + label,
+            label,
+            position + new Vector2(0f, size.y * 0.5f + 31f),
+            new Vector2(size.x, 42f),
+            22f,
+            TextAlignmentOptions.MidlineLeft,
+            true,
+            MvpStudentUiFactory.Ink,
+            1);
+
+        TMP_InputField input =
+            MvpStudentUiFactory.CreateInput(
+                parent,
+                "Input_" + label,
+                placeholder,
+                position,
+                size,
+                24f);
+        input.text = defaultValue ?? "";
+        return input;
+    }
+
+    private void CreateStepCard(
+        float x,
+        float y,
+        string number,
+        string title,
+        string body)
+    {
+        Image card = MvpStudentUiFactory.CreatePanel(
+            _contentRoot,
+            "Step_" + number,
+            new Vector2(x, y),
+            new Vector2(260f, 190f),
+            Color.white,
+            true);
+
+        Image badge = MvpStudentUiFactory.CreatePanel(
+            card.transform,
+            "Badge",
+            new Vector2(0f, 58f),
+            new Vector2(52f, 52f),
+            MvpStudentUiFactory.Primary,
+            false);
+        MvpStudentUiFactory.CreateText(
+            badge.transform,
+            "Number",
+            number,
+            Vector2.zero,
+            new Vector2(46f, 46f),
+            23f,
+            TextAlignmentOptions.Center,
+            true,
+            Color.white,
+            1);
+
+        MvpStudentUiFactory.CreateText(
+            card.transform,
+            "Title",
+            title,
+            new Vector2(0f, 8f),
+            new Vector2(220f, 42f),
+            23f,
+            TextAlignmentOptions.Center,
+            true,
+            MvpStudentUiFactory.Ink,
+            1);
+
+        MvpStudentUiFactory.CreateText(
+            card.transform,
+            "Body",
+            body,
+            new Vector2(0f, -50f),
+            new Vector2(220f, 62f),
+            17f,
+            TextAlignmentOptions.Center,
+            false,
+            MvpStudentUiFactory.MutedInk,
+            2);
+    }
+
+    private void CreateMetricCard(
+        float x,
+        float y,
+        string value,
+        string label,
+        Color accent)
+    {
+        Image card = MvpStudentUiFactory.CreatePanel(
+            _contentRoot,
+            "Metric_" + label,
+            new Vector2(x, y),
+            new Vector2(240f, 118f),
+            Color.white,
+            true);
+
+        MvpStudentUiFactory.CreateText(
+            card.transform,
+            "Value",
+            value,
+            new Vector2(0f, 22f),
+            new Vector2(210f, 48f),
+            29f,
+            TextAlignmentOptions.Center,
+            true,
+            MvpStudentUiFactory.ReadableAccentOnLight(accent),
+            1);
+        MvpStudentUiFactory.CreateText(
+            card.transform,
+            "Label",
+            label,
+            new Vector2(0f, -30f),
+            new Vector2(210f, 36f),
+            17f,
+            TextAlignmentOptions.Center,
+            false,
+            MvpStudentUiFactory.MutedInk,
+            1);
+    }
+
+    // 특정 결과물을 그리지 않고, 말한 아이디어가 노드와 스케치로 바뀌는
+    // NodeXR의 공통 흐름을 보여주는 랜딩 전용 비주얼이다.
+    // 특정 결과물을 그리지 않고, 말한 아이디어가 노드와 스케치로 바뀌는
+    // NodeXR의 공통 흐름을 보여주는 랜딩 전용 비주얼이다.
+    // 랜딩 전용 마크는 Resources에 두어 MVP 씬만으로도 안전하게 불러온다.
+    private static Texture2D LoadLandingBrandMark()
+    {
+        return Resources.Load<Texture2D>("Brand/node_xr_mark");
+    }
+
+    // 복잡한 그래프 예시 대신 한 개의 브랜드 마크와 충분한 여백으로
+    // 공동 XR 공간의 첫인상을 전달한다.
+    private void CreateDesignFlowIllustration(
+        Transform parent,
+        Vector2 position,
+        float scale)
+    {
+        RectTransform root = MvpStudentUiFactory.CreateRect(
+            parent,
+            "DesignFlowIllustration",
+            position,
+            new Vector2(490f, 510f) * scale);
+
+        Image ambient = MvpStudentUiFactory.CreatePanel(
+            root,
+            "AmbientHalo",
+            new Vector2(-8f, 26f) * scale,
+            new Vector2(354f, 354f) * scale,
+            new Color(0.12f, 0.34f, 0.62f, 0.18f),
+            false);
+        ambient.raycastTarget = false;
+
+        Image orbit = MvpStudentUiFactory.CreatePanel(
+            root,
+            "OrbitFrame",
+            new Vector2(0f, 24f) * scale,
+            new Vector2(306f, 306f) * scale,
+            new Color(0.035f, 0.10f, 0.23f, 0.88f),
+            true);
+        orbit.raycastTarget = false;
+        Outline orbitOutline = orbit.gameObject.AddComponent<Outline>();
+        orbitOutline.effectColor = new Color(
+            MvpStudentUiFactory.HoloCyan.r,
+            MvpStudentUiFactory.HoloCyan.g,
+            MvpStudentUiFactory.HoloCyan.b,
+            0.56f);
+        orbitOutline.effectDistance = new Vector2(2f, -2f) * scale;
+
+        Image markStage = MvpStudentUiFactory.CreatePanel(
+            root,
+            "BrandMarkStage",
+            new Vector2(0f, 24f) * scale,
+            new Vector2(256f, 256f) * scale,
+            new Color(0.025f, 0.065f, 0.16f, 0.96f),
+            false);
+        markStage.raycastTarget = false;
+
+        Texture2D markTexture = LoadLandingBrandMark();
+        if (markTexture != null)
+        {
+            RawImage mark = MvpStudentUiFactory.CreateRawImage(
+                root,
+                "NodeXRBrandMark",
+                new Vector2(0f, 24f) * scale,
+                new Vector2(246f, 246f) * scale);
+            mark.texture = markTexture;
+            mark.raycastTarget = false;
+        }
+        else
+        {
+            MvpStudentUiFactory.CreateText(
+                root,
+                "NodeXRFallbackMark",
+                "N",
+                new Vector2(0f, 24f) * scale,
+                new Vector2(220f, 220f) * scale,
+                142f * scale,
+                TextAlignmentOptions.Center,
+                true,
+                MvpStudentUiFactory.HoloCyan,
+                1);
+        }
+
+        Image topRule = MvpStudentUiFactory.CreatePanel(
+            root,
+            "BrandTopRule",
+            new Vector2(0f, 194f) * scale,
+            new Vector2(182f, 3f) * scale,
+            new Color(0.40f, 0.86f, 1f, 0.75f),
+            false);
+        topRule.raycastTarget = false;
+
+        MvpStudentUiFactory.CreateText(
+            root,
+            "MarkEyebrow",
+            "NODEXR",
+            new Vector2(0f, -157f) * scale,
+            new Vector2(310f, 38f) * scale,
+            20f * scale,
+            TextAlignmentOptions.Center,
+            true,
+            MvpStudentUiFactory.HoloCyan,
+            1);
+
+        MvpStudentUiFactory.CreateText(
+            root,
+            "MarkCaption",
+            "공동 설계 스튜디오",
+            new Vector2(0f, -190f) * scale,
+            new Vector2(360f, 38f) * scale,
+            21f * scale,
+            TextAlignmentOptions.Center,
+            true,
+            Color.white,
+            1);
+
+        Image beaconA = MvpStudentUiFactory.CreatePanel(
+            root,
+            "BeaconA",
+            new Vector2(-166f, 150f) * scale,
+            new Vector2(14f, 14f) * scale,
+            MvpStudentUiFactory.Mint,
+            false);
+        beaconA.raycastTarget = false;
+
+        Image beaconB = MvpStudentUiFactory.CreatePanel(
+            root,
+            "BeaconB",
+            new Vector2(176f, -88f) * scale,
+            new Vector2(10f, 10f) * scale,
+            MvpStudentUiFactory.Primary,
+            false);
+        beaconB.raycastTarget = false;
+    }
+
+    private static void CreateLandingNode(
+        Transform parent,
+        string name,
+        string label,
+        Vector2 position,
+        Color accent,
+        float scale)
+    {
+        Image node = MvpStudentUiFactory.CreatePanel(
+            parent,
+            name,
+            position * scale,
+            new Vector2(92f, 54f) * scale,
+            new Color(0.11f, 0.20f, 0.38f, 1f),
+            true);
+        Outline outline = node.gameObject.AddComponent<Outline>();
+        outline.effectColor = accent;
+        outline.effectDistance = new Vector2(2f, -2f);
+
+        Image marker = MvpStudentUiFactory.CreatePanel(
+            node.transform,
+            "Marker",
+            new Vector2(-29f, 0f) * scale,
+            new Vector2(12f, 12f) * scale,
+            accent,
+            false);
+        marker.raycastTarget = false;
+
+        MvpStudentUiFactory.CreateText(
+            node.transform,
+            "Label",
+            label,
+            new Vector2(10f, 0f) * scale,
+            new Vector2(60f, 42f) * scale,
+            15f * scale,
+            TextAlignmentOptions.Center,
+            true,
+            Color.white,
+            1);
+    }
+
+    private void CreateRocketIllustration(
+        Transform parent,
+        Vector2 position,
+        float scale)
+    {
+        RectTransform root = MvpStudentUiFactory.CreateRect(
+            parent,
+            "RocketIllustration",
+            position,
+            new Vector2(420f, 560f) * scale);
+
+        Image halo = MvpStudentUiFactory.CreatePanel(
+            root,
+            "Halo",
+            new Vector2(0f, 20f) * scale,
+            new Vector2(330f, 330f) * scale,
+            MvpStudentUiFactory.SurfaceBlue,
+            false);
+        halo.raycastTarget = false;
+
+        Image body = MvpStudentUiFactory.CreatePanel(
+            root,
+            "Body",
+            new Vector2(0f, 5f) * scale,
+            new Vector2(118f, 260f) * scale,
+            Color.white,
+            true);
+        Outline outline = body.gameObject.AddComponent<Outline>();
+        outline.effectColor = MvpStudentUiFactory.PrimaryDark;
+        outline.effectDistance =
+            new Vector2(5f, -5f) * scale;
+
+        Image water = MvpStudentUiFactory.CreatePanel(
+            body.transform,
+            "Water",
+            new Vector2(0f, -65f) * scale,
+            new Vector2(94f, 88f) * scale,
+            MvpStudentUiFactory.Cyan,
+            false);
+        water.raycastTarget = false;
+
+        Image stripe = MvpStudentUiFactory.CreatePanel(
+            body.transform,
+            "Stripe",
+            new Vector2(0f, 30f) * scale,
+            new Vector2(100f, 30f) * scale,
+            MvpStudentUiFactory.Primary,
+            false);
+        stripe.raycastTarget = false;
+
+        Image nose = MvpStudentUiFactory.CreatePanel(
+            root,
+            "Nose",
+            new Vector2(0f, 162f) * scale,
+            new Vector2(92f, 92f) * scale,
+            MvpStudentUiFactory.Coral,
+            false);
+        nose.rectTransform.localRotation =
+            Quaternion.Euler(0f, 0f, 45f);
+
+        Image leftFin = MvpStudentUiFactory.CreatePanel(
+            root,
+            "LeftFin",
+            new Vector2(-78f, -82f) * scale,
+            new Vector2(86f, 36f) * scale,
+            MvpStudentUiFactory.Amber,
+            false);
+        leftFin.rectTransform.localRotation =
+            Quaternion.Euler(0f, 0f, -42f);
+
+        Image rightFin = MvpStudentUiFactory.CreatePanel(
+            root,
+            "RightFin",
+            new Vector2(78f, -82f) * scale,
+            new Vector2(86f, 36f) * scale,
+            MvpStudentUiFactory.Amber,
+            false);
+        rightFin.rectTransform.localRotation =
+            Quaternion.Euler(0f, 0f, 42f);
+
+        MvpStudentUiFactory.CreateText(
+            root,
+            "Caption",
+            "WATER\nROCKET",
+            new Vector2(0f, -210f) * scale,
+            new Vector2(300f, 80f) * scale,
+            24f * scale,
+            TextAlignmentOptions.Center,
+            true,
+            MvpStudentUiFactory.Primary,
+            2);
+    }
+
+    private void SetMainWorkspaceVisible(bool visible)
+    {
+        if (_mainSketchCanvas != null)
+            _mainSketchCanvas.gameObject.SetActive(visible);
+        if (_graphRoot != null)
+            _graphRoot.SetActive(visible);
+        if (_toolCanvas != null)
+            _toolCanvas.gameObject.SetActive(
+                visible &&
+                _state == MvpFlowState.Design &&
+                !_recommendationsDismissed);
+    }
+
+    private void HideOriginalGenerateControls(bool hide)
+    {
+        if (_mainSketchCanvas == null) return;
+        string[] names =
+        {
+            "Generate2DControls",
+            "GenerateSectionTitle",
+            "GenerateSectionHint",
+            "GenerateFooterHint",
+            "GenerateStatusSurface",
+            "GenerateActionCard"
+        };
+
+        foreach (string name in names)
+        {
+            Transform child =
+                _mainSketchCanvas.transform.Find(name);
+            if (child != null)
+                child.gameObject.SetActive(false);
+        }
+    }
+
+    private RawImage FindCenterSketchImage()
+    {
+        if (_mainSketchCanvas == null) return null;
+
+        RawImage[] images =
+            _mainSketchCanvas.GetComponentsInChildren<RawImage>(true);
+        foreach (RawImage image in images)
+            if (image != null &&
+                image.gameObject.name == "SketchImage")
+                return image;
+
+        return images.Length > 0 ? images[0] : null;
+    }
+
+    private void ConfigureGraphSocket()
+    {
+        if (_graphSyncClient == null) return;
+
+        SetPrivateField(
+            _graphSyncClient, "_host", _backendHost);
+        SetPrivateField(
+            _graphSyncClient, "_roomId", _session.roomId);
+        SetPrivateField(
+            _graphSyncClient, "_userId", _session.userId);
+        SetPrivateField(
+            _graphSyncClient, "_autoConnect", false);
+        SetPrivateField(
+            _graphSyncClient, "_sendToServer", true);
+
+        _graphSyncClient.enabled = true;
+        ConnectGraphSocket();
+
+        // 같은 room_id로 Fusion Shared 멀티플레이 세션 시작(아바타 + 그래프 협업).
+        if (_networkSession != null && !string.IsNullOrEmpty(_session.roomId))
+            _networkSession.BeginSession(_session.roomId, null);
+    }
+
+    private async void ConnectGraphSocket()
+    {
+        try
+        {
+            if (_graphSyncClient != null &&
+                !_graphSyncClient.IsConnected)
+                await _graphSyncClient.Connect();
+        }
+        catch (Exception exception)
+        {
+            Debug.LogWarning(
+                "[MVP Flow] Graph WebSocket 연결 실패: " +
+                exception.Message);
+            _session.online = false;
+            UpdateModeBadge();
+        }
+    }
+
+    private void UpdateModeBadge()
+    {
+        if (_modeBadge == null) return;
+        _modeBadge.text =
+            string.IsNullOrEmpty(_session.roomId)
+                ? "준비됨"
+                : _session.ModeLabel;
+        _modeBadge.color =
+            _session.online
+                ? MvpStudentUiFactory.SuccessInk
+                : MvpStudentUiFactory.WarningInk;
+    }
+
+    private static UnityWebRequest CreateJsonRequest(
+        string url, string body)
+    {
+        UnityWebRequest request =
+            new UnityWebRequest(
+                url, UnityWebRequest.kHttpVerbPOST);
+        request.uploadHandler =
+            new UploadHandlerRaw(
+                Encoding.UTF8.GetBytes(body ?? "{}"));
+        request.downloadHandler =
+            new DownloadHandlerBuffer();
+        request.SetRequestHeader(
+            "Content-Type", "application/json");
+        return request;
+    }
+
+    private static void SetPrivateField(
+        object target,
+        string fieldName,
+        object value)
+    {
+        if (target == null) return;
+
+        Type type = target.GetType();
+        while (type != null)
+        {
+            FieldInfo field = type.GetField(
+                fieldName,
+                BindingFlags.Instance |
+                BindingFlags.NonPublic |
+                BindingFlags.Public |
+                BindingFlags.DeclaredOnly);
+            if (field != null)
+            {
+                field.SetValue(target, value);
+                return;
+            }
+            type = type.BaseType;
+        }
+    }
+
+    private static string Safe(string value, string fallback)
+    {
+        return string.IsNullOrWhiteSpace(value)
+            ? fallback
+            : value.Trim();
+    }
+
+    private void ClearContent()
+    {
+        if (_contentRoot == null) return;
+        for (int i = _contentRoot.childCount - 1; i >= 0; i--)
+            Destroy(_contentRoot.GetChild(i).gameObject);
+    }
+
+    private static Texture2D CloneTexture(Texture source)
+    {
+        if (source == null) return null;
+
+        RenderTexture temporary =
+            RenderTexture.GetTemporary(
+                source.width,
+                source.height,
+                0,
+                RenderTextureFormat.ARGB32);
+        RenderTexture previous = RenderTexture.active;
+
+        Graphics.Blit(source, temporary);
+        RenderTexture.active = temporary;
+
+        Texture2D copy = new Texture2D(
+            source.width,
+            source.height,
+            TextureFormat.RGBA32,
+            false);
+        copy.ReadPixels(
+            new Rect(0f, 0f, source.width, source.height),
+            0,
+            0);
+        copy.Apply(false, false);
+
+        RenderTexture.active = previous;
+        RenderTexture.ReleaseTemporary(temporary);
+        return copy;
+    }
+
+    private static Type FindRuntimeType(string fullName)
+    {
+        foreach (Assembly assembly in
+                 AppDomain.CurrentDomain.GetAssemblies())
+        {
+            Type type = assembly.GetType(fullName);
+            if (type != null) return type;
+        }
+        return null;
+    }
+
+    private static void AttachPointableCanvas(Canvas canvas)
+    {
+        if (canvas == null) return;
+
+        Type pointableType =
+            FindRuntimeType("Oculus.Interaction.PointableCanvas");
+        if (pointableType == null) return;
+
+        // UI 오브젝트에 남아 있는 파괴 예약 컴포넌트를 재사용하지 않는다.
+        BoxCollider box = canvas.GetComponent<BoxCollider>();
+        if (box == null)
+            box = canvas.gameObject.AddComponent<BoxCollider>();
+        if (box == null)
+        {
+            Debug.LogWarning(
+                "[MVP XR] Canvas 충돌면을 만들지 못했습니다: " +
+                canvas.name);
+            return;
+        }
+
+        RectTransform rect =
+            canvas.GetComponent<RectTransform>();
+        if (rect != null)
+        {
+            Vector2 size = rect.rect.size;
+            box.center = Vector3.zero;
+            box.size = new Vector3(
+                Mathf.Max(1f, Mathf.Abs(size.x)),
+                Mathf.Max(1f, Mathf.Abs(size.y)),
+                4f);
+        }
+
+        Component pointable = canvas.GetComponent(pointableType);
+        if (pointable == null)
+            pointable = canvas.gameObject.AddComponent(pointableType);
+        MethodInfo injectCanvas = pointableType.GetMethod(
+            "InjectAllPointableCanvas",
+            BindingFlags.Instance | BindingFlags.Public);
+        injectCanvas?.Invoke(pointable, new object[] { canvas });
+
+        Type surfaceType = FindRuntimeType(
+            "Oculus.Interaction.Surfaces.ColliderSurface");
+        Type rayType = FindRuntimeType(
+            "Oculus.Interaction.RayInteractable");
+        if (surfaceType == null || rayType == null)
+            return;
+
+        Component surface = canvas.GetComponent(surfaceType);
+        if (surface == null)
+            surface = canvas.gameObject.AddComponent(surfaceType);
+        Component interactable = canvas.GetComponent(rayType);
+        if (interactable == null)
+            interactable = canvas.gameObject.AddComponent(rayType);
+
+        // Meta ISDK 컴포넌트는 Awake에서 캐시하므로 필드만 바꾸지 않고
+        // 공식 런타임 주입 메서드로 캐시와 직렬화 필드를 함께 갱신한다.
+        surfaceType.GetMethod(
+            "InjectCollider",
+            BindingFlags.Instance | BindingFlags.Public)
+            ?.Invoke(surface, new object[] { box });
+        rayType.GetMethod(
+            "InjectAllRayInteractable",
+            BindingFlags.Instance | BindingFlags.Public)
+            ?.Invoke(interactable, new object[] { surface });
+        rayType.GetMethod(
+            "InjectOptionalPointableElement",
+            BindingFlags.Instance | BindingFlags.Public)
+            ?.Invoke(interactable, new object[] { pointable });
+    }
+
+    private static void EnsurePointableCanvasModule()
+    {
+        EventSystem eventSystem =
+            EventSystem.current ??
+            FindFirstObjectByType<EventSystem>();
+        if (eventSystem == null) return;
+
+        Type type = FindRuntimeType(
+            "Oculus.Interaction.PointableCanvasModule");
+        if (type == null) return;
+
+        // 다른 씬이나 프리팹의 모듈이 아니라 현재 EventSystem에 둔다.
+        Component module = eventSystem.GetComponent(type);
+        if (module == null)
+            module = eventSystem.gameObject.AddComponent(type);
+        SetPrivateField(module, "_exclusiveMode", false);
+    }
+
+
+    private static void ConfigurePasswordInput(TMP_InputField input)
+    {
+        if (input == null) return;
+        input.contentType = TMP_InputField.ContentType.Password;
+        input.inputType = TMP_InputField.InputType.Password;
+        input.characterLimit = 32;
+        input.ForceLabelUpdate();
+    }
+}

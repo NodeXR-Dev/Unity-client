@@ -28,6 +28,7 @@ public class GraphSnapshotDto
     public List<SubGraphDto> sub_graphs = new List<SubGraphDto>();
 
     // 중첩 sub_graphs → flat GraphData 로 평탄화. 각 노드에 소속 sub_graph_id 를 채운다.
+    // 현재 서버의 PART → PROPERTY/REFERENCE 적용 엣지는 로컬 표준 PROPERTY/REFERENCE → PART로 뒤집는다.
     public GraphData ToGraphData()
     {
         var graph = new GraphData
@@ -40,43 +41,60 @@ public class GraphSnapshotDto
 
         if (sub_graphs == null) return graph;
 
+        var typeByNodeId = new Dictionary<string, NodeType>();
+
+        // 교차 엣지가 다른 sub_graph의 노드를 가리킬 수 있으므로 노드를 먼저 전부 수집한다.
         foreach (var sg in sub_graphs)
         {
-            if (sg == null) continue;
+            if (sg?.nodes == null) continue;
 
-            if (sg.nodes != null)
+            foreach (var n in sg.nodes)
             {
-                foreach (var n in sg.nodes)
+                if (n == null || string.IsNullOrEmpty(n.node_id)) continue;
+                var node = new NodeData
                 {
-                    if (n == null || string.IsNullOrEmpty(n.node_id)) continue;
-                    graph.nodes.Add(new NodeData
-                    {
-                        node_id            = n.node_id,
-                        type               = n.type,
-                        node_text          = n.node_text,
-                        label              = n.node_text,   // 표시는 label 우선 → node_text 로 채움(REFERENCE 는 null 가능)
-                        position           = n.position,
-                        parent_node_id     = n.parent_node_id,
-                        sub_graph_id       = sg.sub_graph_id,
-                        used_in_generation = n.used_in_generation,
-                        data               = n.data,
-                    });
-                }
+                    node_id            = n.node_id,
+                    type               = n.type,
+                    node_text          = n.node_text,
+                    label              = n.node_text,
+                    position           = n.position,
+                    parent_node_id     = n.parent_node_id,
+                    sub_graph_id       = sg.sub_graph_id,
+                    used_in_generation = n.used_in_generation,
+                    data               = n.data,
+                };
+                graph.nodes.Add(node);
+                typeByNodeId[node.node_id] = node.NodeType;
             }
+        }
 
-            if (sg.edges != null)
+        foreach (var sg in sub_graphs)
+        {
+            if (sg?.edges == null) continue;
+
+            foreach (var e in sg.edges)
             {
-                foreach (var e in sg.edges)
+                if (e == null || string.IsNullOrEmpty(e.edge_id)) continue;
+
+                string localFromNodeId = e.from_node_id;
+                string localToNodeId   = e.to_node_id;
+
+                if (typeByNodeId.TryGetValue(e.from_node_id, out NodeType fromType) &&
+                    typeByNodeId.TryGetValue(e.to_node_id, out NodeType toType) &&
+                    fromType == NodeType.PART &&
+                    (toType == NodeType.PROPERTY || toType == NodeType.REFERENCE))
                 {
-                    if (e == null || string.IsNullOrEmpty(e.edge_id)) continue;
-                    graph.edges.Add(new EdgeData
-                    {
-                        edge_id            = e.edge_id,
-                        from_node_id       = e.from_node_id,
-                        to_node_id         = e.to_node_id,
-                        used_in_generation = e.used_in_generation,
-                    });
+                    localFromNodeId = e.to_node_id;
+                    localToNodeId   = e.from_node_id;
                 }
+
+                graph.edges.Add(new EdgeData
+                {
+                    edge_id            = e.edge_id,
+                    from_node_id       = localFromNodeId,
+                    to_node_id         = localToNodeId,
+                    used_in_generation = e.used_in_generation,
+                });
             }
         }
 

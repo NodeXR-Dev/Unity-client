@@ -25,6 +25,15 @@ public class NodeActionPanel : MonoBehaviour
 
     public string BoundNodeId => _nodeId;
 
+    // 삭제 전 확인 UI 를 끼워 넣는 훅(MVP 가 설정). (nodeId, 확정 콜백)을 받아
+    // true 를 반환하면 삭제를 훅이 책임진다(사용자가 확인하면 콜백 호출).
+    // 훅이 없으면(다른 씬) 기존처럼 즉시 삭제한다.
+    public static System.Func<string, System.Action, bool> ConfirmDeleteHook;
+
+    // R(레퍼런스) 버튼 동작을 씬별로 주입하는 훅(MVP: 웹뷰 레퍼런스 검색 패널).
+    // (nodeId) 를 받아 true 를 반환하면 훅이 처리한 것 — 기존 로그 동작을 건너뛴다.
+    public static System.Func<string, bool> ReferenceHook;
+
     public void Bind(string nodeId, GraphManager manager)
     {
         if (string.IsNullOrEmpty(nodeId) || manager == null)
@@ -56,10 +65,20 @@ public class NodeActionPanel : MonoBehaviour
         if (_referenceButton != null) _referenceButton.onClick.RemoveListener(InvokeReference);
     }
 
-    // X 버튼: 자손 캐스케이드 삭제
+    // X 버튼: 자손 캐스케이드 삭제 (훅이 있으면 확인 후 삭제)
     public void InvokeDelete()
     {
         if (!EnsureBound("InvokeDelete")) return;
+
+        if (ConfirmDeleteHook != null && ConfirmDeleteHook(_nodeId, ExecuteDelete))
+            return;
+
+        ExecuteDelete();
+    }
+
+    private void ExecuteDelete()
+    {
+        if (_manager == null || string.IsNullOrEmpty(_nodeId)) return;
         if (!_manager.RequestDeleteNode(_nodeId))
             Debug.LogWarning($"[NodeActionPanel] 노드 삭제 실패: {_nodeId}");
     }
@@ -79,13 +98,16 @@ public class NodeActionPanel : MonoBehaviour
             Debug.LogWarning($"[NodeActionPanel] 자식 노드 생성 실패: {_nodeId}");
     }
 
-    // R 버튼: 컨텍스트 수집 후 패널 전달 (stub — ReferenceSearchPanel 미구현)
+    // R 버튼: 훅이 있으면(MVP 레퍼런스 패널) 위임, 없으면 컨텍스트 로그만.
     public void InvokeReference()
     {
         if (!EnsureBound("InvokeReference")) return;
+
+        if (ReferenceHook != null && ReferenceHook(_nodeId))
+            return;
+
         var ctx = _manager.CollectReferenceContext(_nodeId);
         Debug.Log($"[NodeActionPanel] R 버튼: chain=[{string.Join(" → ", ctx.chainLabels)}], part={ctx.partLabel ?? "없음"}");
-        // TODO: ReferenceSearchPanel.Open(ctx)
     }
 
     private bool EnsureBound(string from)

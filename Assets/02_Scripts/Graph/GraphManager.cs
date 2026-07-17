@@ -65,6 +65,18 @@ public class GraphManager : MonoBehaviour
     //   placeholderNodeId : 사용자가 입력한 로컬 임시 노드 id. 서버 node_id 로 rekey 대상.
     public event Action<string, string, string> OnUtteranceNodeRequested;
 
+    // 서버 ACK 로 로컬 임시 id 가 서버 발급 id 로 rekey 된 시점 발행.
+    // Fusion 피어들은 아직 임시 id 로 노드를 들고 있으므로, 브리지가 이 이벤트를
+    // GraphNetworkManager 로 전파해 모든 피어의 id 를 맞춘다(id 불일치로 이후
+    // 이동/삭제 RPC 가 유실되는 것 방지).
+    //   (oldId, newId, newText?) — newText 는 발화 경로에서 서버가 준 라벨(없으면 null).
+    public event Action<string, string, string> OnNodeRekeyed;
+    public event Action<string, string> OnEdgeRekeyed;   // (oldId, newId)
+
+    // 자식 노드 활성/비활성 토글 시 발행(값이 실제로 바뀔 때만).
+    // 브리지가 Fusion 으로 전파해 다른 참가자 화면의 초록선/흐림도 함께 바뀐다.
+    public event Action<string, bool> OnNodeActiveChanged;
+
     // ─────────────────────────────────────────────
     // 내부 상태
     // ─────────────────────────────────────────────
@@ -128,9 +140,10 @@ public class GraphManager : MonoBehaviour
     }
 
     public GraphData GetGraphData() => _graphData;
+    public float LayoutHSpacing => _layoutHSpacing;
 
     // 현재 그래프로 2D 그래프 스케치(/api/2d/generate/graph) 요청 JSON 생성(부분 생성 시 selectedPartNodeIds 지정).
-    // 명세: connections = [{ part_node_id, node_id(leaf) }] + room_id/user_id.
+    // 명세: connections = [{ part_node_id, node_id(root) }] + room_id/user_id.
     public string BuildGraphSketchRequestJson(string userId, ICollection<string> selectedPartNodeIds = null)
         => RegenerateConnectionBuilder.BuildGraphRequestJson(_graphData, userId, selectedPartNodeIds);
 
@@ -257,6 +270,7 @@ public class GraphManager : MonoBehaviour
     }
 
     public NodeData GetNode(string nodeId) => _nodeRegistry.Get(nodeId);
+    public EdgeData GetEdge(string edgeId) => _edgeRegistry.Get(edgeId);
     public List<NodeData> GetAllNodes()    => _nodeRegistry.GetAll();
 
     // 이 노드가 서버에 등록된(LoadGraph 유입 / ApplyServerNodeId rekey) 노드인지.
@@ -702,6 +716,7 @@ public class GraphManager : MonoBehaviour
         BackfillSubGraphIds();
 
         Debug.Log($"[GraphManager] ApplyServerNodeId: job_id={jobId} → node_id={serverNodeId}");
+        OnNodeRekeyed?.Invoke(jobId, serverNodeId, serverNodeText);
     }
 
     // 서버 EDGE_CREATE ACK 수신 시 호출한다(GraphSyncClient). 요청 때 실어 보낸 job_id(= 로컬 edge_id)로
@@ -737,6 +752,7 @@ public class GraphManager : MonoBehaviour
         }
 
         Debug.Log($"[GraphManager] ApplyServerEdgeId: job_id={jobId} → edge_id={serverEdgeId}");
+        OnEdgeRekeyed?.Invoke(jobId, serverEdgeId);
     }
 
     // 발화 입력칸(노드 텍스트칸) 제출 처리.
@@ -811,10 +827,26 @@ public class GraphManager : MonoBehaviour
     // 메인 그래프 포트(ALL/PART) → 서브그래프 노드 드래그 연결용 어댑터.
     // 제스처 방향은 항상 포트(시작) → 서브그래프(드롭)지만,
     // 데이터 방향은 항상 서브그래프(PROPERTY/REFERENCE) → PART 로 저장한다.
-    // 개발자 2는 시작 포트의 node_id와 드롭된 서브그래프 노드의 node_id를 순서 그대로 넘긴다.
-    // (인자를 뒤바꿔 넘겨도 CanConnect 가 PART→... 조합을 막아 안전하게 실패한다.)
+    // PROPERTY의 어느 멤버에 드롭하더라도 적용 엣지의 from은 반드시 그 서브그래프 root로 정규화한다.
+    // REFERENCE는 자체 node_id를 그대로 사용한다.
     public bool RequestConnectFromPort(string portNodeId, string subgraphNodeId)
-        => RequestConnectNodes(subgraphNodeId, portNodeId);
+    {
+        var subgraphNode = _nodeRegistry.Get(subgraphNodeId);
+        if (subgraphNode == null)
+        {
+            Debug.LogWarning($"[GraphManager] RequestConnectFromPort 실패: 서브그래프 노드를 찾을 수 없습니다. node_id={subgraphNodeId}");
+            return false;
+        }
+
+        string appliedNodeId = subgraphNode.NodeType == NodeType.PROPERTY
+            ? GetPropertyRootNodeId(subgraphNodeId)
+            : subgraphNodeId;
+
+        if (appliedNodeId != subgraphNodeId)
+            Debug.Log($"[GraphManager] 적용 연결 정규화: drop={subgraphNodeId} → root={appliedNodeId}, part={portNodeId}");
+
+        return RequestConnectNodes(appliedNodeId, portNodeId);
+    }
 
     // 자손 PROPERTY + 종속 REFERENCE 를 post-order 로 캐스케이드 삭제한 뒤 Reflow.
     // 서버는 자식 캐스케이드를 스스로 처리하므로(서버팀 확정 2026-07-04), WS NODE_DELETE 는
@@ -922,6 +954,36 @@ public class GraphManager : MonoBehaviour
 
         return true;
     }
+
+    // ─────────────────────────────────────────────
+    // MVP 자식 활성화 (활성 자식만 부모로부터 초록선)
+    // ─────────────────────────────────────────────
+
+    // 이 노드가 "활성" 상태인지. (자식 PROPERTY 전용 의미)
+    public bool IsNodeActive(string nodeId)
+    {
+        var node = _nodeRegistry.Get(nodeId);
+        return node != null && node.is_active;
+    }
+
+    // 자식 노드의 활성/비활성 토글용. 데이터만 바꾼다(선/흐림 갱신은 MVP UI 담당).
+    public bool RequestSetNodeActive(string nodeId, bool active)
+    {
+        var node = _nodeRegistry.Get(nodeId);
+        if (node == null)
+        {
+            Debug.LogWarning($"[GraphManager] RequestSetNodeActive 실패: 존재하지 않는 node_id ({nodeId})");
+            return false;
+        }
+        if (node.is_active == active)
+            return true;   // 변화 없음 → 이벤트/네트워크 전파 생략
+        node.is_active = active;
+        OnNodeActiveChanged?.Invoke(nodeId, active);
+        return true;
+    }
+
+    // 이 노드의 PROPERTY 부모 id (없으면 null). MVP 활성화 UI가 자식 여부 판별/선 연결에 사용.
+    public string GetPropertyParentId(string nodeId) => GetPropertyParent(nodeId);
 
     // ─────────────────────────────────────────────
     // 캐스케이드 삭제 헬퍼
@@ -1032,7 +1094,11 @@ public class GraphManager : MonoBehaviour
             var rootNode = _nodeRegistry.Get(rootId);
             if (rootNode == null) continue;
             // 루트 위치는 건드리지 않고 자식들만 루트의 X(depth기준)/Y(중심) 기준으로 재배치
-            AssignChildPositions(rootId, rootNode.Position.x, rootNode.Position.y);
+            AssignChildPositions(
+                rootId,
+                rootNode.Position.x,
+                rootNode.Position.y,
+                rootNode.Position.z);
         }
 
         var depthMap = CalculateDepthMap();
@@ -1091,17 +1157,18 @@ public class GraphManager : MonoBehaviour
     }
 
     // 이 노드를 x/centerY 에 배치하고 자식도 재귀 배치 (오른쪽 방향 트리)
-    private void AssignPositions(string nodeId, float x, float centerY)
+    private void AssignPositions(string nodeId, float x, float centerY, float z)
     {
         var node = _nodeRegistry.Get(nodeId);
         if (node == null) return;
-        node.SetPosition(new Vector3(x, centerY, 0f));
-        AssignChildPositions(nodeId, x, centerY);
+        node.SetPosition(new Vector3(x, centerY, z));
+        AssignChildPositions(nodeId, x, centerY, z);
     }
 
     // 이 노드 자체는 움직이지 않고 자식들만 x/centerY 기준으로 배치
-    // x: 현재 depth의 X 위치, centerY: 이 서브트리 전체의 Y 중심
-    private void AssignChildPositions(string nodeId, float x, float centerY)
+    // x: 현재 depth의 X 위치, centerY: 이 서브트리 전체의 Y 중심.
+    // z는 루트의 작업 평면 깊이를 유지한다.
+    private void AssignChildPositions(string nodeId, float x, float centerY, float z)
     {
         var children = GetPropertyChildren(nodeId);
         if (children.Count == 0) return;
@@ -1115,7 +1182,7 @@ public class GraphManager : MonoBehaviour
         {
             float childHeight  = CalculateSubtreeWidth(child);
             float childCenterY = cursor + (childHeight / 2f) * _layoutVSpacing;
-            AssignPositions(child, x + _layoutHSpacing, childCenterY);
+            AssignPositions(child, x + _layoutHSpacing, childCenterY, z);
             cursor += childHeight * _layoutVSpacing;
         }
     }
@@ -1162,6 +1229,26 @@ public class GraphManager : MonoBehaviour
             cur = parent;
         }
         return cur;
+    }
+
+    // PROPERTY 멤버가 속한 트리의 root node_id를 반환한다.
+    // PART 적용 및 2D 생성 계약에서 PROPERTY node_id는 leaf가 아니라 항상 이 root를 사용한다.
+    public string GetPropertyRootNodeId(string nodeId)
+    {
+        var node = _nodeRegistry.Get(nodeId);
+        if (node == null || node.NodeType != NodeType.PROPERTY) return nodeId;
+
+        var visited = new HashSet<string>();
+        string cur = nodeId;
+        while (visited.Add(cur))
+        {
+            string parent = GetPropertyParent(cur);
+            if (string.IsNullOrEmpty(parent)) return cur;
+            cur = parent;
+        }
+
+        Debug.LogWarning($"[GraphManager] PROPERTY root 탐색 중 사이클 감지: node_id={nodeId}");
+        return nodeId;
     }
 
     // sub_graph_id 가 비어 있는 노드를 레이아웃 루트 기준으로 채운다. LoadGraph 직후 1회 호출.

@@ -186,28 +186,32 @@ graphManager.RequestConnectNodes(fromId, toId);
 **확정된 연결 UX (2026-07-01 회의):**
 - 제스처 방향은 **항상 메인 포트에서 시작** → 서브그래프로 드롭. (반대 방향 없음)
 - 시작 트리거: 메인 그래프 엣지 연결부(ALL/PART 포트)를 **더블클릭**. Meta Quest 빌드이므로 핸드트래킹/컨트롤러의 더블 select로 감지.
-- 드롭 대상: 연결하려는 서브그래프의 **가장 하위 노드(leaf)**. (네모박스 양옆 연결부)
-- 데이터는 제스처와 반대로 항상 `서브그래프(PROPERTY/REFERENCE) → PART`로 저장된다. 이 헬퍼가 순서를 뒤집어 준다.
+- 드롭 대상: 연결하려는 PROPERTY 서브그래프의 어느 멤버든 가능하다. 저장 시 GraphManager가 root로 정규화한다. REFERENCE는 자체 node_id를 사용한다.
+- 데이터는 제스처와 반대로 `PROPERTY(root)/REFERENCE → PART`로 저장된다. 이 헬퍼가 방향과 PROPERTY root를 함께 정규화한다.
 
 | 인자 | 의미 |
 |------|------|
 | `portNodeId` | 더블클릭으로 **시작**한 메인 포트의 node_id (`AllPort.NodeId` / `PartPort.NodeId`) |
-| `subgraphNodeId` | 커서를 따라간 임시 엣지를 **드롭**한 서브그래프 노드의 node_id (권장: leaf) |
+| `subgraphNodeId` | 임시 엣지를 드롭한 PROPERTY 멤버 또는 REFERENCE의 node_id |
 
 | | |
 |--|--|
 | **반환값** | `true` 성공 / `false` 실패 (인자를 뒤바꿔 넘겨도 `CanConnect`가 막아 안전하게 실패) |
 
 ```csharp
-// 드롭 성공 시 (제스처 방향 그대로 넘긴다)
-string portId = startPort.NodeId;          // 더블클릭으로 시작한 ALL/PART 포트
-string leafId = droppedSubgraphNode.NodeId; // 임시 엣지를 놓은 서브그래프 leaf
+// 드롭 성공 시 제스처 방향 그대로 넘긴다. PROPERTY면 내부에서 root로 정규화된다.
+string portId = startPort.NodeId;
+string droppedNodeId = droppedSubgraphNode.NodeId;
 
-if (!graphManager.RequestConnectFromPort(portId, leafId))
+if (!graphManager.RequestConnectFromPort(portId, droppedNodeId))
     ShowToast("연결할 수 없는 조합입니다.");
 
-// hover 미리보기(연결 가능 여부 색 표시)는 순서 주의: 데이터 방향으로 확인
-bool canDrop = graphManager.CanConnect(leafId, portId, out string reason);
+// hover 미리보기는 PROPERTY root 기준으로 확인한다.
+NodeData droppedNode = graphManager.GetNode(droppedNodeId);
+string appliedNodeId = droppedNode?.NodeType == NodeType.PROPERTY
+    ? graphManager.GetPropertyRootNodeId(droppedNodeId)
+    : droppedNodeId;
+bool canDrop = graphManager.CanConnect(appliedNodeId, portId, out string reason);
 ```
 
 **담당 경계:** 더블클릭 감지, 임시 엣지의 커서 추적, 드롭 대상 hit-test, hover 미리보기는 **개발자 2(Interaction)**. 이 헬퍼 호출 이후의 엣지 데이터/View/서버 반영은 **개발자 3**.

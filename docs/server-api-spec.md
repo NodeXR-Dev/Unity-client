@@ -25,6 +25,7 @@ ACK    : result: { job_id, node_id }
 payload: { job_id, from_node_id, to_node_id }   # label 없음
 ACK    : result: { job_id, edge_id }
 ```
+- 로컬 GraphData는 `PROPERTY(root)/REFERENCE → PART`. 현재 서버 저장은 반대 방향이므로 Unity WS 경계에서 `PART → PROPERTY/REFERENCE`로 변환한다.
 
 ### EDGE_DELETE   `payload: { edge_id }`
 ### NODE_MOVE     `payload: { node_id, position:[x,y,z] }`
@@ -87,7 +88,7 @@ edge: { edge_id, from_node_id, to_node_id, label, used_in_generation }
 
 ## REST — 2D 스케치
 
-- 그래프 기반 `POST /api/2d/generate/graph`   req `{ room_id, user_id, connections:[{part_node_id, node_id}] }`
+- 그래프 기반 `POST /api/2d/generate/graph`   req `{ room_id, user_id, connections:[{part_node_id, node_id(root)}] }`
 - 요구사항 기반 `POST /api/2d/generate/feature` req `{ room_id, user_id }`
 - 색상 변경   `POST /api/2d/color_change` (multipart)
 - 완료 알림은 WS `2D_GENERATED`.

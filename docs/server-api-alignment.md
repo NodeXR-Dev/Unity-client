@@ -1,7 +1,39 @@
 # 서버 API 정렬 기준 (개발자 3 기준)
 
-마지막 업데이트: 2026-06-24  
-서버 코드 기준: `/Users/imsohyun/Desktop/nodexr-server`
+마지막 업데이트: 2026-07-15  
+서버 코드 기준: `github.com/NodeXR-Dev/FastAPI-server` (2026-07-15 클론 정밀 분석)
+
+> 하단 2026-06-24 이후 섹션은 과거 가정이 섞여 있어, 아래 **0. 현행 정합성(2026-07-15 검증)** 이 우선한다.
+
+---
+
+## 0. 현행 정합성 (2026-07-15 실서버 검증)
+
+**정책 결정: 클라만 정렬.** 서버(별도 repo)는 건드리지 않고, 서버가 실제 제공하는 표면에 클라를 맞추며, 서버에 없는 기능은 안전 폴백/비활성으로 둔다.
+
+### 검증된 서버 기준값
+- REST 베이스: `http://{host}:8000/api/...`, WS: `ws://{host}:8000/ws/rooms/event` (쿼리 없음, 매 메시지 body `{event_type, room_id, user_id, payload}`로 lazy-register).
+- 결과 이미지: WS `2D_GENERATED{asset_id, mime_type, width, height, img_url}` → **img_url(MinIO :9000) 다운로드**. `send_to_user`(요청자 1인)만, broadcast는 주석 처리.
+- 인증/CORS 없음. 공통 봉투 `{isSuccess, code, message, result}`.
+
+### ✅ 이미 정합 (그대로 동작)
+- WS 연결 URL·6종 뮤테이션(NODE_CREATE/MOVE/TEXT_UPDATE/DELETE, EDGE_CREATE/DELETE)·NODE_CREATE·EDGE_CREATE ACK(job_id→서버 id rekey).
+- `POST /api/rooms/generate`, `/enter`, `GET /api/rooms/list`, `/{id}/info`.
+- `POST /api/2d/generate/graph`(connections `[{part_node_id, node_id}]`)·`/feature`, `GET /api/history/{room_id}`.
+
+### ❌ 불일치 (클라가 옛 스펙 대상으로 선구현 → 서버에 없어 404)
+`/api/node/generate/utterance`, `/api/sub_graph/generate`, `/api/part_node/*`, `/api/references/*`, `GET /api/graph`, `/api/2d/color_change`.
+- 클라는 각각 실패 시 **로컬 폴백**(placeholder/self-GUID/seed)으로 방어되어 오프라인·체험 흐름은 완주된다.
+- 단, PART가 서버 DB에 안 생기므로 **온라인 그래프→2D는 빈 connections로 무력화** → 클라는 서버 이미지 대기 타임아웃 후 `MvpFallbackSketchGenerator`(설계 반영 mock)로 폴백.
+
+### 서버측 죽은 채널(클라가 기대하나 미동작)
+- `GRAPH_UPDATED` 브로드캐스트 미emit(broadcast_to_room 주석) → 전체 그래프 동기화·타 유저 전파·레퍼런스/파트 반영 경로 죽음.
+- `3D_GENERATED`/3D 생성 스텁(`Model3DGenerationService`가 print만) → 3D는 클라 mock(`MvpRocket3DStage`)로 처리.
+
+### 멀티플레이 반영
+- 서버 그래프 동기화가 죽어 있으므로, MVP 협업의 실채널은 **Photon Fusion**이다.
+  `MvpNetworkSession`(room_id 기반 Shared 세션) + `MvpGraphNetworkBridge`(GraphManager 이벤트→`GraphNetworkManager` RPC, 에코 가드)로 배선.
+- 서버 WS(GraphSyncClient)는 병행 유지(서버 DB 기록용). 원격 Fusion 적용은 `AddNode` 등 저수준 경로라 서버로 재전송되지 않음.
 
 ---
 
@@ -225,16 +257,12 @@ Unity 처리: 응답 받으면 `GraphManager.LoadGraph(graphData)` → `GraphMan
 
 ---
 
-### 2-2. 2D Regenerate
+### 2-2. 2D Graph Generate
 
-PROPERTY 또는 REFERENCE → PART 적용 시 **부분 재생성** 요청. 선택된 연결/active 속성 기반.
-
-> **상태(2026-07-01)**: 협의된 계약이나 **서버 미구현**. 실제 서버 `generation.py`의 엔드포인트는 전부 주석,
-> 활성 스키마는 `Generate2DRequest = {room_id}` 뿐. 아래 connection 배열 계약은 서버 구현 대기 →
-> Unity는 `RegenerateConnectionBuilder`로 **선구현**해 둠(서버 붙으면 바로 POST).
+PROPERTY 또는 REFERENCE → PART 적용 연결을 `connections`로 전송해 그래프 기반 2D 이미지를 생성한다.
 
 ```
-POST /api/2d/regenerate
+POST /api/2d/generate/graph
 ```
 
 요청:
@@ -242,11 +270,11 @@ POST /api/2d/regenerate
 ```json
 {
   "room_id": "room_001",
-  "asset_id": "current_2d_asset_id",
-  "connection": [
+  "user_id": "user_001",
+  "connections": [
     {
       "part_node_id": "uuid-part-all",
-      "node_id": "uuid-prop-plant"
+      "node_id": "uuid-property-root"
     }
   ]
 }
@@ -256,15 +284,15 @@ POST /api/2d/regenerate
 
 | 필드 | 의미 |
 |------|------|
-| `asset_id` | 현재 중앙 이미지 ID |
+| `room_id` | 대상 회의실 UUID |
+| `user_id` | 생성 요청자 UUID |
 | `part_node_id` | 적용 대상 PART 또는 ALL node_id |
-| `node_id` | 적용할 PROPERTY 서브그래프의 기점(권장: 가장 하위 leaf) node_id 또는 REFERENCE node_id |
+| `node_id` | 적용할 PROPERTY 서브그래프의 root node_id 또는 REFERENCE node_id |
 
-서버 동작: `node_id`가 PROPERTY이면 사용자가 PART에 연결한 서브그래프 기점(가장 하위 leaf)이다. 서버가 `node_id`에서 부모 PROPERTY를 따라 상위 체인을 거슬러 올라가며 탐색해 문맥을 구성한다. (각 PROPERTY의 부모는 최대 1개이므로 상위 경로는 유일하다.)
+서버는 PROPERTY root에서 하위 체인을 탐색해 문맥을 구성한다. Unity는 사용자가 leaf에 드롭하더라도 `RequestConnectFromPort`와 `RegenerateConnectionBuilder`에서 root로 정규화한다.
 
-Unity 처리: `GraphManager.BuildRegenerateRequestJson(assetId[, selectedPartNodeIds])`
-(내부적으로 `RegenerateConnectionBuilder.Build`) → JSON 생성 → (서버 구현 후) POST.
-`selectedPartNodeIds` 지정 시 해당 PART로 향하는 연결만(부분 재생성).
+Unity 처리: `Generate2DController.RequestGenerateGraph([selectedPartNodeIds])`.
+결과 이미지는 WS `2D_GENERATED`로 수신한다.
 
 ---
 
@@ -299,7 +327,7 @@ Unity 처리: `GraphManager.BuildRegenerateRequestJson(assetId[, selectedPartNod
 | 6 | WS 메시지 래핑 포맷 | **확정**: `{ "event_type": "...", "room_id": "<uuid>", "payload": {...} }`. `room_id` 필수(서버가 path와 일치 검증, 불일치 시 WS409). 경로 `/ws/rooms/{room_id}/event?user_id=` |
 | 7 | 그래프 조회 REST 엔드포인트 경로 | **없음 확인**: `get_room_info`는 그래프 미포함, 접속 시 스냅샷도 안 내려옴. seed UUID 하드코딩으로 테스트 |
 | 8 | 그래프 이벤트 broadcast/응답 | **없음 확인**: 그래프 이벤트는 DB 저장만, 되쏘지 않음. 성공 응답 없음(실패 시 ERROR만) |
-| 9 | 2D 이미지 생성 | **서버 미구현 확인**: `/api/2d/generate` 주석 처리 + `Image2DGenerationService`는 print 스텁. `Generate2DRequest`={room_id}. 결과는 WS `2D_GENERATED`{img_url} |
+| 9 | 2D 이미지 생성 | **배포 확인(2026-07-11)**: `/api/2d/generate/graph`·`/feature`. 결과는 WS `2D_GENERATED`{img_url}. PROPERTY root 하위 탐색은 서버팀 수정 필요 |
 
 ---
 
