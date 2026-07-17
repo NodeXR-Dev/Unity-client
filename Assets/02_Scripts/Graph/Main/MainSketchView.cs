@@ -87,7 +87,13 @@ public class MainSketchView : MonoBehaviour
             var edges = _graphManager.GetEdgesConnectedToNode(allNode.node_id);
             allConnected = edges != null && edges.Count > 0;
         }
-        if (_allPort != null) _allPort.Bind(allNode, _graphManager, Refresh, allConnected);
+        if (_allPort != null)
+        {
+            // ALL 노드가 없으면(MVP는 전체 포트 미사용) '전체 설계' 빈 원을 숨긴다.
+            _allPort.gameObject.SetActive(allNode != null);
+            if (allNode != null)
+                _allPort.Bind(allNode, _graphManager, Refresh, allConnected);
+        }
 
         // PartPortContainer 부분 갱신: 기존 자식 재사용 + 사라진 것만 Destroy.
         // 1) 기존 자식 분류

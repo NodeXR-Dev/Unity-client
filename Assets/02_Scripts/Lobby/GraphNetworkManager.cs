@@ -24,7 +24,17 @@ public class GraphNetworkManager : NetworkBehaviour
     public event Action<string, PlayerRef> NodeLockReleased;
     public event Action<string, PlayerRef, PlayerRef> NodeLockDenied;
 
+    // 원격 op 가 이 클라이언트의 그래프를 실제로 바꿨을 때 발행(요청자 본인에게는 발행되지 않음 —
+    // 본인은 로컬 적용이 먼저라 Apply 가 no-op 이 된다). MVP UX 가 "누가 했는지" 안내에 사용.
+    public event Action<string, string> RemoteNodeCreated;  // (nodeId, createdBy)
+    public event Action<string> RemoteNodeDeleted;          // (nodeId)
+
     private readonly Dictionary<string, PlayerRef> lockCache = new Dictionary<string, PlayerRef>();
+
+    // 원격(RPC/오프라인)으로 그래프 op를 GraphManager에 적용하는 동안 true.
+    // 로컬→네트워크 브리지가 이 플래그를 보고 재브로드캐스트(에코 루프)를 막는다.
+    private int _remoteApplyDepth;
+    public bool IsApplyingRemote => _remoteApplyDepth > 0;
 
     private bool IsReadyForRpc => Runner != null && Runner.IsRunning && Object != null;
     private bool CanBroadcast => IsReadyForRpc && HasStateAuthority;
@@ -86,6 +96,16 @@ public class GraphNetworkManager : NetworkBehaviour
             ReleaseLocksForPlayerAsAuthority(Runner.LocalPlayer);
         else
             RPC_RequestReleaseLocksForPlayer();
+    }
+
+    // 떠난 참가자의 잠금을 정리한다(마스터 클라이언트가 OnPlayerLeft 에서 호출).
+    // 이것이 없으면 편집 중 이탈한 참가자의 노드가 영구 잠금으로 남는다.
+    public void ReleaseLocksOf(PlayerRef player)
+    {
+        if (!IsReadyForRpc || !HasStateAuthority)
+            return;
+
+        ReleaseLocksForPlayerAsAuthority(player);
     }
 
     public bool IsNodeLocked(string nodeId)
@@ -304,6 +324,60 @@ public class GraphNetworkManager : NetworkBehaviour
             RPC_RequestDeleteEdge(safeEdgeId);
     }
 
+    // 서버 ACK 로 로컬 임시 id 가 서버 발급 id 로 바뀐 것(rekey)을 모든 피어에 전파한다.
+    // 이것이 없으면 요청자만 서버 id 를 갖고 피어는 임시 id 로 남아,
+    // 이후 이동/삭제/텍스트 RPC 가 피어에서 대상 노드를 찾지 못한다.
+    public void RequestRekeyNode(string oldNodeId, string newNodeId, string newText = "")
+    {
+        string safeOld = Safe(oldNodeId);
+        string safeNew = Safe(newNodeId);
+        if (string.IsNullOrWhiteSpace(safeOld) ||
+            string.IsNullOrWhiteSpace(safeNew) ||
+            safeOld == safeNew)
+            return;
+
+        if (!IsReadyForRpc)
+            return; // 오프라인이면 피어가 없다 — 로컬은 이미 rekey 완료 상태.
+
+        if (CanBroadcast)
+            RPC_BroadcastRekeyNode(safeOld, safeNew, Safe(newText));
+        else
+            RPC_RequestRekeyNode(safeOld, safeNew, Safe(newText));
+    }
+
+    public void RequestRekeyEdge(string oldEdgeId, string newEdgeId)
+    {
+        string safeOld = Safe(oldEdgeId);
+        string safeNew = Safe(newEdgeId);
+        if (string.IsNullOrWhiteSpace(safeOld) ||
+            string.IsNullOrWhiteSpace(safeNew) ||
+            safeOld == safeNew)
+            return;
+
+        if (!IsReadyForRpc)
+            return;
+
+        if (CanBroadcast)
+            RPC_BroadcastRekeyEdge(safeOld, safeNew);
+        else
+            RPC_RequestRekeyEdge(safeOld, safeNew);
+    }
+
+    // 자식 노드 활성/비활성 상태를 모든 피어에 전파한다(MVP 초록선/흐림 동기화).
+    public void RequestSetNodeActive(string nodeId, bool active)
+    {
+        string safeNodeId = Safe(nodeId);
+        if (string.IsNullOrWhiteSpace(safeNodeId)) return;
+
+        if (!IsReadyForRpc)
+            return; // 로컬은 GraphManager 가 이미 반영했다.
+
+        if (CanBroadcast)
+            RPC_BroadcastSetNodeActive(safeNodeId, active);
+        else
+            RPC_RequestSetNodeActive(safeNodeId, active);
+    }
+
     public void RequestBroadcastCurrentGraph()
     {
         ResolveGraphManager();
@@ -474,6 +548,42 @@ public class GraphNetworkManager : NetworkBehaviour
         ApplyDeleteEdge(Safe(edgeId));
     }
 
+    [Rpc(RpcSources.All, RpcTargets.StateAuthority)]
+    private void RPC_RequestRekeyNode(string oldNodeId, string newNodeId, string newText)
+    {
+        RPC_BroadcastRekeyNode(Safe(oldNodeId), Safe(newNodeId), Safe(newText));
+    }
+
+    [Rpc(RpcSources.StateAuthority, RpcTargets.All)]
+    private void RPC_BroadcastRekeyNode(string oldNodeId, string newNodeId, string newText)
+    {
+        ApplyRekeyNode(Safe(oldNodeId), Safe(newNodeId), Safe(newText));
+    }
+
+    [Rpc(RpcSources.All, RpcTargets.StateAuthority)]
+    private void RPC_RequestRekeyEdge(string oldEdgeId, string newEdgeId)
+    {
+        RPC_BroadcastRekeyEdge(Safe(oldEdgeId), Safe(newEdgeId));
+    }
+
+    [Rpc(RpcSources.StateAuthority, RpcTargets.All)]
+    private void RPC_BroadcastRekeyEdge(string oldEdgeId, string newEdgeId)
+    {
+        ApplyRekeyEdge(Safe(oldEdgeId), Safe(newEdgeId));
+    }
+
+    [Rpc(RpcSources.All, RpcTargets.StateAuthority)]
+    private void RPC_RequestSetNodeActive(string nodeId, bool active)
+    {
+        RPC_BroadcastSetNodeActive(Safe(nodeId), active);
+    }
+
+    [Rpc(RpcSources.StateAuthority, RpcTargets.All)]
+    private void RPC_BroadcastSetNodeActive(string nodeId, bool active)
+    {
+        ApplySetNodeActive(Safe(nodeId), active);
+    }
+
     private void ApplyCreateNode(
         string nodeId,
         int nodeType,
@@ -485,83 +595,192 @@ public class GraphNetworkManager : NetworkBehaviour
         string propertyCategory,
         bool isGlobal)
     {
-        ResolveGraphManager();
-        if (graphManager == null) return;
-
-        NodeData node = new NodeData
+        _remoteApplyDepth++;
+        try
         {
-            node_id = EnsureId(nodeId, "node"),
-            type = ToNodeType(nodeType).ToString(),
-            label = Safe(label),
-            node_text = string.IsNullOrEmpty(description) ? Safe(label) : Safe(description),
-            property_category = Safe(propertyCategory),
-            is_global = isGlobal
-        };
-        node.SetPosition(position);
+            ResolveGraphManager();
+            if (graphManager == null) return;
 
-        bool changed = graphManager.AddNode(node);
-        RenderIfChanged(changed);
+            NodeData node = new NodeData
+            {
+                node_id = EnsureId(nodeId, "node"),
+                type = ToNodeType(nodeType).ToString(),
+                label = Safe(label),
+                node_text = string.IsNullOrEmpty(description) ? Safe(label) : Safe(description),
+                property_category = Safe(propertyCategory),
+                is_global = isGlobal
+            };
+            node.SetPosition(position);
+
+            bool changed = graphManager.AddNode(node);
+            RenderIfChanged(changed);
+            if (changed)
+                RemoteNodeCreated?.Invoke(node.node_id, Safe(createdBy));
+        }
+        finally { _remoteApplyDepth--; }
     }
 
     private void ApplyDeleteNode(string nodeId)
     {
-        ResolveGraphManager();
-        if (graphManager == null || string.IsNullOrWhiteSpace(nodeId)) return;
+        _remoteApplyDepth++;
+        try
+        {
+            ResolveGraphManager();
+            if (graphManager == null || string.IsNullOrWhiteSpace(nodeId)) return;
 
-        UpdateCachedLock(nodeId, PlayerRef.None, false);
-        bool changed = graphManager.RemoveNode(nodeId);
-        RenderIfChanged(changed);
+            UpdateCachedLock(nodeId, PlayerRef.None, false);
+            bool changed = graphManager.RemoveNode(nodeId);
+            RenderIfChanged(changed);
+            if (changed)
+                RemoteNodeDeleted?.Invoke(nodeId);
+        }
+        finally { _remoteApplyDepth--; }
     }
 
     private void ApplyUpdateNodePosition(string nodeId, Vector3 position)
     {
-        ResolveGraphManager();
-        if (graphManager == null || string.IsNullOrWhiteSpace(nodeId)) return;
+        _remoteApplyDepth++;
+        try
+        {
+            ResolveGraphManager();
+            if (graphManager == null || string.IsNullOrWhiteSpace(nodeId)) return;
 
-        bool changed = graphManager.RequestMoveNode(nodeId, position);
-        RenderIfChanged(changed);
+            bool changed = graphManager.RequestMoveNode(nodeId, position);
+            RenderIfChanged(changed);
+        }
+        finally { _remoteApplyDepth--; }
     }
 
     private void ApplyUpdateNodeText(string nodeId, string label, string description)
     {
-        ResolveGraphManager();
-        if (graphManager == null || string.IsNullOrWhiteSpace(nodeId)) return;
-
-        NodeData node = graphManager.GetNode(nodeId);
-        if (node == null)
+        _remoteApplyDepth++;
+        try
         {
-            Debug.LogWarning($"[GraphNetworkManager] UpdateNodeText failed: node not found ({nodeId}).");
-            return;
-        }
+            ResolveGraphManager();
+            if (graphManager == null || string.IsNullOrWhiteSpace(nodeId)) return;
 
-        node.label = Safe(label);
-        node.node_text = string.IsNullOrEmpty(description) ? Safe(label) : Safe(description);
-        RenderIfChanged(true);
+            NodeData node = graphManager.GetNode(nodeId);
+            if (node == null)
+            {
+                Debug.LogWarning($"[GraphNetworkManager] UpdateNodeText failed: node not found ({nodeId}).");
+                return;
+            }
+
+            node.label = Safe(label);
+            node.node_text = string.IsNullOrEmpty(description) ? Safe(label) : Safe(description);
+            RenderIfChanged(true);
+        }
+        finally { _remoteApplyDepth--; }
     }
 
     private void ApplyCreateEdge(string edgeId, string fromNodeId, string toNodeId, string edgeType)
     {
-        ResolveGraphManager();
-        if (graphManager == null) return;
-
-        EdgeData edge = new EdgeData
+        _remoteApplyDepth++;
+        try
         {
-            edge_id = EnsureId(edgeId, "edge"),
-            from_node_id = Safe(fromNodeId),
-            to_node_id = Safe(toNodeId)
-        };
+            ResolveGraphManager();
+            if (graphManager == null) return;
 
-        bool changed = graphManager.AddEdge(edge);
-        RenderIfChanged(changed);
+            EdgeData edge = new EdgeData
+            {
+                edge_id = EnsureId(edgeId, "edge"),
+                from_node_id = Safe(fromNodeId),
+                to_node_id = Safe(toNodeId)
+            };
+
+            bool changed = graphManager.AddEdge(edge);
+            RenderIfChanged(changed);
+        }
+        finally { _remoteApplyDepth--; }
     }
 
     private void ApplyDeleteEdge(string edgeId)
     {
-        ResolveGraphManager();
-        if (graphManager == null || string.IsNullOrWhiteSpace(edgeId)) return;
+        _remoteApplyDepth++;
+        try
+        {
+            ResolveGraphManager();
+            if (graphManager == null || string.IsNullOrWhiteSpace(edgeId)) return;
 
-        bool changed = graphManager.RemoveEdge(edgeId);
-        RenderIfChanged(changed);
+            bool changed = graphManager.RemoveEdge(edgeId);
+            RenderIfChanged(changed);
+        }
+        finally { _remoteApplyDepth--; }
+    }
+
+    private void ApplyRekeyNode(string oldNodeId, string newNodeId, string newText)
+    {
+        _remoteApplyDepth++;
+        try
+        {
+            ResolveGraphManager();
+            if (graphManager == null ||
+                string.IsNullOrWhiteSpace(oldNodeId) ||
+                string.IsNullOrWhiteSpace(newNodeId))
+                return;
+
+            // 요청자 본인(이미 rekey 완료)과 늦게 합류해 이미 새 id 로 받은 피어는 건너뛴다.
+            if (graphManager.GetNode(newNodeId) != null)
+            {
+                RekeyLockAsAuthority(oldNodeId, newNodeId);
+                return;
+            }
+
+            graphManager.ApplyServerNodeId(
+                oldNodeId,
+                newNodeId,
+                string.IsNullOrEmpty(newText) ? null : newText);
+            RekeyLockAsAuthority(oldNodeId, newNodeId);
+        }
+        finally { _remoteApplyDepth--; }
+    }
+
+    private void ApplyRekeyEdge(string oldEdgeId, string newEdgeId)
+    {
+        _remoteApplyDepth++;
+        try
+        {
+            ResolveGraphManager();
+            if (graphManager == null ||
+                string.IsNullOrWhiteSpace(oldEdgeId) ||
+                string.IsNullOrWhiteSpace(newEdgeId))
+                return;
+
+            if (graphManager.GetEdge(newEdgeId) != null)
+                return; // 이미 새 id 보유(요청자 본인 에코 포함)
+
+            graphManager.ApplyServerEdgeId(oldEdgeId, newEdgeId);
+        }
+        finally { _remoteApplyDepth--; }
+    }
+
+    private void ApplySetNodeActive(string nodeId, bool active)
+    {
+        _remoteApplyDepth++;
+        try
+        {
+            ResolveGraphManager();
+            if (graphManager == null || string.IsNullOrWhiteSpace(nodeId)) return;
+
+            // 같은 값이면 GraphManager 가 이벤트를 내지 않으므로 에코 루프가 없다.
+            graphManager.RequestSetNodeActive(nodeId, active);
+        }
+        finally { _remoteApplyDepth--; }
+    }
+
+    // rekey 시 잠금 사전의 키도 새 id 로 옮긴다(StateAuthority 만 네트워크 사전을 수정할 수 있다).
+    private void RekeyLockAsAuthority(string oldNodeId, string newNodeId)
+    {
+        if (!HasStateAuthority)
+            return;
+
+        if (!NodeLocks.TryGet(ToLockKey(oldNodeId), out PlayerRef owner))
+            return;
+
+        NodeLocks.Remove(ToLockKey(oldNodeId));
+        NodeLocks.Add(ToLockKey(newNodeId), owner);
+        RPC_BroadcastNodeLockChanged(oldNodeId, owner, false);
+        RPC_BroadcastNodeLockChanged(newNodeId, owner, true);
     }
 
     private void ResolveGraphManager()

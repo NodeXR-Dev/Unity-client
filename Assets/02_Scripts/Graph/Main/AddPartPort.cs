@@ -105,6 +105,9 @@ public class AddPartPort : MonoBehaviour,
         _inputField.gameObject.SetActive(true);
         _inputField.Select();
         _inputField.ActivateInputField();
+
+        // VR엔 시스템 키보드가 없다 — 월드 키보드를 이 입력창에 띄운다.
+        MvpWorldKeyboard.Open(_inputField);
     }
 
     // InputField Enter 핸들러.
@@ -128,16 +131,26 @@ public class AddPartPort : MonoBehaviour,
     // 서버가 발급한 part_node_id 로 로컬 PART가 생성되며, 응답 후(비동기) 화면이 갱신된다.
     private void InvokeAdd(string label)
     {
-        if (_apiClient == null)
+        // MVP: 로컬 즉시 생성(서버 /api/part_node/generate/keyboard 는 현재 404).
+        // 로컬 생성은 GraphManager 이벤트로 Fusion 멀티플레이에도 전파된다.
+        if (_manager != null)
         {
-            Debug.LogWarning("[AddPartPort] InvokeAdd 실패: PartNodeApiClient가 연결되지 않았습니다(Bind 확인).");
-            return;
+            string id = _manager.RequestCreatePartNode(label, false);
+            if (!string.IsNullOrEmpty(id))
+            {
+                _onChanged?.Invoke();
+                return;
+            }
         }
-        // position 은 이 빈 포트의 월드 위치(새 PART가 놓일 자리)를 서버에 전달한다.
-        _apiClient.CreatePartKeyboard(label, false, transform.position, ok =>
-        {
-            if (ok) _onChanged?.Invoke();
-        });
+
+        // 폴백: 서버 REST(연결돼 있으면).
+        if (_apiClient != null)
+            _apiClient.CreatePartKeyboard(label, false, transform.position, ok =>
+            {
+                if (ok) _onChanged?.Invoke();
+            });
+        else
+            Debug.LogWarning("[AddPartPort] InvokeAdd 실패: GraphManager/PartNodeApiClient 모두 없음.");
     }
 
     // 우선순위: inputting > hovered > add(default)
