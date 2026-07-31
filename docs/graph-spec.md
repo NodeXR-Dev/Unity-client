@@ -59,27 +59,27 @@ style, concept, motif, color, material, texture, function, mood, ...
 | `PROPERTY → PROPERTY` | 속성 서브그래프의 세부화 | **서술** — 서버 소유(발화 생성) |
 | `PART → PROPERTY` | 파트가 이 속성을 가짐(서버 계층). 파트에 발화 시 생성 | **서술** — 서버 소유 |
 | `PART → PART` | 파트 분해(전체 대상 → 하위 파트) | **서술** — 서버 소유 |
-| `PROPERTY → PART` | 연결된 PROPERTY(가장 하위 leaf 권장)를 기점으로 상위 체인을 파트 또는 ALL에 적용 | **적용** — 클라 소유(로컬 전용) |
+| `PROPERTY → PART` | PROPERTY 서브그래프 root에서 하위 체인 전체를 파트 또는 ALL에 적용 | **적용** — 로컬 GraphData 표준 |
 | `REFERENCE → PROPERTY` | 레퍼런스가 특정 속성을 시각적으로 설명 | 서술 |
-| `REFERENCE → PART` | 레퍼런스를 파트 또는 ALL에 직접 적용 | **적용** — 클라 소유(로컬 전용) |
+| `REFERENCE → PART` | 레퍼런스를 파트 또는 ALL에 직접 적용 | **적용** — 로컬 GraphData 표준 |
 
 > **서술(describe) vs 적용(apply) — 방향으로 구분 (2026-07-04 확정)**  
 > - **서술** = 서버가 발화로 만드는 그래프 엣지(`to`가 PROPERTY/PART 자식). 서버 그래프에 영속되고 `MergeServerGraph`(`AddServerEdge`)로 병합.  
-> - **적용** = 사용자가 만드는 연결. **제스처**: PART/ALL 포트에서 **더블클릭 → 엣지가 뻗어나와 → 서브그래프 맨 하위 leaf 에 드롭**(시작=PART, 끝=leaf). **데이터**: 저장 방향은 반대로 `from=PROPERTY(leaf) → to=PART`. `RequestConnectFromPort(port, subgraph)` 가 `RequestConnectNodes(subgraph, port)` 로 정규화해 저장.  
-> - 두 관계는 **`to == PART` 인지로 갈린다** → `RegenerateConnectionBuilder` 는 적용 엣지만 골라 `connection[{part_node_id, node_id}]` 로 변환. 서버 서술 엣지(`PART→PROPERTY`/`PART→PART`)는 자동 제외(충돌 없음).  
-> - **적용 엣지는 서버에 영속하지 않는다(MVP, 2026-07-04 결정)**. `GraphSyncClient` 는 `EDGE_CREATE` 미전송(서버 cross-subgraph 제약 GRAPH409). 실시간 공유는 Photon, 2D 결과물(asset)은 서버 영속. **업그레이드 경로**: 나중에 서버가 연결 영속 API 를 붙이면 동일한 `connection[{part_node_id, node_id}]` 배열을 그대로 영속 페이로드로 재사용.
+> - **적용** = 사용자가 만드는 연결. **제스처**는 PART/ALL 포트에서 시작해 PROPERTY 서브그래프의 어느 멤버에나 드롭할 수 있다. **데이터**는 `from=PROPERTY(root) → to=PART`로 정규화한다. REFERENCE는 자체 node_id를 사용한다.
+> - `RegenerateConnectionBuilder`는 `to == PART`인 로컬 적용 엣지만 골라 `connections[{part_node_id, node_id(root)}]`로 변환한다.
+> - 적용 엣지는 WS `EDGE_CREATE`로 영속한다. 현재 서버 저장 방향(`PART → PROPERTY/REFERENCE`)과 로컬 표준이 반대이므로 `GraphSyncClient`/ `GraphSnapshotDto` 경계에서만 방향을 변환한다.
 
 예시:
 
 ```
 미래지향 스타일 → 유토피아 → 식물   (서브그래프 체인)
-식물 → ALL                         (가장 하위 leaf PROPERTY가 PART에 연결)
+미래지향 스타일 → ALL               (root PROPERTY가 PART에 연결)
 
 금속 → 무광                         (서브그래프 체인)
-무광 → 다리                         (가장 하위 leaf PROPERTY가 PART에 연결)
+금속 → 다리                         (root PROPERTY가 PART에 연결)
 ```
 
-의미: 전체 이미지에 미래지향 스타일 체인을 적용한다. 사용자는 서브그래프의 가장 하위 노드(leaf, 예: 식물)를 PART에 연결하고, 서버는 leaf인 식물에서 유토피아, 미래지향 스타일 순으로 상위 체인을 거슬러 올라가며 탐색해 문맥을 구성한다.
+의미: 전체 이미지에 미래지향 스타일 root를 적용한다. 사용자가 어느 멤버에 드롭해도 `RequestConnectFromPort`가 root인 미래지향 스타일로 정규화하며, 서버는 root에서 유토피아 → 식물 하위 체인을 탐색해 문맥을 구성한다.
 
 ---
 
@@ -174,11 +174,11 @@ public class ConnectionDto
 EdgeData를 순회하면서:
   - to_node_id가 PART 타입인 엣지를 찾는다.
   - from_node_id가 PROPERTY 또는 REFERENCE인지 확인한다.
-  - 조건을 만족하면 ConnectionDto { part_node_id = to, node_id = from } 생성.
+  - PROPERTY이면 from을 서브그래프 root로 정규화한 뒤 ConnectionDto { part_node_id = to, node_id = root } 생성.
 
 node_id 해석:
-  - node_id가 PROPERTY이면 해당 PROPERTY는 연결된 서브그래프의 기점(권장: 가장 하위 leaf)이다.
-    서버는 node_id에서 부모 PROPERTY를 따라 상위 체인을 거슬러 올라가며 탐색해 문맥을 구성한다.
+  - node_id가 PROPERTY이면 해당 PROPERTY는 연결된 서브그래프의 root이다.
+    서버는 root node_id에서 자식 PROPERTY 체인을 따라 내려가며 문맥을 구성한다.
     (각 PROPERTY의 부모는 최대 1개이므로 상위 경로는 유일하다.)
   - node_id가 REFERENCE이면 해당 레퍼런스를 바로 적용한다.
 ```
@@ -201,13 +201,13 @@ node_id 해석:
   "edges": [
     { "edge_id": "e1", "from_node_id": "prop_future",   "to_node_id": "prop_utopia" },
     { "edge_id": "e2", "from_node_id": "prop_utopia",   "to_node_id": "prop_plant" },
-    { "edge_id": "e3", "from_node_id": "prop_plant",    "to_node_id": "part_all" },
+    { "edge_id": "e3", "from_node_id": "prop_future",   "to_node_id": "part_all" },
     { "edge_id": "e4", "from_node_id": "ref_metal_leg", "to_node_id": "part_body" }
   ]
 }
 ```
 
-e3은 가장 하위 leaf인 `prop_plant`(식물)가 `part_all`에 연결된 적용 엣지입니다. 서버는 `prop_plant`에서 상위 체인인 `prop_utopia → prop_future`를 거슬러 올라가며 탐색해 문맥을 구성합니다.
+e3은 root인 `prop_future`(미래지향 스타일)가 `part_all`에 연결된 적용 엣지입니다. 서버는 이 root에서 `prop_utopia → prop_plant` 하위 체인을 탐색해 문맥을 구성합니다.
 
 ---
 

@@ -37,3 +37,9 @@ sysinfo.txt
 *.unitypackage
 
 .DS_Store
+# 로컬 개발용 스크린샷 (repo에 올리지 않음)
+LocalCaptures/
+
+# sherpa-onnx 한국어 STT 모델 (encoder 121MB — GitHub 100MB 제한 초과, docs/voice-input-plan.md 참고해 받기)
+Assets/StreamingAssets/SherpaOnnx/ko-zipformer/*.onnx
+Assets/StreamingAssets/SherpaOnnx/ko-zipformer/*.onnx.meta

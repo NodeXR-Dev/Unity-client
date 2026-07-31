@@ -114,6 +114,31 @@ public class EdgeView : MonoBehaviour
     public void SetFromConnectorPressed(bool pressed) => _fromConnector?.SetGrabbed(pressed);
     public void SetToConnectorPressed(bool pressed)   => _toConnector?.SetGrabbed(pressed);
 
+    // MVP 자식 활성화용: 이 엣지의 to(자식) node_id.
+    public string ToNodeId => _data != null ? _data.to_node_id : null;
+
+    // 선 색 변경(활성 자식은 초록 등).
+    public void SetLineColor(Color color)
+    {
+        _lineColor = color;
+        if (_lineRenderer != null)
+        {
+            _lineRenderer.startColor = color;
+            _lineRenderer.endColor   = color;
+        }
+    }
+
+    // 선/엔드포인트 구 표시 토글(비활성 자식은 부모와의 선을 숨긴다).
+    public void SetLineVisible(bool visible)
+    {
+        if (_lineRenderer != null)
+            _lineRenderer.enabled = visible;
+        if (_fromConnector != null)
+            _fromConnector.gameObject.SetActive(visible);
+        if (_toConnector != null)
+            _toConnector.gameObject.SetActive(visible);
+    }
+
     private static Vector3 CubicBezier(float t, Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3)
     {
         float u = 1f - t;

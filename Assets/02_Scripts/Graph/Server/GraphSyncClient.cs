@@ -53,6 +53,8 @@ public class GraphSyncClient : MonoBehaviour
     public string Host   => _host;
     public string RoomId => _roomId;
     public string UserId => _userId;
+    public bool IsConnected =>
+        _socket != null && _socket.State == WebSocketState.Open;
 
     // ─────────────────────────────────────────────
     // 생명주기
@@ -353,7 +355,9 @@ public class GraphSyncClient : MonoBehaviour
 
     // 교차 엣지(포트↔서브그래프) → EDGE_CREATE. 로컬 edge_id 를 job_id 로 실어 보내고
     // 서버 ACK(job_id+edge_id) 로 rekey(ApplyServerEdgeId)한다. label 은 선택(빈 문자열 허용).
-    // 서버는 PART↔PROPERTY/REFERENCE 교차 엣지는 sub_graph 가 달라도 허용한다.
+    // 로컬 GraphData 표준은 PROPERTY/REFERENCE → PART다.
+    // 현재 서버 저장 표준은 반대인 PART → PROPERTY/REFERENCE이므로 WS 경계에서만 방향을 뒤집는다.
+    // 서버 snapshot 수신 시에는 GraphSnapshotDto가 다시 로컬 표준으로 정규화한다.
     // 양 끝 노드가 서버-known 이 아니면 서버가 NODE404 → 송신 skip(로그).
     private void HandleEdgeCreated(EdgeData edge)
     {
@@ -366,6 +370,21 @@ public class GraphSyncClient : MonoBehaviour
             return;
         }
 
+        string serverFromNodeId = edge.from_node_id;
+        string serverToNodeId   = edge.to_node_id;
+
+        var fromNode = _graphManager?.GetNode(edge.from_node_id);
+        var toNode   = _graphManager?.GetNode(edge.to_node_id);
+        bool isLocalPartApplication =
+            (fromNode?.NodeType == NodeType.PROPERTY || fromNode?.NodeType == NodeType.REFERENCE) &&
+            toNode?.NodeType == NodeType.PART;
+
+        if (isLocalPartApplication)
+        {
+            serverFromNodeId = edge.to_node_id;
+            serverToNodeId   = edge.from_node_id;
+        }
+
         var env = new EdgeCreateEnvelope
         {
             room_id = _roomId,
@@ -373,8 +392,8 @@ public class GraphSyncClient : MonoBehaviour
             payload = new EdgeCreatePayload
             {
                 job_id       = edge.edge_id,
-                from_node_id = edge.from_node_id,
-                to_node_id   = edge.to_node_id,
+                from_node_id = serverFromNodeId,
+                to_node_id   = serverToNodeId,
                 label        = "",
             },
         };

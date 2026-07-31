@@ -1,9 +1,198 @@
 # NodeXR TODO — 개발자 3 (노드그래프 / GraphData / 서버 반영)
 
-마지막 업데이트: 2026-07-10
+마지막 업데이트: 2026-07-15
 
 ---
 
+## 2026-07-15 MVP 17차 (MCP 실화면 기반 XR UI/UX 전수 점검)
+
+- [x] **작업 전 점검**: Welcome/Create/Join/Briefing/Design/Review/Result/History/3D/Complete를 Unity MCP Game View로 순회하고, 활성 버튼·입력창의 월드 크기와 패널 간 겹침을 실측
+- [x] **공통 시각 체계 개선**: 밝은 평면 패널을 고대비 딥블루 글래스 카드로 통일하고, 본문/보조/성공/주의/오류 색을 XR 거리에서 구분되도록 재정의. 버튼 hover/press/disabled 피드백과 외곽선 추가
+- [x] **가독성/잘림 수정**: 일반 본문·입력 라벨 최소 크기 상향, 버튼 내부 여백 별도 규칙, 짧은 설명문/통계 라벨 별도 축소 규칙 적용. 전체 화면 재검사 결과 TMP overflow **0건**, 버튼·입력 UI 겹침 **0건**
+- [x] **공간 배치 개선**: AI 부품 추천 패널을 머리 앞 중앙에서 공동 보드 왼쪽 날개로 이동하고 보드 회전/크기를 추종하도록 MvpWorkspaceSidePanelFollower 추가. 실측 간격 약 7.5cm로 중앙 보드와 비겹침
+- [x] **설계 액션 정리**: 우측 액션을 AI 부품 추천 → 2D 스케치 → 3D 확인 → 설계 마치기로 단순화하고, 드물게 쓰는 자리/설정은 하단 보조 버튼과 테이블 도크로 분리
+- [x] **XR 인체공학**: 월드 키보드 폭 약 0.77m·22.5도 기울기·최소 키 높이 약 4.5cm, 테이블 설정 패널 조작 높이 약 4.6~5.2cm로 확대
+- [x] **노드 UX 회귀 검증**: 한글 키보드 입력("물"), 3축 이동(z축 포함), + 자식 생성, R 숨김/연결 표시를 실제 콜백으로 확인. 새 노드의 연결 컨트롤이 늦게 붙는 타이밍 버그를 즉시 갱신 방식으로 수정
+- [x] **작업 후 검증**: 수정 스크립트 7개 표준 검사 오류 0, Play 순회 중 Console error/warning 0, Welcome/Briefing/Design/Review/Complete 실화면 재촬영
+- [ ] **Quest 실기기 최종 확인**: 손 포크/핀치의 실제 체감 거리, 컨트롤러 Ray/Grip, 4인 동시 시야와 테이블 착석 위치는 헤드셋에서 최종 확인
+
+## 2026-07-15 MVP 16차 (UI/UX 레이아웃 정리: 겹침 제거 + 버튼 그룹/순서)
+
+- [x] **겹침 측정 기반 수정**(화면 AABB 실측): 추천 패널(_toolCanvas)이 유저 앞 0.86m에 떠서 보드 중앙(파트포트·스케치·우측 액션바)을 덮던 것 → 앵커 수직오프셋 0.01→0.24로 **위로 띄움**. 재측정: tool vs sketch/ports/actionbar 겹침 **전부 False**
+- [x] **액션바 그룹·순서**: 우측 세로바를 논리 순서 + 3섹션 라벨로 재편 — ①부품·아이디어(AI 부품 추천) ②그림 만들기(2D/3D/3D 보기·숨기기) ③정리·자리(완성/책상/내 자리). 그룹 간격 + 색상 코딩(생성=블루/시안/민트, 완성=Primary, 자리=Amber/Glass). `WorkspaceSectionLabel` 헬퍼
+- [x] 검증: 스크린샷으로 상단 추천패널·중앙 스케치(선명)·우측 그룹 액션바가 각 구역에 분리 확인. 컴파일 0 에러
+- 남은 폴리시(선택): 중앙 스케치 이미지 확대, 파트포트 상단 잔여 근접 — 필요 시 후속
+
+## 2026-07-15 MVP 15차 (재피드백 7건: 손 근본원인·액션바 세로·노드자세·+진동·파트키보드)
+
+- [x] **손 2개 근본원인**: 에디터엔 핸드트래킹 없어 손이 아예 렌더 안 됨 → 렌더러 disable이 무의미했음. 두 개의 **독립 손 시스템**이 원인: `TrackingSpace/*HandAnchor/[BuildingBlock] Hand Tracking`(OVR SDK 손)과 `OVRInteractionComprehensive/OVR*HandVisual`(Interaction SDK 손). 앱은 Interaction SDK를 쓰므로 **OVR 빌딩블록 손의 비주얼 드라이버(OVRMesh/OVRMeshRenderer/SkinnedMeshRenderer) 비활성** → Interaction SDK 손 하나만. 씬 저장. (실기기 확인)
+- [x] **액션바 우측 세로**: 하단 가로바 → x=810 세로 컬럼(6버튼 y 250~-250) + 책상토글 y=-350. 3D 보기/숨기기 토글도 여기서 잘 보임. 사진 갤러리는 좌측(x=-810)으로 이동
+- [x] **노드 항상 같은 자세**: `MvpWorkspaceLayout.LateUpdate`가 노드 회전=패널 회전으로 두던 것 → 책상 모드일 땐 노드 전용 업라이트(카메라 향) 회전 사용. 패널 누워도 노드는 세워둠
+- [x] **+버튼 앞뒤 진동**: `MvpPressFeedback`의 z-lift(깊이 이동)가 포크 손가락과 hover↔press 토글 루프 → z-lift 제거(스케일 피드백만)
+- [x] **'다시 앞으로' 안 눌림**: 프래질한 hover-reveal 도크 대신 **안정적 액션바 버튼**(DeskToggle, 라벨 상태연동)으로 대체
+- [x] **파트추가 키보드**: `AddPartPort.BeginInput`에 `MvpWorldKeyboard.Open(_inputField)` 추가(VR 시스템키보드 없음). 생성도 404 서버 대신 `GraphManager.RequestCreatePartNode` **로컬 즉시**(Fusion 전파됨)
+- [x] **'전체 설계' 빈 원(원 두개/이상한 이미지)**: ALL 노드 없는데 `MainSketchView`가 AllPort를 항상 표시 → `allNode==null`이면 `_allPort.gameObject.SetActive(false)`. 검증: is_global 0개·Refresh 후 AllPort active=False
+- [ ] **+버튼 클릭 시 깜빡임(별개)** + 파트추가 '+' 포크 잘 안눌림: RenderGraph 재빌드/포크 콜라이더 관련 — 실기기 확인·증분렌더 필요로 보류
+- 컴파일 0 에러. 손·도크·키보드그랩·파트+포크감은 실기기 최종 확인 권장
+
+## 2026-07-15 MVP 14차 (피드백 11건: UI 정리 + 키보드/노드 상호작용 + 손 중복)
+
+- [x] **#1 책상엔 보드만**: `MvpWorkspaceLayout.PlaceSketchOnDesk`가 노드까지 책상 평면에 눕히던 `ArrangeWorkspace()` 호출 제거 → 보드만 책상에, 노드는 유저 앞 그대로
+- [x] **#2 '다시 앞으로' 도크 레이**: 토글 후 도크가 새 자세로 정착한 뒤 `WireScene()` 재와이어링(`RewireInteractionNextFrame`)로 레이/포크 표면 재계산. (실기기 검증 필요)
+- [x] **#3 손 2개(+포킹 시 분리)**: 리그 손 메시 전수조사 → 메인 `OVR*HandVisual` 외에 HandSphereMap(지난턴)·DistanceGrab **레티클/synthetic 고스트 손 8개**가 손 위치에 겹쳐 렌더. synthetic/reticle 손 SMR 전부 비활성 → **손당 메인 메시 1개만 남김**. 씬 저장. (실기기 확인)
+- [x] **#4 3D 온/오프**: 액션바 '3D 보기' 토글(`ToggleRocketVisibility`)로 생성된 3D 모델 표시/숨김
+- [x] **#5 우측 세로 사진 갤러리**: '2D 만들기' 때마다 설계 보드 오른쪽(x≈640)에 썸네일 세로 누적(최대 4, 최신 위). 텍스처 복제 소유. 검증: 2장 누적·화면 내·텍스처 정상
+- [x] **#6 전체(ALL) 제거**: ALL 포트 노드 생성 제거(`InitializeWaterRocketGraph`) + `AllPortSlot` UI 숨김(`MvpWorkspacePolish`). 링크 컨트롤러는 `FindObjectsByType<AllPort>`(비활성 제외)라 안전
+- [ ] **#7 +버튼 깜빡임**: 원인 = +누르면 `RequestCreatePropertyNode`→`RenderGraph` 전체 재빌드로 노드뷰(+버튼) 파괴/재생성. 근본 수정은 **공유 GraphManager 증분 렌더** 필요(위험) → 별도 작업으로 보류
+- [x] **#8 키보드 핀치 그랩**: 그랩 콜라이더가 상단 작은 핸들(250×46)만 덮어 본체 핀치가 뒤 노드로 샘 → 콜라이더를 키보드 전체(780×600×64)로 확대·중앙 배치. 핀치=그랩, 포크=키. (실기기 검증)
+- [x] **#9 키보드 앞 노드 투명화**: 키보드 열 때 카메라~키보드 시선을 가리는 노드(수직거리<0.45m)를 α0.2로 dim, `OnDisable`에서 원복(`DimObstructingNodes`)
+- [x] **#10 '말로 아이디어' 삭제**: 액션바에서 제거
+- [x] **#11 그림 후 placeholder 제거**: 생성 시 'SketchPlaceholder'('아직 그림이 없어요') 숨김(`HideSketchPlaceholder`)
+- 컴파일 0 에러. #2·#3·#8·#9는 VR 상호작용이라 실기기 최종 확인 권장. #7만 미해결(render 파이프라인)
+
+## 2026-07-15 MVP 13차 (피드백 5건: 활성화 배타 + 반복 생성 흐름 + 책상도크)
+
+- [x] **#3 형제 노드 배타 활성화**: 같은 부모 아래 자식 중 하나를 켜면 나머지 형제는 자동으로 끔(라디오식). `MvpXrGraphLinkController.DeactivateSiblings` 추가, ToggleChildActive에서 켜기 전에 호출. GetPropertyParentId로 형제 판별
+- [x] **#5 생성 흐름 재설계 — '그때그때 반복 생성'**(핵심): 기존 "그림으로 보기"(Review→Generating→Result 일회성 이동) 제거. 워크스페이스 액션바에 **2D 만들기 / 3D 만들기 / 완성** 추가
+  - `BeginWorkspaceGenerate`: 누를 때마다 지금 연결·활성 노드로 **중앙 이미지 재생성**(오프라인 즉시 mock, 온라인이면 서버 AI 이미지도 요청). 다음 단계로 안 넘어감. busy 가드로 중복 방지
+  - `BeginWorkspace3D`: 누를 때마다 앞 공간 3D 모델 재생성(SpawnRocketStage 재사용, 이전 것 파괴). Design 모드에서도 3D 유지(ShowState clear 조건에 Design 추가)
+  - **완성** 버튼 → Complete 화면(마무리는 별도)
+  - `GetPartRequirements`가 **활성화된 자식 후손 텍스트까지 반영**(AppendActiveDescendants) → 활성화가 이미지 형태에 영향. 검증: 요구사항 반영(finSpan 1.16/안전노즈 둥근/가벼운몸통 길게), 2D 재생성 changed=True, 3D 스폰 확인, 에러 0
+- [x] **#2 책상 도크 '다시 앞으로' 포크 개선**: 패널이 책상에 누우면 도크도 납작하게 유저 쪽으로 밀려 누르기 어려웠음 → 누웠을 땐 도크를 유저 쪽 모서리 위로 세우고, **항상 카메라를 향해 빌보드**(어느 자세에서도 포크 쉽게). `MvpDeskDock.LateUpdate` flat 분기. (실기기 포크감 확인 필요)
+- [x] **#1 손 두 개(중복 렌더) 수정**: 유저 재확인 "둘 다 움직인다=둘 다 렌더". 카메라 리그 손 메시 전수조사 → `TouchHandGrabInteractor/HandSphereMap` 아래 손 메시가 **OculusHand_R+OpenXRRightHand 두 변형 모두 active**(메인 OVR*HandVisual은 한 변형만)로 실 손 위치에 겹쳐 렌더되는 게 원인. **HandSphereMap 하위 SkinnedMeshRenderer 4개(양손×2변형) enabled=false**(그랩 로직 유지, 메시만 숨김). 씬 저장. 실기기에서 손 1개로 보이는지 확인 필요(아니면 DistanceGrab synthetic 후보 다음 차례)
+- [i] **#4 '전체(ALL) 설계' 용도 질문**: ALL 포트(InitializeWaterRocketGraph의 "전체"/라벨 물로켓)는 특정 부품이 아니라 **로켓 전체에 적용되는 속성**(예: "가볍게")을 붙이는 곳. 용도 전달이 약하면 라벨 명확화 또는 제거 가능(유저 결정 대기)
+
+## 2026-07-15 MVP 12차 (PR 전 정리: 데드코드 제거 + 오디오/햅틱 피드백)
+
+- [x] **데드코드 제거**(워크플로 감사 19에이전트, 씬/프리팹/리플렉션 참조까지 적대적 검증한 것만):
+  - `MvpClassroomFlow`의 고아 파트선택 UI 클러스터 통째 삭제 — `AddCurrentRequirement`/`AddExampleRequirements(private)`/`SelectPart`/`CreatePartChoiceButton` + 필드 `_partButtons`/`_requirementInput`/`_requirementDock`/`_selectedPart`/`_workspaceActionBar`(인라인). 진입점(호출자) 0, private라 인스펙터 배선 불가 확정
+  - 연쇄 데드: `MvpWaterRocketGraphController.AddExampleRequirements()`(+전용 헬퍼 `AddRequirementIfMissing`), `MvpFallbackSketchGenerator.CreateWaterRocketSketch(int)`(11차에서 design 오버로드로 대체돼 미사용)
+  - **보존**: `GraphNetworkManager` public Lock API(TryBeginNodeEdit 등)·`NodeData` NodeAssetData/used_in_generation — 개발자2 배선용/서버 계약 미러라 의도적 표면(삭제 안 함)
+- [x] **스파게티 대형 항목은 별도 브랜치 권고**(PR 직전 회귀 위험 회피): God class 분해(MvpClassroomFlow 3000줄, 책임 8+), Table_01 책상경계 4중 복붙→헬퍼, PointableCanvas 리플렉션 와이어링을 MvpXrInteractionBridge로 통합, GraphSyncClient private필드 SetPrivateField→Configure API, REST 엔벨로프 3중 복붙→제네릭. (감사 리포트에 상세)
+- [x] **오디오/햅틱 피드백 신규**(MVP 전체 비음성 오디오 0건이었음 → 핸드트래킹엔 햅틱 불가라 오디오가 사실상 햅틱 대체):
+  - 신규 `MvpAudioCue` — **런타임 절차적 합성**(사인/글라이드/엔벨로프, 애셋 불필요)로 큐 11종(Connect/Disconnect/NodeSpawn/NodeDelete/KeyClick/GestureTick/Commit/Grab/Release/Error/Success), 4보이스 풀. 컨트롤러 연결 시 `OVRInput` 진동 병행(맨손이면 무동작, try/catch 가드)
+  - 신규 `MvpFeedbackHooks` — GraphManager 시맨틱 이벤트(OnEdgeCreated/Deleted, OnNodeCreated/Deleted) 구독 → 연결/생성/삭제 큐+햅틱. 입력경로(제스처/음성/추천/원격) 무관하게 커버. 시작 1.3s 억제창(시드 로드 소음 방지)
+  - 키보드 키 클릭음(모든 키 공통 지점 1곳), 2D·3D 완성 순간 Success 큐(MvpClassroomFlow)
+  - 씬: `MvpFeedback` 오브젝트(MvpAudioCue+MvpFeedbackHooks) 배치
+- [x] **검증**: 컴파일 0 에러. 플레이모드에서 Instance 설정·클립 11종 생성·`Play`시 AudioSource 실제 재생(isPlaying)·**노드 생성→훅→스폰 큐 발동** 확인, 런타임 예외 0(OVR 햅틱 미지원 환경도 안전). 오디오 '가청' 자체는 헤드리스로 확인 불가
+
+## 2026-07-15 MVP 11차 (재점검 + 서버 정합성 분석 + MVP 멀티플레이 배선)
+
+- [x] **재점검**: 10차 코드 워크플로 검수(적대적) → 실결함 1건만: `MvpRocket3DStage.Clear()`가 자식 GameObject만 파괴하고 Material/절차적 Mesh 누수 → **수정**(sharedMaterial 전부 파괴, "RocketCone" 메시만 파괴, 프리미티브 공유메시 보존)
+- [x] **서버 정밀 분석**(FastAPI-server repo 클론): REST `/api` + WS `/ws/rooms/event`, 2D는 `POST /api/2d/generate/graph`→WS `2D_GENERATED{img_url}`(MinIO). **3D 생성 스텁**(print만), **GRAPH_UPDATED 브로드캐스트 미emit**(주석). 상세 `docs/server-api-alignment.md §0`
+- [x] **정합성**: WS 계층·방 API·2D 생성·히스토리는 정합. 클라가 옛 스펙으로 선구현한 REST 6개(node/sub_graph/part_node/references/graph/color_change)는 서버에 없어 404 → 각기 로컬 폴백. **정책: 클라만 정렬**(서버 repo 불변), 문서화 완료
+- [x] **멀티플레이 상태 확인**: `partial`. Fusion은 로비/회의실 씬 아바타(위치·머리/몸통·색)·음성·명단만 동기화. 그래프는 서버 WS 의존(그 서버 채널 죽음). **MVP.unity엔 Fusion 러너·스폰 없어 싱글**. `GraphNetworkManager`(완성도 높은 Fusion 그래프 협업)는 GraphManager 없는 로비 씬에만 있어 고아
+- [x] **MVP 멀티플레이 배선**(자기완결형: 로비 경유 X, MVP가 room_id로 직접 Fusion Shared 세션):
+  - 신규 `MvpNetworkSession` — 온라인 시 room_id로 Shared 러너 시작(현재 씬 유지), 로컬 아바타 스폰, `GraphNetworkManager` 네트워크 오브젝트 스폰
+  - 신규 `MvpGraphNetworkBridge` — GraphManager 로컬 편집 이벤트 → `GraphNetworkManager.Request*` RPC 포워딩. **에코 가드**(GNM에 `IsApplyingRemote` 추가, 원격 위치적용의 OnNodeMoved 재발화 차단) + 온라인 게이트
+  - `MvpClassroomFlow.ConfigureGraphSocket`에서 온라인 확정 시 `BeginSession(roomId)` 훅
+  - 씬/프리팹: MVP.unity에 `MvpNetwork`(세션+브리지) 배치, `MvpGraphNetwork.prefab`(NetworkObject+GNM) 생성+Fusion 프리팹테이블 리베이크, `MvpClassroomFlow._networkSession`·프리팹 참조 배선
+- [x] **검증(단일피어 스모크)**: 컴파일 0 에러. 플레이모드에서 러너 시작+**Photon 클라우드 연결**(cloudReady)+Shared 세션+**아바타 스폰(tester)**+**GNM 스폰**+브리지 바인드/활성화+로컬 노드생성 포워딩(예외·중복·에코 0) 확인. **2인 전파는 빌드+두 번째 클라 필요**(헤드리스 불가)
+  - AppIdFusion 설정됨(연결 가능), AppIdVoice 비어있음(보이스 별도)
+
+## 2026-07-14 MVP 10차 (유저플로우 완주: 설계 반영 2D + mock 3D 생성)
+
+- [x] **2D 스케치를 설계 반영형으로**: 기존엔 변형번호만 받아 **항상 같은 로켓**. 이제 노드 그래프에서 부품·요구사항을 읽어 형태에 반영
+  - 신규 `MvpRocketDesign`(순수 데이터: 몸통 길이/굵기·날개 폭/수·노즈 뾰족/둥근·물 높이·요구사항 라벨·색)
+  - `MvpWaterRocketGraphController.GetRocketDesign(variant)` — GraphManager 공개 API 읽기 전용(한국어 키워드 해석: 가벼/얇→길고얇게, 넓/큰→날개넓게, 안전/둥→둥근노즈, 물많/적→물높이…)
+  - `MvpFallbackSketchGenerator.CreateWaterRocketSketch(design)` 오버로드: 몸통·물·날개·노즈콘(뾰족=삼각/둥근=돔)·라벨밴드를 설계값으로, 오른쪽에 **연결된 요구사항 수만큼 색 배지**. 기존 `(int)` 진입점은 호환 유지
+  - 검증: 대비 설계 A(길쭉·둥근노즈·넓은날개4·물많음)/B(짧고통통·뾰족노즈·작은날개2·물적음) PNG가 형태·색·물높이·배지수까지 확연히 다름
+- [x] **3D 단계를 실제 생성 단계로**(기존 "현재 준비 중입니다" 막다른 길 제거)
+  - 신규 `MvpRocket3DStage`: 프리미티브로 몸통(실린더)·노즈(뾰족=절차적 콘/둥근=구)·날개(finCount개 Y축 배치)·노즐·밴드·받침 조립. 설계값 반영. 콜라이더 제거(뒤 버튼 포킹 통과). 아래→위 팝인(EaseOutBack) 후 천천히 회전
+  - `MvpClassroomFlow.BuildThreeDPage` → `ThreeDGenerateRoutine`: 유저 앞 0.72m·눈아래 0.34m에 스폰 → "3D 물로켓을 만드는 중…"+진행바 → 완성 시 결과화면("우리 팀 3D 물로켓 완성!" + 부품/아이디어/날개/노즈 요약 + 2D결과/수업마치기)
+  - `ShowState`가 3D·완료 외 상태로 가면, `RestartFlow`에서도 3D 모델 정리(`ClearRocketStage`)
+- [x] **완주 확인**: Welcome→…→Design→Review→Generating(설계반영 2D)→Result→**ThreeD(3D 생성)**→Complete 로 막다른 길 없이 진행. Review "그림 만들기"는 무조건 활성(준비도 지표는 안내용)
+- [x] 플레이모드 검증: `ShowState(ThreeD)`→코루틴→스테이지 스폰(SPAWNED)→완성→결과화면·3D모델 스크린샷 확인. 컴파일 에러 0, 런타임 예외 0
+  - 주의: 에디터 포커스 밖이면 프레임이 거의 안 틱해 애니메이션이 멈춰 보임(실기기/빌드는 정상). 검증 시 `_elapsed` 강제·`Update()` 직접 호출로 완성 상태 확인
+
+## 2026-07-14 MVP XR 9차-fix (책상에 붙일 때 배경 사라짐)
+
+- [x] 원인: 패널이 평평하게 눕으면 내부 깊이 레이어(배경이 뒤쪽, 스프레드 0.031m)가 수직이 돼 **배경이 책상 표면 아래로 묻혀 가려짐**(WorkspaceSurface worldY -1.383 < 책상 -1.37)
+- [x] 수정: 책상 위 오프셋 0.02→**0.05m** (양쪽 패널). 실측: 배경이 책상 위 1.7cm로 올라와 안 묻힘. 스크린샷으로 청록 배경 복귀 확인
+
+## 2026-07-14 MVP XR 9차 ('책상에 붙이기' 도크: 설계모드 + hover-reveal)
+
+- [x] 인-UI 버튼 제거, **별도 hover-reveal 도크**(`MvpDeskDock`) 신규: 패널 아래 ~10cm 공간에 흐리게 있다가 **레이가 닿으면 커지며 나타남**(alpha 0.18→1, scale 0.72→1)
+- [x] **인트로/설계 어디서든** 상시: 도크가 현재 중앙 패널(인트로=_flowCanvas, 설계=MainSketchPanel)을 따라 아래 배치. `MvpClassroomFlow.EnsureDeskDock/UpdateDeskDockTarget/ToggleDeskAttach`
+- [x] 클릭 → 현재 패널 책상에 평평(forward=-Y)하게 붙임 / 다시 → 앞으로. 설계 모드는 `MvpWorkspaceLayout.SetDeskMode`(보드+노드 책상에 눕히고 유저-향 재정렬 중단)
+- [x] 실측+스크린샷 검증(인트로·설계 양방향 토글, 도크 follow/hover/label), 컴파일 성공(C# 에러 0)
+
+## 2026-07-14 MVP XR 8차 (가운데 패널 '책상에 붙이기')
+
+- [x] `MvpClassroomFlow._flowCanvas`(가운데 패널) 하단에 **"책상에 붙이기" 토글 버튼** 추가
+- [x] 누르면 **책상(Table_01) 윗면에 평평하게** 눕힘: 중앙 정렬, 윗면 y+0.02, 책상 크기에 맞게 축소(scale 0.0011), `LookRotation(-Vector3.up, awayFromUser)`로 위에서 바로 읽히게(글씨 위쪽=유저 반대편) + poke normal 위쪽. 앵커 비활성으로 고정
+- [x] 다시 누르면("다시 앞으로") 앵커 재활성+Recenter로 유저 앞 복귀, scale 0.00135 복원
+- [x] 실측+스크린샷 검증(평평·안뒤집힘·토글 복귀), Unity 컴파일 성공(C# 에러 0)
+
+## 2026-07-14 MVP XR 7차 (키보드 위치 튜닝 + 자식 노드 활성화 기능)
+
+- [x] **키보드 위치**: 유저 앞 0.4m, 눈 아래 0.35m, 틸트 반대 방향 +22.5°(순수). 실측 수평0.40·아래0.35·euler(22.5,0,0)
+- [x] **자식 노드 활성화** (신규 기능): `NodeData.is_active` + `GraphManager.IsNodeActive/RequestSetNodeActive/GetPropertyParentId` + `EdgeView.SetLineColor/SetLineVisible/ToNodeId`
+  - 자식 PROPERTY의 '연결' 버튼 → **'활성화' 토글**('활성화'↔'끄기'). 최상위는 그대로 부품 '연결'
+  - **활성 자식만** 부모→자식 **초록선**(EdgeView), 비활성은 선 숨김 + 노드 흐리게(CanvasGroup α0.35 + 메시 톤다운)
+  - 새 자식 = 비활성 시작. `MvpXrGraphLinkController.ToggleChildActive/RefreshChildActivation`
+  - 실측: 비활성→선enabled=False·α0.35·"활성화" / 활성→선enabled=True(green)·α1.0·"끄기". 스크린샷으로 대비 확인
+- [x] Unity 컴파일 성공(C# 에러 0)
+
+## 2026-07-14 MVP XR 6차 (포크 normal 반전 + 키보드 배치 + 연결 애니메이션)
+
+- [x] **포크 백워드 확정 수정**: Meta PokeInteractor는 손가락이 normal의 +쪽에서 -normal 방향으로 눌러야 발동. `WireCanvas`가 `NormalFacing.Forward`(+Z=유저 반대)라 먼 쪽에서 눌러야 했음 → **`Backward`(-Z=유저 쪽)** 로. 실측: `PlaneSurface.Normal` dot(유저방향)=0.99. (Meta 기본값도 Backward였음)
+- [x] **키보드 배치**: 노드에 붙이지 않고 **항상 유저 정면**(카메라 앞 0.85m)에 생성(시스템 키보드처럼). 실측 dist 0.87m·정면 dot 0.98
+- [x] **키보드 틸트**: 반대 방향 **+22.5°** (수평 기준으로 순수 22.5, 실측 euler=(22.5,0,0))
+- [x] **연결 애니메이션**: 노드 '연결' 누르면 연결 가능한 부품 포트가 **맥동(scale+glow)** 하며 "여기 눌러" 안내, 연결/취소 시 꺼짐. 링크 버튼 텍스트 "연결됨"→"취소"로 명확화. (MvpPartDropTargetFeedback Update 맥동)
+- [x] Unity 컴파일 성공(C# 에러 0)
+
+## 2026-07-14 MVP XR 상호작용 5차 (포크면/키보드 방향 반전 — MCP 실측 검증)
+
+- [x] **원인 확정**: 좌석은 테이블 +Z쪽인데 메인 패널이 `table.forward(+Z)`로 회전 → 패널 +Z가 유저를 정면으로 향해 **읽기 반전 + 포크가 뒷면**. 노드(패널 회전 상속)·키보드(노드 회전 상속)까지 전부 반전. (안내 패널은 카메라 기준이라 정상이었음)
+- [x] **메인 패널을 유저(카메라) 방향으로** — `PositionMainSketchPanel` 테이블 분기를 카메라 기준(away-from-user)으로. 파트 포트(연결 포크)도 같이 정상화
+- [x] **키보드를 노드 회전 대신 카메라 직접 향하게** — `MvpWorldKeyboard.PlaceNearTarget` (틸트 -22.5° 유지)
+- [x] **노드 항상 유저 향함 안전장치** — `MvpWorkspaceLayout.LateUpdate`에서 배치 모드 무관하게 노드 회전=패널 회전(0.2s 스로틀)
+- [x] 실측 검증: 카메라를 -Z↔+Z 양쪽으로 옮겨도 패널·노드·키보드 dot(fwd, awayFromCam)=1.00 (항상 유저 반대편=읽기/포크 정상, 카메라 따라 반전됨)
+- [x] 4차분(텍스트-도망/키보드) 반영: `pixelDragThreshold=140`, 노드 글씨 poke=키보드 전용(드래그-이동 제거)
+- [x] 진단 로그 `[MVP+]`/`[MVPconnect]`/`[MVPkbd]`/`[MVPgrab]` 추가 (헤드셋 테스트 후 '+'/연결 원인 확정용)
+- [x] Unity 컴파일 성공(C# 에러 0)
+
+## 2026-07-14 MVP XR 상호작용 4차 (플레이모드 MCP 실측 검증)
+
+- [x] **포크/레이 z깊이**를 캔버스 스케일 무관 월드 고정(0.06m)으로 — 노드 캔버스에서 0.80m→0.06m 실측 확인. 스테일 호버(손 떨어져도 호버 유지)·표면 불일치 해결
+- [x] **접촉 게이트(MvpNodeContactGate)를 직접 UI 포크에서 제거** — 콜라이더를 본체(0.4m)로 줄인 뒤 '+'(중심에서 0.28m)·노드 글씨·연결점을 게이트가 막던 문제. 노드 그랩(핀치)용 게이트는 유지
+- [x] **연결 끊기(토글) 구현** — 연결된 부품을 다시 누르면 엣지 삭제 → 연결선도 다음 프레임 제거(플레이모드에서 연결선 생성→삭제 실측 확인)
+- [x] **비활성 캔버스 배선 스킵** — 숨겨진 노드가 일시적으로 48m 볼륨 만드는 것 방지
+- [x] 키보드 -22.5° 틸트 + 포크영역 크기 일치 실측 확인(0.66×0.41m)
+- [x] 전체 PokeInteractable 캔버스 z깊이 감사 = 전부 0.06m 확인. 큰 콜라이더는 회의실 지오메트리(천장/테이블 등), 음수-스케일 경고는 거울반전 장식(방 에셋, 그래프 아님)
+- [x] Unity 컴파일 성공(C# 에러 0)
+
+## 2026-07-14 MVP XR 상호작용 버그 감사·수정 (3차)
+
+멀티에이전트 감사(확정 19 / 반박 4)로 근본 원인 확정 후 수정.
+
+- [x] **이슈1** 새 노드의 "연결" 포트가 `scale 1.0`(형제 0.02)로 ~50배 크게 뜸 → `MvpXrGraphLinkController.WireIdeaHandles`에서 형제 스케일에 맞춰 축소
+- [x] **이슈2** 노드 콜라이더/포크 볼륨이 Canvas rect(481×493)로 산정돼 월드 ~48m가 됨(← 2차의 "Canvas 외곽" 방식이 원인) → 콜라이더는 본체 메시(`EnsureCollider`), 포크/레이 볼륨은 실제 raycastTarget 그래픽 경계(`WireCanvas`)로 재산정
+- [x] **이슈3** 손바닥 법선이 온디바이스에서 반대 정렬 → `MvpSpatialNodeGestureController.IsPalmUp` 법선 반전 + `_invertPalmNormal` 인스펙터 토글
+- [x] `+` 버튼 접촉 게이트가 `Button.onClick` 경로로 우회되던 버그 → 게이트를 `InvokeAdd` 공통 진입점으로 이동
+- [x] "작업판 맞추기"가 자동 정렬을 sticky로 켜 이후 공간 노드가 arc로 스냅되던 버그 → 1회성으로 복구
+- [x] 안내 문구가 없는 버튼명('부품 연결')을 지칭 → 실제 라벨('연결')로 정정
+- [x] 손 스캔/영구선 갱신의 매 프레임 전체 씬 스캔 완화(VR 프레임 히칭)
+- [x] Unity 컴파일 성공 확인(C# 에러 0)
+- [ ] **후속 결정 필요**: RequirementCount가 미연결 노드까지 세어 빈 설계로 Review/Generate 도달(수업 흐름 판단), 로컬 노드에 NODE_TEXT_UPDATE 발행(서버 404), 손 스캔 per-node 공유화, WaitForPalm 타임아웃
+- [ ] 실기기(Quest)에서 이슈3 손바닥 방향·이슈1/2 크기 육안 검증
+
+## 2026-07-14 MVP XR 노드 입력 신뢰성 재수정
+
+- [x] 핀치 그랩을 손끝 접촉 때만 허용하고 게이즈·Poke 입력과 분리
+- [x] 노드 Poke 시 월드 키보드가 열리도록 클릭·짧은 드래그 처리를 분리
+- [x] + 버튼의 원본 서버 전용 리스너를 분리하고 로컬 자식 생성과 즉시 이름 입력 복구
+- [x] R 버튼을 노드 연결점으로 전환하고 노드 연결점 → 부품 포트의 두 단계 연결 적용
+- [x] Unity 컴파일 및 Play에서 노드 생성·자식 생성·키보드·부품 연결 경로 검증
+
+## 2026-07-14 MVP XR 조작 보정 2차
+- [x] 컨트롤러 Grip과 손 Pinch로 노드를 앞뒤를 포함한 3축에서 이동하도록 변경
+- [x] 노드의 실제 Canvas 외곽에 맞춰 충돌 영역을 다시 계산하고, 빈 공간 Pinch 오작동을 차단
+- [x] `+` 버튼의 실제 Button onClick 경로를 로컬 자식 PROPERTY 생성과 즉시 이름 입력에 연결
+- [x] 키보드에 전용 Pinch/Grip 이동 핸들과 22.5도 기울기를 적용하고, 모든 키의 XR Raycast 대상을 보장
+- [x] 기존 `R` 버튼을 숨기고 `연결` 버튼 하나로 통일
+- [x] Unity Play 검증: 자식 생성 1→2, 한글 입력·적용, 키보드 핸들/각도, 연결 버튼 정리를 확인
 ## 완료
 
 ### 기반 데이터 구조
@@ -288,3 +477,185 @@ API 명세의 `GET /api/graph`(sub_graphs 중첩)로 서버 그래프를 받아 
    현재 코드에서 `_connectorScale = 0.06f` 로 Inspector 조절 중. 확정 수치 전달 필요.
 10. **서브그래프 최초 생성 UX — 확정 (2026-07-02)**  
     두 개의 `+` 버튼: **키보드 `+`**(빈 상태 → 서브그래프 첫 root 노드) / **노드 `+`**(연결 자식). 둘 다 빈 노드 생성 후 텍스트 입력=발화 서버 전송. 인터페이스(`RequestCreateRootPropertyNode`/`RequestCreatePropertyNode`) 준비 완료 → 개발자 2가 키보드 `+` UI만 배선.
+
+## 2026-07-15 MVP 18차 (추천 트레이·핀치 지속성·중복 손 비주얼 점검)
+
+- [x] AI 추천 패널을 보드 왼쪽 바깥 배치에서 보드 근접 추천 트레이로 교체 (보드 전면 5.5cm, 카메라 거리 1.32m 실측)
+- [x] 중복 책상 배치 버튼을 하나의 작업 보드 버튼으로 정리 (MvpDeskDock 미생성, DeskToggle 1개 실측)
+- [x] 핀치 선택 중 접촉 판정이 끊기는 문제와 복수 손 입력 소스 스캔 점검 (잡는 중 유지 + 손별 단일 소스)
+- [x] 손 시각화 경로를 한 세트로 한정 (독립 Hand Tracking 및 OpenXR 복제 메시 차단)
+## 2026-07-15 MVP 19차 (범용 협업 설계 랜딩)
+
+- [x] 랜딩 브랜드·문구를 물로켓 전용에서 범용 협업 설계로 전환
+- [x] 물로켓 일러스트 대신 아이디어·노드·스케치 흐름을 보여주는 네이티브 UI 비주얼 적용
+- [x] 새 설계방의 예시 문구를 주제 독립적으로 변경하고 화면 가독성 재검증 (Welcome/Create 0 overflow)
+## 2026-07-15 MVP 20 (Landing brand mark and hero layout)
+
+- [x] Replace the landing illustration with the NodeXR brand mark and a single calm spatial hero composition.
+- [x] Refine the welcome copy and CTA hierarchy, then verify compile and XR UI bounds.
+
+
+## 2026-07-15 MVP 21 (XR input and shared-workspace ergonomics)
+
+- [x] Make every MVP text field open the world keyboard and submit a custom part on Enter.
+- [x] Reduce and restyle the movable world keyboard as a physical key layout.
+- [x] Move design actions to an in-board shared tool shelf; replace table settings with a left-wrist menu.
+- [x] Correct duplicate hand-mesh filtering and provide a true 3D show/hide control.
+
+
+## 2026-07-15 MVP 22 (Shared board simplification and private wrist history)
+
+- [x] Keep only image generation and 3D generation in the shared bottom toolbar; move Finish to the lower-right corner.
+- [x] Remove persistent gesture/wrist tutorial copy from the shared workspace.
+- [x] Make AddPartPort world-keyboard Enter commit and render a real PartPort.
+- [x] Place generated 3D visibly in the shared table workspace.
+- [x] Require palm-up plus wrist gaze, and show generated-image history only in the local wrist menu.
+
+## 2026-07-15 MVP 23 (Product-level shared board UI)
+
+- [x] Rebuild the shared board with a clear XR-first visual hierarchy and restrained product palette.
+- [x] Restyle part cards, sketch viewport, toolbar, and finish action as one consistent component system.
+- [x] Remove decorative noise and prevent text/control overlap at the current meeting-room viewing distance.
+- [x] Verify interaction target size, layout bounds, and runtime errors in Unity Play Mode.
+## 2026-07-15 MVP 24 (Hand visual ownership and 3D visibility)
+
+- [x] Keep one tracked hand visual per side while preserving synthetic interaction data.
+- [x] Prevent Meta HandVisual from re-enabling synthetic poke/grab ghost meshes before render.
+- [x] Turn the shared 3D action into Create, Hide, and Show states.
+- [x] Verify duplicate renderer suppression and 3D state transitions in Play Mode.
+## 2026-07-15 MVP 25 (Wrist button toggle and guidance cleanup)
+
+- [x] Remove the shared workspace status chip completely.
+- [x] Show only a round wrist button while palm-up wrist gaze is valid.
+- [x] Open and close the private wrist menu only through that button.
+- [x] Hide button and menu on gaze loss and simplify fist guidance copy.
+## 2026-07-15 MVP 26 (Node pinch bounds)
+
+- [x] Measure each runtime node visual bounds against its grab collider.
+- [x] Match the pinch/grab collider to the visible node body without outside padding.
+- [x] Verify new and existing nodes keep the same bounds after runtime rewiring.
+## 2026-07-15 MVP 27 (Keyboard placement)
+
+- [x] Place the world keyboard 0.40m in front of the user's eyes.
+- [x] Place the world keyboard 0.35m below eye level.
+- [x] Preserve the 22.5-degree tilt and runtime grab interaction.
+## 2026-07-15 MVP 28 (Dead code and asset cleanup before GitHub push)
+
+- [x] Verify MVP.unity scene integrity (all script GUIDs resolve, no null script references).
+- [x] Remove 81 dead members (~1,290 lines): unused methods, write-only fields, zombie desk-dock chain.
+- [x] Delete orphaned MvpDeskDock.cs (only caller was dead code).
+- [x] Replace obsolete TMP enableWordWrapping with textWrappingMode (10 sites).
+- [x] Move 21MB Captures screenshots out of Assets to gitignored LocalCaptures/.
+- [x] Confirm zero compile errors and zero MVP warnings in Unity console.
+
+## 2026-07-16 MVP 29 (UX gaps: room code, multiplayer signals, confirmations, voice)
+
+- [x] Show invite code (room_id) with copy button on the briefing page (online rooms only).
+- [x] Propagate server-ACK node/edge id rekey over Fusion (fixes peer id divergence after WS rekey).
+- [x] Sync child-node active toggle over Fusion (green line / dim state now shared).
+- [x] Wire node locks: acquire on grab/keyboard edit, release on end; blocked nodes show a hand badge and refuse movement.
+- [x] Release a leaver's node locks on OnPlayerLeft; join/leave notices with participant count.
+- [x] Attribute remote edits ("OO님이 아이디어를 추가했어요") via GraphNetworkManager events.
+- [x] Confirm dialogs before cascade node delete (NodeActionPanel hook) and before finishing the design.
+- [x] Restore voice dictation entry point and add a "말로 추가" toggle button to the workspace action bar.
+- [x] Fix silently-dropped workspace messages (SetWorkspaceMessage now falls back to the student guide chip).
+- [x] Animate the generating-page progress bar; add "방 나가기" to the table settings dock; one-time gesture coachmark.
+
+## 2026-07-16 MVP 30 (Play-mode QA of MVP 29 + dock reachability fixes)
+
+- [x] Verify in play mode with screenshots: welcome, create-room, briefing invite code + copy, part recommendations, gesture coachmark, finish-design confirm, result fallback sketch, voice error path, leave-room flow.
+- [x] Fix: MvpTableSettingsDock was never instantiated at runtime (its only creator was dead code) — now created and shown on design start.
+- [x] Fix: dock canvas started inactive with no activation path — added ShowCollapsed()/HideDock(), hidden again on leave/restart.
+- [x] Fix: dock expanded panel sank under the tabletop (center pivot at table height) — lift by half panel height in PlaceOnTable.
+
+## 2026-07-16 MVP 31 (Button contrast, action-bar hierarchy, voice plan)
+
+- [x] Add CyanDeep/MintDeep factory colors; swap 6 washed-out pastel buttons on dark glass panels (join/demo/enter/copy-code/history/restart) — verified in play mode.
+- [x] Action-bar visual hierarchy: only "그림 생성하기" keeps the accent blue; "3D 생성하기"/"말로 추가" use the muted glass tone (listening state stays red) — verified in play mode.
+- [x] Write docs/voice-input-plan.md — 3-phase voice input plan (PC Link language pack → Quest RECORD_AUDIO/permission/ko-dictation gate → server STT as mainline, tied to server issue #40).
+
+## 2026-07-16 MVP 32 (On-device Korean STT prototype — sherpa-onnx)
+
+- [x] Add RECORD_AUDIO permission to AndroidManifest.
+- [x] Integrate official sherpa-onnx 1.13.4 C# bindings (managed dll + win-x64 natives in Assets/Plugins/SherpaOnnx) — no third-party Unity packages.
+- [x] Bundle Korean streaming zipformer int8 model (~130MB) in StreamingAssets; models gitignored (encoder 121MB exceeds GitHub limit) with download instructions in docs/voice-input-plan.md.
+- [x] MvpOnDeviceDictation: streaming mic recognition (partials, silence auto-finalize, 0.66s tail padding), WAV decode test helper.
+- [x] Wire as first-priority backend in MvpVoiceRequirementController (Windows/Meta as fallback).
+- [x] Verified in editor against bundled Korean test wavs — near-exact transcripts, RTF ~0.03.
+- [x] Quest native: arm64 .so libs, StreamingAssets→persistentDataPath extraction, runtime mic permission. (on-device Quest verification still pending)
+
+## 2026-07-16 MVP 33 (Voice UI placement + live verification)
+
+- [x] Android arm64 natives (libsherpa-onnx-c-api.so, libonnxruntime.so) placed with PluginImporter set to Android/ARM64; win-x64 dlls restricted to Editor+Windows.
+- [x] MvpOnDeviceDictation.Prepare(): mic runtime permission (Quest) → APK model extraction to persistentDataPath → recognizer init; graceful "model not in build" fallback.
+- [x] Voice controller: prepare-status messages, fallback to platform dictation on failure.
+- [x] World keyboard "말하기" key — dictation into ANY input field (node rename, custom part, room forms); gray partial captions in preview; auto/manual finalize appends to committed text.
+- [x] Live editor verification: real mic starts listening (button → "듣기 멈추기"), stop path clean, injected recognition result creates idea node (label verified), keyboard voice key prepare→listen→stop cycle works.
+
+## 2026-07-16 MVP 34 (Voice UI polish)
+
+- [x] MvpOnDeviceDictation.Level — smoothed mic RMS exposed for UI feedback.
+- [x] MvpVoiceIndicator — state dot: hidden(idle) / amber slow-blink(preparing) / red heartbeat pulse scaled by voice level(listening).
+- [x] Attached to action-bar "말로 추가" button and keyboard "말하기" key; button label gains 준비 중… state.
+- [x] Guide-chip partial captions prefixed with red dot; verified pulsing dot + red states in play mode on both surfaces.
+
+## 2026-07-16 MVP 35 (UX debt: modal confirm, message queue, missing status chip)
+
+- [x] CRITICAL FIX: guide chip (SpatialStatus) no longer existed — action-bar renewal removed it, silently discarding ALL guidance/voice captions/notices. Rebuilt as a chip above the action bar; guide also accepts renewed Generate2D button name.
+- [x] Confirm dialogs are now modal: dark blocker behind the panel blocks clicks, tapping outside cancels; MvpGentleFollow keeps the popup in view when the user turns away (VR).
+- [x] Guide chip message queue: unrelated messages wait 1.3s minimum instead of clobbering (same-prefix streams like voice captions update in place); auto-returns to contextual guidance.
+- [x] Align Generate2D interactable rule between guide and workspace dock (parts+ideas+connections) to stop 0.25s flicker fights.
+- [x] Invite-code copy button label reverts after 1.6s.
+- [x] Play-mode sweep of Complete/3D/Result pages; verified modal open→blocker-cancel→confirm→cleanup lifecycle (earlier "leak" was editor pause deferring Destroy).
+- [ ] Observation: 3D generation page panel blocks the "look ahead" view of the assembling rocket — consider shrinking/fading the panel during assembly.
+
+## 2026-07-16 MVP 36 (Overlap/occlusion UX — front UI must yield, not block)
+
+- [x] World keyboard broadcasts OnOpenedGlobal/OnClosedGlobal; overlapping panels yield instead of stacking.
+- [x] Recommendation panel auto-hides while keyboard edits a node label and restores on close; stays if the keyboard target is its own custom-part input.
+- [x] Table settings dock auto-collapses when the keyboard opens into the same space.
+- [x] Touch highlight on nodes: the node your fingertip actually contacts grows 6% (scale-only, sync-safe) so you can tell which of several overlapping nodes a pinch will grab; leaves external scale changes untouched.
+- [x] Verified in play mode: hide→restore cycle, inner-input exception, dock collapse. (Touch highlight needs hand-tracking device check.)
+
+## 2026-07-16 MVP 37 (Occlusion follow-ups: X-ray reach-through, 3D fade, stray-node hint)
+
+- [x] MvpPanelXray: reach a fingertip past the recommendation panel → panel fades to 22% and releases raycasts, letting you grab nodes/board behind it; restores when the hand returns. (Device check pending — no hand tracking in editor.)
+- [x] 3D assembly: flow canvas fades to 16% after 0.9s so the assembling rocket is visible ("앞쪽 공간을 바라보세요" no longer contradicts the screen); restores on completion/state change. Verified restore path.
+- [x] Guide chip suggests "작업판 맞추기" when any node sits >1.6m from the board for 2.5s (45s cooldown) — verified live with a node moved 3.7m away.
+- [x] BUGFIX: rocket-part colliders were deferred-destroyed while pop-in set scale to zero → "BoxCollider does not support negative scale" errors that froze the editor via Error Pause. StripCollider now uses DestroyImmediate.
+
+## 2026-07-17 MVP 38 (Correctness audit — intent-vs-behavior review, 8 fixes)
+
+- [x] CRITICAL: action bar + keyboard each created their own sherpa-onnx recognizer → model loaded twice (hundreds of MB, fatal on Quest). Recognizer is now a shared static; mic ownership arbitrated (starting one listener finalizes the other).
+- [x] Edit-lock leak: opening the keyboard on node B while editing node A overwrote the tracked lock id without unlocking A — previous edit lock is now released on switch.
+- [x] Live voice captions could get stuck behind the message queue (stale caption shown later) — LiveMarker-prefixed messages now bypass the queue.
+- [x] Leaving the room / restarting while dictating left the mic running — RestartFlow stops listening first.
+- [x] Fast state round-trips could double-run the 3D assembly routine (double fade/progress) — coroutine handle now stopped before restart.
+- [x] Gesture coachmark burned its once-per-device flag before being seen — flag now set only when "알겠어요" is pressed.
+- [x] X-ray reach-through only released GraphicRaycaster; VR rays hit the PointableCanvas BoxCollider — colliders now toggle with panel solidity.
+- [x] Late joiners never received the existing graph (RequestBroadcastCurrentGraph had no caller) — master now rebroadcasts 2s after a player joins; attribution notices suppressed during each client's initial 8s sync window.
+- [x] Verified: all edits compiled clean (assembly rebuilt after edits, zero CS errors in editor log).
+- Noted, not fixed: preparing-voice callback can start the mic after a RestartFlow (re-tap stops it); session notices during Briefing are dropped (chip exists only in Design); keyboard Enter mid-dictation discards the in-flight fragment (matches user intent).
+
+## 2026-07-17 MVP 39 (Pre-push sweep #2 — dead code fixpoint + repo hygiene)
+
+- [x] Member-level dead-code rescan at fixpoint: removed leftover `_expanded` declaration (MvpTableSettingsDock) and restored-but-dead `SubmitTranscriptionForTest`. Kept `DecodeWavForTest` (QA tool for Quest verification) and all MenuItem/engine entry points.
+- [x] Verified every new public API added this cycle (rekey/active-sync events, lock helpers, session notices, keyboard globals, LiveMarker, dock show/hide) has live references.
+- [x] Repo hygiene: captures + 130MB models gitignored, no >90MB file staged for commit, every new asset (Voice scripts, SherpaOnnx dlls/.so, StreamingAssets) has its .meta pair.
+- Deferred refactors (need a compile-verifiable session; behavior-safe but multi-file): IHand scanning duplicated in 5 files → extract shared hand registry; MvpClassroomFlow at 3,769 lines → split state builders; glass-tone color literal (0.13,0.17,0.27) ×4 → factory constant.
+
+## 2026-07-17 MVP 40 (Node R button → reference design search via Vuplex WebView)
+
+- [x] NodeActionPanel.ReferenceHook (static, scene-injected like ConfirmDeleteHook) — R button delegates to MVP, other scenes keep the log stub.
+- [x] MvpReferencePanel: world canvas beside the board with CanvasWebViewPrefab loading Bing image search, SafeSearch forced (adlt=strict — 초등 대상). Top bar: keyword input (world keyboard via MvpXrKeyboardInput) + close. PointableCanvas + MvpPanelXray attached; webview destroyed on close (Quest memory).
+- [x] Keyword strategy: instant local fallback "물로켓 {part} {deepest 2 chain labels} 디자인" from CollectReferenceContext; if online, ReferenceApiClient.RequestKeyword (auto-added, _syncClient injected) upgrades the query unless the user already edited it.
+- [ ] Verify: needs editor compile + play test (editor wasn't accepting remote refresh; focus Unity → Ctrl+R). Then Quest: internet access + webview input check.
+- Phase 2 (later): tap an image in results → GenerateReference upload → REFERENCE node in graph (server API exists).
+
+## 2026-07-17 MVP 41 (Pre-push formatting sweep — whole MVP folder)
+
+- [x] Normalizer pass 1: re-indented 175 column-0 member declarations (incl. multi-line signatures), stripped 2,407 trailing-whitespace lines, collapsed 3+ blank-line runs (19 files).
+- [x] Normalizer pass 2: promoted 565 under-indented body lines to 4×brace-depth minimum (deeper alignment respected; comment/string/preprocessor-safe scanner, no verbatim strings in folder).
+- [x] Split 2 joined declarations ("}    private void …"); glass-tone literal ×4 → MvpStudentUiFactory.GlassAction.
+- [x] Verified zero residue: col-0 members inside classes 0, joins 0, trailing whitespace 0, brace imbalance 0 across all MVP .cs.
+- [ ] Editor recompile pending (indent/whitespace-only + same-value constant swap — focus Unity once to confirm green).

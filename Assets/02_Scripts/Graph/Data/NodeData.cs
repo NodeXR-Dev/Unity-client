@@ -38,6 +38,11 @@ public class NodeData
     // 서버 그래프 조회/GRAPH_UPDATED 에서 내려오는 값. 이 노드가 현재 2D 생성 문맥에 쓰였는지 여부(파싱·저장만).
     public bool used_in_generation;
 
+    // MVP: 자식 PROPERTY의 "활성화" 상태. 활성 자식만 부모로부터 초록선으로 이어지고,
+    // 비활성은 선이 없고 흐리게 표시된다. 기본 false = 새 자식은 비활성으로 시작.
+    // (루트/PART 에는 의미 없음 — MVP 활성화 UI가 자식 PROPERTY 에만 사용.)
+    public bool is_active;
+
     // 타입별 부가 데이터. REFERENCE는 자산/이미지 정보, 그 외는 비어 있음({}).
     // 현재는 파싱·저장만 하고 화면 표시는 하지 않는다(REFERENCE NodeView 미구현).
     public NodeAssetData data;
