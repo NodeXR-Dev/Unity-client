@@ -1075,7 +1075,7 @@ public class MvpClassroomFlow : MonoBehaviour
         TMP_InputField roomCode = CreateLabeledInput(
             card.transform,
             "방 코드",
-            "선생님이 알려준 6자리 코드 (예: A1B2C3)",
+            "선생님이 알려준 6글자 코드 (예: KQMWZT)",
             new Vector2(0f, 125f),
             new Vector2(720f, 70f),
             "");
@@ -1101,7 +1101,7 @@ public class MvpClassroomFlow : MonoBehaviour
         TMP_Text status = MvpStudentUiFactory.CreateText(
             card.transform,
             "Status",
-            "6자리 코드를 입력하세요. 대소문자는 상관없어요.",
+            "6글자 코드를 입력하세요. 대소문자는 상관없어요.",
             new Vector2(0f, -135f),
             new Vector2(720f, 54f),
             20f,
@@ -2844,11 +2844,16 @@ public class MvpClassroomFlow : MonoBehaviour
     // ─────────────────────────────────────────────
     //
     // 서버 room_id 는 36자 UUID 라 구두/채팅 공유가 어렵다. 서버 변경 없이 클라에서만
-    // 앞 6자리(하이픈 제외, 대문자)를 초대 코드로 쓰고, 참여 시 GET /api/rooms/list 로
-    // 접두사가 일치하는 방을 찾아 원래 room_id 를 복원한다.
-    //   - 6자리 = 16^6 ≈ 1,670만 조합. 한 교실 규모에서 충돌은 사실상 없다.
-    //   - 접두사가 여러 방과 겹치면 모호하므로 입장을 거부한다(잘못된 방 입장 방지).
+    // 6자리 코드를 만들고, 참여 시 GET /api/rooms/list 로 같은 코드를 갖는 방을 찾아 복원한다.
+    //
+    // [2026-08-01] 알파벳 전용(A~Z)으로 변경.
+    //   공간 키보드(MvpWorldKeyboard.BuildEnglishKeys)에 숫자 행이 없어 16진수 코드는
+    //   입력 자체가 불가능했다. UUID 앞 7자리(28비트)를 26진수 6자리로 인코딩한다.
+    //   28비트 = 268,435,456 < 26^6 = 308,915,776 이라 손실 없이 담긴다.
+    //   조합 수도 이전(16^6 ≈ 1,670만)보다 많아 충돌은 더 줄어든다.
+    //   - 코드가 여러 방과 겹치면 모호하므로 입장을 거부한다(잘못된 방 입장 방지).
     //   - UUID 를 그대로 붙여넣어도 동작한다(하위호환).
+    //   - 대소문자 무관(입력을 대문자로 정규화).
 
     private const int ShortRoomCodeLength = 6;
 
@@ -2857,18 +2862,36 @@ public class MvpClassroomFlow : MonoBehaviour
         if (string.IsNullOrEmpty(roomId)) return string.Empty;
 
         string compact = roomId.Replace("-", string.Empty);
-        if (compact.Length < ShortRoomCodeLength) return compact.ToUpperInvariant();
+        if (compact.Length < 7)
+            return compact.ToUpperInvariant();
 
-        return compact.Substring(0, ShortRoomCodeLength).ToUpperInvariant();
+        uint value;
+        try
+        {
+            value = Convert.ToUInt32(compact.Substring(0, 7), 16);
+        }
+        catch (Exception)
+        {
+            return compact.Substring(0, ShortRoomCodeLength).ToUpperInvariant();
+        }
+
+        char[] buffer = new char[ShortRoomCodeLength];
+        for (int i = ShortRoomCodeLength - 1; i >= 0; i--)
+        {
+            buffer[i] = (char)('A' + (int)(value % 26));
+            value /= 26;
+        }
+        return new string(buffer);
     }
 
     // 6자리 코드 → 전체 room_id. 못 찾거나 모호하면 null 을 넘긴다.
     private IEnumerator ResolveShortRoomCode(string code, Action<string> onDone)
     {
-        string normalized = (code ?? string.Empty)
-            .Replace("-", string.Empty)
-            .Trim()
-            .ToUpperInvariant();
+        // 코드는 A~Z 만 쓴다. 공백·하이픈·오타 문자를 걷어내고 대문자로 맞춘다.
+        var sb = new StringBuilder();
+        foreach (char c in (code ?? string.Empty).ToUpperInvariant())
+            if (c >= 'A' && c <= 'Z') sb.Append(c);
+        string normalized = sb.ToString();
 
         if (string.IsNullOrEmpty(normalized))
         {
