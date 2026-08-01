@@ -126,11 +126,37 @@ public class PartPort : MonoBehaviour,
         ApplySprite();
     }
 
-    // 클릭마다 Pressed 토글.
+    // 클릭마다 Pressed 토글. 단, 속성 노드가 연결 대기(무장) 중이면 그 연결을 먼저 처리한다.
     public void OnPointerClick(PointerEventData eventData)
     {
+        if (TryCompletePendingLink()) return;
+
         if (_isExpanded) Collapse();
         else             Expand();
+    }
+
+    // 노드의 연결 버튼으로 무장된 속성 노드를 이 파트에 연결한다.
+    //   데이터 방향은 항상 속성 → PART (GraphManager.RequestConnectFromPort 가 정규화).
+    //   무장 중이 아니면 false 를 반환해 기존 확장/축소 동작을 그대로 둔다.
+    private bool TryCompletePendingLink()
+    {
+        if (!GraphLinkSelection.IsArmed) return false;
+
+        string ideaNodeId = GraphLinkSelection.ArmedNodeId;
+        GraphLinkSelection.Clear();   // 성공/실패와 무관하게 무장은 해제(다음 탭이 확장으로 동작하도록)
+
+        if (_manager == null || string.IsNullOrEmpty(_nodeId))
+        {
+            Debug.LogWarning("[PartPort] 연결 실패: manager 또는 node_id 가 비어 있습니다.");
+            return true;
+        }
+
+        if (_manager.RequestConnectFromPort(_nodeId, ideaNodeId))
+            Debug.Log($"[PartPort] 연결 성공: {ideaNodeId} → PART {_nodeId}");
+        else
+            Debug.LogWarning($"[PartPort] 연결 실패: {ideaNodeId} → PART {_nodeId}");
+
+        return true;
     }
 
     private void Expand()

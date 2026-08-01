@@ -633,7 +633,6 @@ GameObject:
   m_Component:
   - component: {fileID: 1650281631}
   - component: {fileID: 1650281630}
-  - component: {fileID: 1650281632}
   - component: {fileID: 1650281633}
   - component: {fileID: 1650281634}
   - component: {fileID: 1650281635}
@@ -680,21 +679,6 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!114 &1650281632
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1650281629}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 29adde0ec6845438d969ebe6dfe59eb9, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  _syncClient: {fileID: 1650281630}
-  _graphManager: {fileID: 0}
-  _centerImage: {fileID: 4837475978978073411}
 --- !u!114 &1650281633
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -753,6 +737,9 @@ MonoBehaviour:
   _syncClient: {fileID: 1650281630}
   _graphManager: {fileID: 1840588727}
   _centerImage: {fileID: 4837475978978073411}
+  _generateButton: {fileID: 0}
+  _statusText: {fileID: 0}
+  _generationTimeoutSeconds: 120
 --- !u!114 &1650281637
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -846,11 +833,11 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   _graphRoot: {fileID: 1662339466}
-  _nodePrefab: {fileID: 5974594015378068988, guid: f2ee65203c48f4a92a6ef578d85328c7, type: 3}
+  _nodePrefab: {fileID: 2007273310916252063, guid: 3bae9f63cc33045bfbb612e8e6f42531, type: 3}
   _edgePrefab: {fileID: 5315167706520079795, guid: 5399db9ba91bc4004a3f827f23c6ae6b, type: 3}
-  _layoutHSpacing: 0.75
-  _layoutVSpacing: 0.4
-  _layoutTreeGap: 0.2
+  _layoutHSpacing: 0.5
+  _layoutVSpacing: 0.2
+  _layoutTreeGap: 0.1
 --- !u!4 &1840588728
 Transform:
   m_ObjectHideFlags: 0
@@ -896,6 +883,10 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 3290979591413243996, guid: a58468e7eed654f20ae1958bfb57187b, type: 3}
       propertyPath: m_IsActive
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 4376732647715405885, guid: a58468e7eed654f20ae1958bfb57187b, type: 3}
+      propertyPath: m_Color.a
       value: 1
       objectReference: {fileID: 0}
     - target: {fileID: 4794854346940378024, guid: a58468e7eed654f20ae1958bfb57187b, type: 3}

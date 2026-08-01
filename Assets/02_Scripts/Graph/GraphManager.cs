@@ -52,6 +52,15 @@ public class GraphManager : MonoBehaviour
     //   rootNodeId : 서브그래프 루트가 될 로컬 노드 id.
     public event Action<string> OnSubGraphRequested;
 
+    // 로컬 GUID 로 PART 가 생성된 시점 발행. PartNodeApiClient 가 구독해
+    //   POST /api/part_node/generate 로 서버 UUID 를 발급받고 ApplyServerNodeId 로 rekey 한다.
+    // [2026-08-01] 이 이벤트가 없던 시절엔 RequestCreatePartNode(2-인자) 호출부가 서버에 등록되지 않아
+    //   이후 NODE_TEXT_UPDATE / NODE_MOVE 가 전부 [NODE404] 로 거부됐다(퀘스트 실기 확인).
+    //   호출부(AddPartPort / MvpWaterRocketGraphController 등)를 일일이 고치는 대신 여기서 일괄 처리한다.
+    //   nodeId 를 명시한 3-인자 오버로드(= 서버가 이미 발급했거나 폴백 생성)는 발행하지 않는다.
+    //   localNodeId / label / isGlobal / position
+    public event Action<string, string, bool, Vector3> OnLocalPartNodeCreated;
+
     // 그래프 구조가 통째로 바뀐 시점(LoadGraph/RenderGraph, GRAPH_UPDATED 반영 완료 후) 발행.
     // 메인그래프 UI(MainSketchView)가 구독해 PART/ALL 포트를 다시 그린다.
     // (PROPERTY 서브그래프는 SpawnNodeView 로 이미 갱신되므로 이 이벤트는 메인 UI 재동기화용.)
@@ -279,6 +288,7 @@ public class GraphManager : MonoBehaviour
 
     public List<EdgeData> GetEdgesConnectedToNode(string nodeId) => _edgeRegistry.GetEdgesConnectedTo(nodeId);
     public List<EdgeData> GetEdgesIncomingToNode(string nodeId)  => _edgeRegistry.GetEdgesTo(nodeId);
+    public List<EdgeData> GetEdgesOutgoingFromNode(string nodeId) => _edgeRegistry.GetEdgesFrom(nodeId);
 
     // ─────────────────────────────────────────────
     // 엣지 CRUD (data layer)
@@ -426,6 +436,10 @@ public class GraphManager : MonoBehaviour
         node.SetPosition(position);
         if (_nodeViewMap.TryGetValue(nodeId, out NodeView view))
             view.transform.position = position;
+
+        // 이벤트는 항상 발행한다(Fusion 전파가 이 이벤트를 탄다).
+        //   서버 미등록 노드의 NODE_MOVE 억제는 서버 경계(GraphSyncClient)에서 처리하고,
+        //   보류된 위치는 생성 ACK(ApplyServerNodeId) 시점에 한 번 동기화한다.
         OnNodeMoved?.Invoke(nodeId, position);
         return true;
     }
@@ -603,10 +617,16 @@ public class GraphManager : MonoBehaviour
         string parentId = GetPropertyParent(nodeId);
         if (string.IsNullOrEmpty(parentId))
         {
-            // 루트(부모 없음): 먼저 서버 서브그래프를 발급받아야 한다(/api/sub_graph/generate).
-            // SubGraphApiClient 가 OnSubGraphRequested 를 구독해 POST 후 SubmitRootNodeWithSubGraph 로 NODE_CREATE 를 잇는다.
+            // 루트(부모 없음): sub_graph_id 없이 바로 NODE_CREATE 를 보낸다.
+            //   서버가 parent_node_id 없음 + PROPERTY 인 경우 서브그래프를 자동 생성한다
+            //   (graph_interaction_service.py:354-361 create_sub_graph). 빈 문자열은 서버에서 None 으로 파싱된다.
+            //
+            // [정정 2026-08-01] 옛 명세의 선행 REST(/api/sub_graph/generate)는 서버에 구현된 적이 없다.
+            //   그걸 기다리느라 루트 노드가 서버에 영영 등록되지 않았고, 이후 NODE_TEXT_UPDATE / NODE_MOVE 가
+            //   전부 [NODE404] 로 거부됐다(퀘스트 실기 확인 — 주먹 제스처로 만든 루트 PROPERTY).
+            //   서버가 해당 REST 를 추가하면 OnSubGraphRequested / SubmitRootNodeWithSubGraph 경로를 되살리면 된다.
             _pendingCreateNodeIds.Add(nodeId);
-            OnSubGraphRequested?.Invoke(nodeId);
+            OnNodeCreated?.Invoke(nodeId, t, "", "", node.Position);
             return;
         }
         if (!_serverKnownNodeIds.Contains(parentId))
@@ -717,6 +737,11 @@ public class GraphManager : MonoBehaviour
 
         Debug.Log($"[GraphManager] ApplyServerNodeId: job_id={jobId} → node_id={serverNodeId}");
         OnNodeRekeyed?.Invoke(jobId, serverNodeId, serverNodeText);
+
+        // [2026-08-01] ACK 이전의 이동은 RequestMoveNode 에서 보류됐다(서버 미등록 → NODE404).
+        //   이제 서버-known 이 됐으므로 현재 위치를 한 번 동기화한다.
+        //   (NODE_CREATE 는 생성 시점 위치로 저장되므로, 그 뒤 옮긴 위치가 서버에 반영되지 않는 문제 보정.)
+        OnNodeMoved?.Invoke(serverNodeId, node.Position);
     }
 
     // 서버 EDGE_CREATE ACK 수신 시 호출한다(GraphSyncClient). 요청 때 실어 보낸 job_id(= 로컬 edge_id)로
@@ -795,19 +820,28 @@ public class GraphManager : MonoBehaviour
         => RequestCreatePartNode(label, isGlobal, null);
 
     // nodeId 지정 오버로드. 서버(part_node/generate)가 발급한 UUID로 로컬 PART를 생성할 때 사용한다.
-    // nodeId 가 null/blank 면 기존처럼 로컬 GUID 를 발급한다.
-    // (PART은 REST 동기화이므로 이 메서드는 서버로 아무 이벤트도 발행하지 않는다 — 로컬 생성 전용.)
+    // nodeId 가 null/blank 면 로컬 GUID 를 발급하고 OnLocalPartNodeCreated 를 발행해
+    //   PartNodeApiClient 가 서버 등록 + rekey 를 잇도록 한다(GraphManager 는 서버를 모른다).
+    // nodeId 를 명시하면 이미 서버가 발급했거나(REST 성공) 오프라인 폴백이므로 이벤트를 발행하지 않는다
+    //   — 이중 등록 및 폴백 재귀를 막는다.
     public string RequestCreatePartNode(string label, bool isGlobal, string nodeId)
     {
+        bool locallyIssued = string.IsNullOrEmpty(nodeId);
+
         var node = new NodeData
         {
-            node_id   = string.IsNullOrEmpty(nodeId) ? Guid.NewGuid().ToString() : nodeId,
+            node_id   = locallyIssued ? Guid.NewGuid().ToString() : nodeId,
             type      = "PART",
             label     = label,
             position  = new float[] { 0f, 0f, 0f },
             is_global = isGlobal
         };
-        return AddNode(node) ? node.node_id : null;
+        if (!AddNode(node)) return null;
+
+        if (locallyIssued)
+            OnLocalPartNodeCreated?.Invoke(node.node_id, label, isGlobal, node.Position);
+
+        return node.node_id;
     }
 
     public bool RequestConnectNodes(string fromNodeId, string toNodeId)
@@ -827,6 +861,8 @@ public class GraphManager : MonoBehaviour
     // 메인 그래프 포트(ALL/PART) → 서브그래프 노드 드래그 연결용 어댑터.
     // 제스처 방향은 항상 포트(시작) → 서브그래프(드롭)지만,
     // 데이터 방향은 항상 서브그래프(PROPERTY/REFERENCE) → PART 로 저장한다.
+    //   (서버 저장 표준은 반대인 PART → PROPERTY/REFERENCE 이며, 그 변환은 WS 경계인
+    //    GraphSyncClient.HandleEdgeCreated / GraphSnapshotDto.ToGraphData 가 전담한다.)
     // PROPERTY의 어느 멤버에 드롭하더라도 적용 엣지의 from은 반드시 그 서브그래프 root로 정규화한다.
     // REFERENCE는 자체 node_id를 그대로 사용한다.
     public bool RequestConnectFromPort(string portNodeId, string subgraphNodeId)
@@ -949,8 +985,18 @@ public class GraphManager : MonoBehaviour
         node.label     = trimmed;
         node.node_text = trimmed;
 
-        if (!string.IsNullOrEmpty(trimmed))
-            OnNodeTextUpdated?.Invoke(nodeId, trimmed);
+        if (string.IsNullOrEmpty(trimmed)) return true;
+
+        // 이벤트는 항상 발행한다 — 구독자가 서버(GraphSyncClient)만이 아니라
+        //   Fusion 전파(MvpGraphNetworkBridge)와 MVP 시나리오(MvpWaterRocketGraphController)에도 걸려 있다.
+        //   서버 미등록 노드의 NODE_TEXT_UPDATE 억제는 서버 경계(GraphSyncClient)에서 처리한다.
+        OnNodeTextUpdated?.Invoke(nodeId, trimmed);
+
+        // [2026-08-01] 제스처 생성 경로(MvpSpatialNodeGestureController → RequestCreateRootPropertyNode → 여기)는
+        //   서버 등록을 한 번도 거치지 않아 이후 모든 뮤테이션이 [NODE404] 로 죽었다(퀘스트 실기 확인).
+        //   미등록이면 텍스트 수정에 앞서 "생성"이 필요하므로 생성 경로로 넘긴다(루트/자식 분기 포함).
+        if (!_serverKnownNodeIds.Contains(nodeId))
+            RequestSubmitNodeText(nodeId, trimmed);
 
         return true;
     }
