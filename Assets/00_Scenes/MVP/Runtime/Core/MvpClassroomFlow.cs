@@ -1075,7 +1075,7 @@ public class MvpClassroomFlow : MonoBehaviour
         TMP_InputField roomCode = CreateLabeledInput(
             card.transform,
             "방 코드",
-            "선생님이 준 UUID 방 코드를 붙여넣기",
+            "선생님이 알려준 6자리 코드 (예: A1B2C3)",
             new Vector2(0f, 125f),
             new Vector2(720f, 70f),
             "");
@@ -1101,7 +1101,7 @@ public class MvpClassroomFlow : MonoBehaviour
         TMP_Text status = MvpStudentUiFactory.CreateText(
             card.transform,
             "Status",
-            "방 코드는 복사해서 붙여넣으면 편해요.",
+            "6자리 코드를 입력하세요. 대소문자는 상관없어요.",
             new Vector2(0f, -135f),
             new Vector2(720f, 54f),
             20f,
@@ -1212,7 +1212,7 @@ public class MvpClassroomFlow : MonoBehaviour
             MvpStudentUiFactory.CreateText(
                 _contentRoot,
                 "InviteCode",
-                "초대 코드  " + _session.roomId,
+                "초대 코드  " + ShortRoomCode(_session.roomId),
                 new Vector2(-95f, -232f),
                 new Vector2(830f, 42f),
                 19f,
@@ -1232,7 +1232,7 @@ public class MvpClassroomFlow : MonoBehaviour
                 18f);
             copy.onClick.AddListener(() =>
             {
-                GUIUtility.systemCopyBuffer = _session.roomId;
+                GUIUtility.systemCopyBuffer = ShortRoomCode(_session.roomId);
                 TMP_Text label = copy.GetComponentInChildren<TMP_Text>();
                 if (label != null)
                     StartCoroutine(FlashButtonLabel(label, "복사됨!", "코드 복사"));
@@ -2839,6 +2839,91 @@ public class MvpClassroomFlow : MonoBehaviour
         ShowState(MvpFlowState.Briefing);
     }
 
+    // ─────────────────────────────────────────────
+    // 초대 코드 단축 (2026-08-01)
+    // ─────────────────────────────────────────────
+    //
+    // 서버 room_id 는 36자 UUID 라 구두/채팅 공유가 어렵다. 서버 변경 없이 클라에서만
+    // 앞 6자리(하이픈 제외, 대문자)를 초대 코드로 쓰고, 참여 시 GET /api/rooms/list 로
+    // 접두사가 일치하는 방을 찾아 원래 room_id 를 복원한다.
+    //   - 6자리 = 16^6 ≈ 1,670만 조합. 한 교실 규모에서 충돌은 사실상 없다.
+    //   - 접두사가 여러 방과 겹치면 모호하므로 입장을 거부한다(잘못된 방 입장 방지).
+    //   - UUID 를 그대로 붙여넣어도 동작한다(하위호환).
+
+    private const int ShortRoomCodeLength = 6;
+
+    private static string ShortRoomCode(string roomId)
+    {
+        if (string.IsNullOrEmpty(roomId)) return string.Empty;
+
+        string compact = roomId.Replace("-", string.Empty);
+        if (compact.Length < ShortRoomCodeLength) return compact.ToUpperInvariant();
+
+        return compact.Substring(0, ShortRoomCodeLength).ToUpperInvariant();
+    }
+
+    // 6자리 코드 → 전체 room_id. 못 찾거나 모호하면 null 을 넘긴다.
+    private IEnumerator ResolveShortRoomCode(string code, Action<string> onDone)
+    {
+        string normalized = (code ?? string.Empty)
+            .Replace("-", string.Empty)
+            .Trim()
+            .ToUpperInvariant();
+
+        if (string.IsNullOrEmpty(normalized))
+        {
+            onDone?.Invoke(null);
+            yield break;
+        }
+
+        string url = "http://" + _backendHost + "/api/rooms/list";
+        using (UnityWebRequest request = UnityWebRequest.Get(url))
+        {
+            request.timeout = 5;
+            yield return request.SendWebRequest();
+
+            if (request.result != UnityWebRequest.Result.Success)
+            {
+                Debug.LogWarning(
+                    "[MVP Flow] 방 목록 조회 실패(초대 코드 해석 불가): " +
+                    request.error);
+                onDone?.Invoke(null);
+                yield break;
+            }
+
+            // 공통 봉투 { isSuccess, code, message, result: { rooms: [ { room_id, ... } ] } }
+            // JsonUtility 는 중첩 제네릭에 약해, room_id 값만 정규식으로 뽑아 접두사 비교한다.
+            string body = request.downloadHandler.text ?? string.Empty;
+            var matches = System.Text.RegularExpressions.Regex.Matches(
+                body,
+                "\"room_id\"\\s*:\\s*\"([0-9a-fA-F-]{36})\"");
+
+            string found = null;
+            int hits = 0;
+            foreach (System.Text.RegularExpressions.Match m in matches)
+            {
+                string candidate = m.Groups[1].Value;
+                if (ShortRoomCode(candidate) != normalized) continue;
+
+                hits++;
+                found = candidate;
+            }
+
+            if (hits > 1)
+            {
+                Debug.LogWarning(
+                    "[MVP Flow] 초대 코드가 여러 방과 일치합니다(모호): " + normalized);
+                onDone?.Invoke(null);
+                yield break;
+            }
+
+            Debug.Log(hits == 1
+                ? "[MVP Flow] 초대 코드 해석: " + normalized + " → " + found
+                : "[MVP Flow] 초대 코드에 해당하는 방 없음: " + normalized);
+            onDone?.Invoke(found);
+        }
+    }
+
     private IEnumerator JoinRoomRoutine(
         string roomId,
         string nickname,
@@ -2847,7 +2932,9 @@ public class MvpClassroomFlow : MonoBehaviour
         Button submit)
     {
         if (_requestBusy) yield break;
-        if (!Guid.TryParse(roomId?.Trim(), out Guid parsedRoomId) ||
+
+        string typed = roomId?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(typed) ||
             string.IsNullOrWhiteSpace(nickname) ||
             string.IsNullOrWhiteSpace(password))
         {
@@ -2862,10 +2949,33 @@ public class MvpClassroomFlow : MonoBehaviour
         status.text = "방에 입장하고 있어요...";
         status.color = MvpStudentUiFactory.Primary;
 
+        // [2026-08-01] 초대 코드를 6자리로 단축(ShortRoomCode). UUID 전체를 붙여넣던 방식은
+        //   공유가 불편해 앞 6자리만 쓰고, 여기서 GET /api/rooms/list 로 원래 room_id 를 되찾는다.
+        //   UUID 를 그대로 붙여넣어도 동작하도록 둘 다 받는다(하위호환).
+        string resolvedRoomId = null;
+        if (Guid.TryParse(typed, out Guid parsedFull))
+        {
+            resolvedRoomId = parsedFull.ToString();
+        }
+        else
+        {
+            yield return ResolveShortRoomCode(typed, id => resolvedRoomId = id);
+        }
+
+        if (string.IsNullOrEmpty(resolvedRoomId))
+        {
+            status.text =
+                "그 코드의 방을 찾지 못했어요. 코드를 다시 확인해 주세요.";
+            status.color = MvpStudentUiFactory.DangerInk;
+            _requestBusy = false;
+            submit.interactable = true;
+            yield break;
+        }
+
         bool entered = false;
         string userId = "";
         yield return TryEnterRoom(
-            parsedRoomId.ToString(),
+            resolvedRoomId,
             nickname.Trim(),
             password.Trim(),
             (ok, id) =>
@@ -2884,7 +2994,7 @@ public class MvpClassroomFlow : MonoBehaviour
             yield break;
         }
 
-        _session.roomId = parsedRoomId.ToString();
+        _session.roomId = resolvedRoomId;
         _session.roomName = "함께하는 물로켓 수업";
         _session.topic = "새로운 설계 아이디어";
         _session.goal = "우리 팀만의 해결책 만들기";
