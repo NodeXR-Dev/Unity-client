@@ -995,10 +995,10 @@ MonoBehaviour:
   lobbyName: default
   sessionListContentParent: {fileID: 717044779}
   sessionListEntryPrefab: {fileID: 7717861025995004143, guid: 97df7ada387d6264f840f02a98e4fb31, type: 3}
-  gameplaySceneAsset: {fileID: 102900000, guid: 7d79aecd874c542fe8cfe195a9777fea, type: 3}
+  gameplaySceneAsset: {fileID: 102900000, guid: 0f1e2d3c4b5a69788796a5b4c3d2e1f0, type: 3}
   lobbySceneAsset: {fileID: 102900000, guid: 01ecfafbf5b3981418026cb3e76c2a79, type: 3}
-  gameplaySceneName: UiTest
-  lobbySceneName: vr_lobby 2
+  gameplaySceneName: MVP
+  lobbySceneName: Lobby_Core
   playerPrefab: {fileID: 3937044470431379454, guid: 00683ffc6b00f5145a3d3e5ef4b4ba39, type: 3}
   roomNameInput: {fileID: 363992408}
   passwordInput: {fileID: 351589245}
