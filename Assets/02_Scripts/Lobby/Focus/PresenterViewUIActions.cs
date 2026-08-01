@@ -16,7 +16,13 @@ public class PresenterViewUIActions : MonoBehaviour
     {
         ResolveReferences();
 
-        FindLocalPoseSync()?.RequestStartSharing();
+        PresenterCameraPoseSync localPoseSync = FindLocalPoseSync();
+        if (localPoseSync == null || !CanStartSharingMyView(localPoseSync))
+        {
+            return;
+        }
+
+        localPoseSync.RequestStartSharing();
         session?.RequestStartLocalPresenterView();
         rendererController?.ExitToPersonalMode();
     }
@@ -51,8 +57,21 @@ public class PresenterViewUIActions : MonoBehaviour
 
     public bool IsSharingMyView()
     {
+        ResolveReferences();
+
         PresenterCameraPoseSync localPoseSync = FindLocalPoseSync();
-        return localPoseSync != null && localPoseSync.IsSharingView;
+        if (localPoseSync == null || !localPoseSync.IsSharingView)
+        {
+            return false;
+        }
+
+        if (session == null || !session.IsPresenterViewActive)
+        {
+            return true;
+        }
+
+        PlayerRef localPlayer = GetLocalPlayer(localPoseSync);
+        return localPlayer != PlayerRef.None && session.Presenter == localPlayer;
     }
 
     public void StartWatchingPlayer(NetworkObject presenterObject)
@@ -159,5 +178,46 @@ public class PresenterViewUIActions : MonoBehaviour
         }
 
         return null;
+    }
+
+    private bool CanStartSharingMyView(PresenterCameraPoseSync localPoseSync)
+    {
+        if (session == null || !session.IsPresenterViewActive)
+        {
+            return true;
+        }
+
+        PlayerRef localPlayer = GetLocalPlayer(localPoseSync);
+        if (localPlayer != PlayerRef.None && session.Presenter == localPlayer)
+        {
+            return true;
+        }
+
+        Debug.LogWarning($"[PresenterViewUIActions] Share blocked because another presenter is already sharing. current={session.Presenter}, local={localPlayer}");
+        return false;
+    }
+
+    private PlayerRef GetLocalPlayer(PresenterCameraPoseSync localPoseSync)
+    {
+        NetworkRunner runner = session != null && session.Runner != null
+            ? session.Runner
+            : NetworkManager.runnerInsatance;
+
+        if (runner != null && runner.LocalPlayer != PlayerRef.None)
+        {
+            return runner.LocalPlayer;
+        }
+
+        if (localPoseSync != null && localPoseSync.Object != null)
+        {
+            if (localPoseSync.Object.InputAuthority != PlayerRef.None)
+            {
+                return localPoseSync.Object.InputAuthority;
+            }
+
+            return localPoseSync.Object.StateAuthority;
+        }
+
+        return PlayerRef.None;
     }
 }

@@ -121,7 +121,7 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
 
         runnerInsatance.JoinSessionLobby(SessionLobby.Shared, lobbyName);
 
-        RefreshRoomListFromServer();
+        UpdateDateUIAndRefresh();
     }
         
     // ✅ 사용자가 이름을 입력하고 버튼을 누를 때 호출할 함수
@@ -825,7 +825,8 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
 
     private IEnumerator GetRoomInfoRoutine(string roomId, Action<RoomInfoResult> callback)
     {
-        string url = $"http://localhost:8000/api/rooms/info?room_id={roomId}";
+        string escapedRoomId = UnityWebRequest.EscapeURL(roomId);
+        string url = $"http://localhost:8000/api/rooms/{escapedRoomId}/info";
         using (UnityWebRequest request = UnityWebRequest.Get(url))
         {
             yield return request.SendWebRequest();

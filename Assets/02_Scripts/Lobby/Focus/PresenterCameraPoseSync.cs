@@ -124,6 +124,12 @@ public class PresenterCameraPoseSync : NetworkBehaviour
     {
         if (IsSharingView)
         {
+            PresenterViewSession activeSession = PresenterViewSession.Instance;
+            if (activeSession != null && activeSession.IsPresenterViewActive && activeSession.Runner != null)
+            {
+                return activeSession.Presenter == activeSession.Runner.LocalPlayer;
+            }
+
             return true;
         }
 

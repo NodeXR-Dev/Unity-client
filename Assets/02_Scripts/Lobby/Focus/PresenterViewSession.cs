@@ -134,6 +134,12 @@ public class PresenterViewSession : NetworkBehaviour
             return;
         }
 
+        if (IsPresenterViewActive && Presenter != presenter)
+        {
+            LogRejected($"Start share rejected. another presenter is already sharing. requester={requester}, current={Presenter}, requested={presenter}");
+            return;
+        }
+
         bool controlsAll = allowStateAuthorityToControlAll && requester == Runner.LocalPlayer;
         bool startsOwnShare = allowAnyPlayerToStartOwnShare && presenter == requester;
 
