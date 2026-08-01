@@ -812,7 +812,7 @@ PrefabInstance:
     m_Modifications:
     - target: {fileID: 2752421507415609965, guid: 906d48b2840bb4c58900d53d0e7c907c, type: 3}
       propertyPath: m_text
-      value: 
+      value: "\uC608\uC2DC \uD14D\uC2A4\uD2B8\uC785\uB2C8\uB2E4."
       objectReference: {fileID: 0}
     - target: {fileID: 4767413743637610179, guid: 906d48b2840bb4c58900d53d0e7c907c, type: 3}
       propertyPath: m_Material
