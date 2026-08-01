@@ -137,10 +137,35 @@ public class AllPort : MonoBehaviour,
     }
 
     // 클릭마다 Pressed 토글 — 스프라이트와 무관, 목록 표시/숨김만 제어.
+    // 단, 속성 노드가 연결 대기(무장) 중이면 ALL 에 적용하는 연결을 먼저 처리한다.
     public void OnPointerClick(PointerEventData eventData)
     {
+        if (TryCompletePendingLink()) return;
+
         if (_isExpanded) Collapse();
         else             Expand();
+    }
+
+    // 무장된 속성 노드를 ALL(루트 PART)에 연결한다. PartPort 와 동일한 규약.
+    private bool TryCompletePendingLink()
+    {
+        if (!GraphLinkSelection.IsArmed) return false;
+
+        string ideaNodeId = GraphLinkSelection.ArmedNodeId;
+        GraphLinkSelection.Clear();
+
+        if (_manager == null || string.IsNullOrEmpty(_nodeId))
+        {
+            Debug.LogWarning("[AllPort] 연결 실패: manager 또는 node_id 가 비어 있습니다.");
+            return true;
+        }
+
+        if (_manager.RequestConnectFromPort(_nodeId, ideaNodeId))
+            Debug.Log($"[AllPort] 연결 성공: {ideaNodeId} → ALL {_nodeId}");
+        else
+            Debug.LogWarning($"[AllPort] 연결 실패: {ideaNodeId} → ALL {_nodeId}");
+
+        return true;
     }
 
     private void Expand()

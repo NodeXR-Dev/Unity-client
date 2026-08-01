@@ -1,7 +1,7 @@
 # 서버 API 정렬 기준 (개발자 3 기준)
 
-마지막 업데이트: 2026-07-15  
-서버 코드 기준: `github.com/NodeXR-Dev/FastAPI-server` (2026-07-15 클론 정밀 분석)
+마지막 업데이트: 2026-07-30  
+서버 코드 기준: 로컬 클론 `nodexr-server` commit `44a3db1` (2026-07-30 실서버 기동 + `/openapi.json` 대조 + REST 왕복 검증)
 
 > 하단 2026-06-24 이후 섹션은 과거 가정이 섞여 있어, 아래 **0. 현행 정합성(2026-07-15 검증)** 이 우선한다.
 
@@ -22,9 +22,25 @@
 - `POST /api/2d/generate/graph`(connections `[{part_node_id, node_id}]`)·`/feature`, `GET /api/history/{room_id}`.
 
 ### ❌ 불일치 (클라가 옛 스펙 대상으로 선구현 → 서버에 없어 404)
-`/api/node/generate/utterance`, `/api/sub_graph/generate`, `/api/part_node/*`, `/api/references/*`, `GET /api/graph`, `/api/2d/color_change`.
+`/api/node/generate/utterance`, `/api/sub_graph/generate`, `/api/references/*`, `GET /api/graph`, `/api/2d/color_change`, `/api/part_node/generate/keyboard`.
 - 클라는 각각 실패 시 **로컬 폴백**(placeholder/self-GUID/seed)으로 방어되어 오프라인·체험 흐름은 완주된다.
-- 단, PART가 서버 DB에 안 생기므로 **온라인 그래프→2D는 빈 connections로 무력화** → 클라는 서버 이미지 대기 타임아웃 후 `MvpFallbackSketchGenerator`(설계 반영 mock)로 폴백.
+
+### ✅ 2026-07-30 갱신 — PART 는 정합 완료 (라이브 검증)
+
+위 목록에서 `/api/part_node/*` 를 **제거**했다. 서버가 commit `c687675`로 PART CRUD를 추가했고(`app/api/part_node.py`), 클라를 그 표면에 맞췄다.
+
+- 서버 실표면: `POST /api/part_node/generate` `{room_id, text, position:[x,y,z]}` → `PartNodeResponse{room_id, part_node_id, part_node_text}`. `PATCH /modify`, `DELETE /delete` 는 원래 필드명까지 일치했다.
+- **옛 명세의 발화/키보드 2분기는 서버에 없다.** `generate` 하나만 있고 `text` 만 받는다(LLM 분기 없음). → 클라 요청 DTO 를 `PartNodeCreateRequest` 하나로 통합하고 `CreatePart`/`CreatePartKeyboard` 둘 다 `generate` 로 보낸다.
+- `AddPartPort.InvokeAdd` 를 서버 우선으로 복원. 직전 MVP 우회가 로컬 우선이라 서버 호출이 도달하지 못하는 죽은 코드였다.
+- 검증: `text="팔걸이"` → 200 PART_NODE200 → DB에 PART 행 생성 → 로컬 노드가 서버 UUID(`d583e3b1…`)를 그대로 사용. 서버 UUID 확보가 2D 생성의 `part_node_id` 전제조건이라 이 왕복이 필수다.
+
+### 🚫 2026-07-30 블로커 — 방 생성 500 이 WS 검증을 막는다
+
+`POST /api/rooms/generate` 가 항상 500(`COMMON500`). `passlib 1.7.4` + `bcrypt 5.0.0` 비호환으로 `app/core/security.py::hash_password()` 가 모든 입력에 `ValueError: password cannot be longer than 72 bytes` 를 던진다(입력이 4바이트여도). `requirements.txt:28` 이 bcrypt 미핀이라 신규 설치 환경에서만 재현된다. `/api/rooms/enter` 도 동일.
+
+영향: MVP 는 방 생성 실패 시 체험 모드로 빠지고(`MvpClassroomFlow.cs:2827-2832`), `if (_session.online)` 가 false 라 `ConfigureGraphSocket()` 이 호출되지 않아 **GraphSyncClient 가 끝까지 비활성** → WS 뮤테이션 경로 전체가 미검증 상태다. 클라 문제가 아니다.
+
+서버팀 전달 완료(2026-07-30). 수정 후 재검증 대상: WS 연결 → `NODE_TEXT_UPDATE`/`NODE_MOVE` DB 반영 → 2D 생성 왕복 → `GET /api/history/{room_id}`.
 
 ### 서버측 죽은 채널(클라가 기대하나 미동작)
 - `GRAPH_UPDATED` 브로드캐스트 미emit(broadcast_to_room 주석) → 전체 그래프 동기화·타 유저 전파·레퍼런스/파트 반영 경로 죽음.
