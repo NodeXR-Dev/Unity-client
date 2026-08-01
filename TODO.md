@@ -682,3 +682,70 @@ API 명세의 `GET /api/graph`(sub_graphs 중첩)로 서버 그래프를 받아 
 - [x] Split 2 joined declarations ("}    private void …"); glass-tone literal ×4 → MvpStudentUiFactory.GlassAction.
 - [x] Verified zero residue: col-0 members inside classes 0, joins 0, trailing whitespace 0, brace imbalance 0 across all MVP .cs.
 - [ ] Editor recompile pending (indent/whitespace-only + same-value constant swap — focus Unity once to confirm green).
+
+## 2026-07-30 서버 연동 1 (개발자3 — MVP 씬 온라인 전환 + PART REST 정합)
+
+배경: 실통합 씬이 `MeetingRoom_Base`가 아니라 `MVP.unity`임을 확인. Base는 그래프 에셋을 전혀 참조하지 않고(`[Mount] GraphContent`는 빈 껍데기), MVP.unity가 GraphManager/GraphSyncClient/MainSketchPanel 일체를 들고 있다. 그런데 MVP는 `_autoConnect:0 / _sendToServer:0 / _offlineFallback:1` — 서버를 한 번도 켜본 적이 없는 상태였다.
+
+- [x] 서버 실표면 재조사(`nodexr-server`, 로컬 클론). `docs/server-api-alignment.md`(2026-07-15)가 stale함을 확인:
+  - 있음: `POST /api/utterances`, `/api/part_node/{generate,modify,delete}`, `/api/2d/generate/{graph,feature}`, `GET /api/history/{room_id}`, `GET /api/rooms/*`, WS `/ws/rooms/event`(NODE_CREATE/MOVE/TEXT_UPDATE/DELETE, EDGE_CREATE/DELETE + ACK)
+  - 없음: `GET /api/graph`(콜드로드), `POST /api/sub_graph/generate`, `/api/references/*`, `/api/part_node/generate/keyboard`, `/api/node/generate/utterance`, `/api/2d/color_change`
+  - 죽은 채널: `GRAPH_UPDATED` 미emit(`connection_manager.py:172` broadcast_to_room 주석) → 서버→클라는 ACK와 `2D_GENERATED`만 유효.
+- [x] PART REST 경로 정합. 서버는 `generate` 하나에 `{room_id, text, position}`만 받는다(발화/키보드 분기 없음).
+  - `PartNodeDto.cs`: `PartNodeGenerateRequest`(utterance) + `PartNodeKeyboardRequest`(text) → `PartNodeCreateRequest`(text) 통합.
+  - `PartNodeApiClient.cs`: `CoCreate`/`CoCreateKeyboard` 둘 다 `POST part_node/generate` + body `text`. modify/delete는 원래 일치해 무변경.
+- [x] `AddPartPort.InvokeAdd` 서버 우선으로 복원. 직전 MVP 우회가 로컬 우선이라 **서버 호출이 도달하지 못하는 죽은 코드**였다(주석의 사유 "generate/keyboard 404"가 해소됨). 서버 실패 시 `CreateLocalPart` 폴백 유지. 두 오버로드 모두 `GraphManager.AddNode`를 타므로 Fusion 전파는 동일 — 차이는 node_id 발급 주체이고, 2D 생성의 `part_node_id`로 쓰려면 서버 UUID여야 한다.
+- [x] `Assets/00_Scenes/MVP/MVP_SH.unity` 생성(MVP.unity 사본, 새 meta GUID). 원본 무변경.
+  - `_autoConnect 0→1`, `_sendToServer 0→1`, `PartNodeApiClient._offlineFallback 1→0`.
+  - 누락된 `SubGraphApiClient`/`HistoryApiClient`/`ReferenceApiClient` 배치(fileID 1650281635~637). 앞 둘은 서버 엔드포인트가 없어 현재 404 — 배선 선반영. `ReferenceApiClient`는 `MvpClassroomFlow.EnsureReferenceApi()`가 `FindFirstObjectByType`으로 먼저 찾으므로 런타임 AddComponent와 중복되지 않는다.
+  - `SeedGraphLoader._loadOnStart`는 1로 유지 — 콜드로드 엔드포인트가 없어 초기 그래프 경로가 이것뿐이고, 시드 UUID가 `seed_all_dummy.sql`과 정확히 일치한다.
+- [x] Unity 컴파일 통과(에디터 Play 진입 확인).
+- [x] **PART 생성 REST 왕복 라이브 검증 완료.** `POST /api/part_node/generate` 200 → DB에 `d583e3b1…| PART | 팔걸이` 생성 → 로컬 노드가 서버 UUID를 그대로 사용(`[Connect] 무장: 포트 d583e3b1`). 폴백 경고 없음. PartPort 렌더링도 0→1→2개로 정상. `part_node/delete`도 curl로 200 확인.
+- [ ] **WS 동기화 검증 불가 — 서버 블로커.** 원인 사슬: `POST /api/rooms/generate` 500 → `MvpClassroomFlow.cs:2827` created=false → `:2829-2831` 랜덤 roomId + online=false(체험 모드) → `:2834` `if (_session.online)` false → `ConfigureGraphSocket()`(`:3610`, enabled=true + Connect()) 미호출 → GraphSyncClient 비활성 유지. **개발자2 코드는 정상**이고 서버 500이 앞단을 막은 것.
+  - 500 근본 원인: `passlib 1.7.4` + `bcrypt 5.0.0` 비호환 → `app/core/security.py` `hash_password()`가 모든 입력에 `ValueError: password cannot be longer than 72 bytes` (입력이 4바이트여도). `requirements.txt:28` `passlib[bcrypt]`가 bcrypt 미핀이라 신규 설치 환경만 발생. `/api/rooms/enter`도 동일 영향.
+  - 서버팀 전달 완료(2026-07-30). 수정안: `requirements.txt`에 `bcrypt==4.0.1` 핀.
+  - 남은 검증(서버 수정 후): WS 연결 → NODE_TEXT_UPDATE/NODE_MOVE DB 반영 → 2D 생성 왕복 → 히스토리 조회.
+- [정정] `MVP_SH.unity`의 `_autoConnect`/`_sendToServer` 변경은 **MVP 흐름에서 무의미**하다. `PrepareExistingScene()`(`:385-388`)이 시작 시 끄고 `ConfigureGraphSocket()`(`:3620-3625`)이 켜므로 씬 값이 양방향으로 덮어써진다. 실효가 있는 건 `_offlineFallback: 0`(PART 실패를 드러내 이번 검증에 유용)과 추가한 API 클라 3개뿐.
+- [정정] MVP에서 `SeedGraphLoader`는 설계상 비활성(`:382-383`)이며 로봇 시드가 아니라 물로켓 시나리오를 쓴다. 온라인 흐름에서는 `_roomId`가 서버 생성 방으로 교체된다(`:3617`) → 시드 room `aaaaaaaa…`은 체험 모드에서만 쓰인다. 계획서의 "시드 유지" 근거는 MVP에 해당되지 않았다.
+- 남은 DB 흔적: 시드 room에 검증용 PART `d583e3b1-0fe4-4a6f-8bd8-a7cfdb561d1e`("팔걸이") 생존. 다음 검증 전에 소프트 삭제 여부 판단.
+- [x] 로컬 DB 시드 복구 완료. `seed_all_dummy.sql` 재실행(멱등, `deleted_at=NULL` 복원)으로 `…0005` 텍스트 원복 + `…0007`·`…0008` 삭제 해제, 이어 잔여 테스트 노드 9개/엣지 9개 소프트 삭제. 결과: 시드 room 생존 노드 정확히 10개(원문 일치), 생존 엣지 9개 = 시드 엣지(`18181818%`) 전부, 비시드 엣지 0개. 스키마·서버 코드 무변경.
+- [ ] 검증 후 `docs/server-api-alignment.md` 0절 갱신(위 조사 결과 반영).
+- 이번 범위 제외: 노드 프리팹 `NewNodebox` 교체 + untracked 디자이너 에셋(NM00~04.mat, Shader00~04, New_base.fbx) 커밋. MVP는 계속 `NodeView_Sub.prefab` 사용.
+
+## 2026-08-01 서버 연동 2 (개발자3 — Quest 3S 실기 검증 + PART 서버 등록 일원화)
+
+- [x] **Quest 3S device 서버 연동 성공.** 헤드셋에서 방 생성 → 입장 → WS 연결 → 이벤트 송신까지 전 경로 확인. DB에 device 생성 방 `fe275a61-…` 기록됨. WS `NODE_TEXT_UPDATE`/`NODE_MOVE` 정상 송신, 서버 ERROR 봉투 파싱까지 동작.
+- [x] 빌드 파이프라인 정리(전부 내 영역 밖 문제였음, 순차 해결):
+  - 프리팹 누락 21개 → `UiTest.unity`/`backup/Lobby.unity`가 원인. **체크 해제로는 안 됨** — `AotPreBuilder.cs:153-168`이 `EditorBuildSettings.scenes`의 `.path`만 읽고 `.enabled`를 무시하므로 **목록에서 제거**해야 한다.
+  - OVRCameraRig 충돌 → 같은 이유로 `MeetingRoom_Base` 제거(AOT가 additive로 동시 오픈).
+  - `Microphone Usage Description` 공백 → Android 빌드 거부. Player Settings에 입력.
+  - 유령 항목 `Assets/Scenes/MeetingRoom.unity` → macOS에선 경고, **Android에선 하드 에러**. 목록에서 제거.
+  - 빌드 타깃이 macOS(`OSXUniversal`)였음 → Android 전환.
+  - `insecureHttpOption: 0` → device에서 `InvalidOperationException: Insecure connection not allowed`. **Unity는 loopback(127.0.0.1)만 예외**라 에디터 테스트에선 안 드러났다. `Always allowed`(2)로 변경.
+  - 퀘스트 Wi-Fi 미연결(wlan0 IP 없음) → 연결 후 `192.168.0.238`, 맥(`192.168.0.236`)까지 ping 정상.
+- [x] 서버 로컬 환경(리포 파일 무변경): `bcrypt 5.0.0 → 4.0.1`(passlib 1.7.4 비호환 해소, `rooms/generate` 500 → 200), `.env`의 `MINIO_PUBLIC_BASE_URL`을 LAN IP로. `.env`는 `.gitignore:138` 대상.
+- [x] **PART 서버 등록을 GraphManager 이벤트로 일원화.** 실기에서 모든 WS 뮤테이션이 `[NODE404] Node not found`로 거부됐고, 원인은 `MvpWaterRocketGraphController.cs:124`가 `RequestCreatePartNode(label, isGlobal)` **2-인자(로컬 전용) 오버로드**를 써서 서버에 노드가 없던 것. `AddPartPort`만 고쳤던 7-30 수정이 이 두 번째 호출부를 놓쳤다.
+  - 개발자2 파일을 건드리지 않기 위해(충돌 회피) **내 파일 2개만 수정**:
+    - `GraphManager.cs`: `OnLocalPartNodeCreated(localId, label, isGlobal, position)` 이벤트 추가. `nodeId`가 null일 때(로컬 발급)만 발행 — 3-인자 오버로드(서버 발급/폴백)는 미발행하여 이중 등록·재귀 차단.
+    - `PartNodeApiClient.cs`: 이벤트 구독 → `POST /api/part_node/generate` → `ApplyServerNodeId(localId, serverId, serverText)`로 rekey. 오프라인 폴백 2곳은 `Guid.NewGuid()`를 명시 전달해 재귀 방지.
+  - 효과: 호출부가 누구든(현재·미래 불문) 서버 등록이 자동으로 붙는다. CLAUDE.md의 "GraphManager는 서버를 모르고 이벤트만 발행, `*ApiClient`가 서버 경계" 구조와 일치.
+- [x] **실기 재검증 성공(Quest 3S).** 주먹 제스처로 만든 루트 PROPERTY가 서버 DB에 생성됨:
+  `fc521e53-… | PROPERTY | "아이디어" | sub_graph_id 있음 | (-0.39, -0.05, -0.41)`.
+  `NODE_CREATE(job_id, parent="", sub_graph="")` 송신 → `NODE200 노드 생성 성공` ACK → rekey → 위치 동기화까지 전 체인 확인. `[NODE404]` 소멸.
+- [x] 제스처 생성 경로 3건 추가 수정(전부 `GraphManager.cs`, 개발자2 파일 무변경):
+  - `RequestSubmitNodeText` 루트 분기: 없는 `/api/sub_graph/generate` 대기 제거 → `NODE_CREATE` 직접 송신. 서버가 `parent_node_id=None && PROPERTY`면 서브그래프를 자동 생성한다(`graph_interaction_service.py:354-361`). 빈 문자열은 서버에서 `None`으로 파싱(`_parse_optional_uuid_payload`).
+  - `RequestUpdateNodeText`: 서버 미등록 노드면 생성 경로를 함께 호출. 제스처 경로(`MvpSpatialNodeGestureController.cs:527-536` → `RequestCreateRootPropertyNode` → `RequestUpdateNodeText`)가 서버 등록을 한 번도 거치지 않던 문제.
+  - `ApplyServerNodeId`: rekey 직후 현재 위치를 한 번 발행(ACK 전 이동분 보정).
+- [x] **회귀 수정.** 위 작업 중 `OnNodeTextUpdated`/`OnNodeMoved` 발행 자체를 억제했다가 Fusion 전파(`MvpGraphNetworkBridge`)와 MVP 시나리오(`MvpWaterRocketGraphController`)까지 끊겼다(에디터에서 텍스트 수정 불가). **이벤트는 항상 발행하고, 서버 송신 억제는 서버 경계(`GraphSyncClient.HandleNodeTextUpdated`/`HandleNodeMoved`에서 `IsServerKnown` 확인)로 이동.** 엣지가 이미 쓰던 패턴(`GraphSyncClient:375`)과 일관.
+- [ ] **네이티브 크래시 — 내 영역 아님(전달 필요). 근본 원인 확정.**
+  ```
+  AssertException: 25500 >= NetworkObjectHeader.WORDS && 102000 <= 32768
+    at Fusion.NetworkRunner.Spawn(...)
+  ```
+  `GraphNetworkManager`의 networked 상태가 Fusion NetworkObject 상한(32,768워드)을 3배 초과(102,000)해 **Spawn 자체가 실패**한다. 그 결과 `Spawned()`가 영영 호출되지 않아 `NodeLocks` 접근이 매 프레임 `InvalidOperationException`을 던지고(`TryGetNodeLockOwner` ← `MvpNodeInteractionController.RefreshLockBadge`, LateUpdate), 노드 조작 시 SIGSEGV로 이어진다.
+  - 원인 선언(`GraphNetworkManager.cs:20-21`): `[Networked, Capacity(128)] NetworkDictionary<NetworkString<_128>, PlayerRef> NodeLocks`. 실제 키는 UUID 36자라 `_128`은 과대.
+  - 수정안 A: 키 축소 `NetworkString<_64>` / B: `Capacity(32)` / C: 문자열 대신 해시 키.
+  - 부차적으로 `:39` 가드 `IsReadyForRpc`가 Spawned 여부를 확인하지 않는 것도 함께 보완 필요.
+  - 개발자1(`02_Scripts/Lobby/GraphNetworkManager.cs`) 사안. **이게 안 고쳐지면 노드 조작마다 앱이 죽어 실기 검증이 계속 끊긴다.**
+- [ ] 서버팀 전달: `requirements.txt:28` `passlib[bcrypt]`에 `bcrypt==4.0.1` 핀 추가(미핀이라 신규 설치 환경마다 재발). 개발자1 로비(`NetworkManager.cs:170`)도 같은 엔드포인트라 동일 영향.
+- 참고: LAN IP는 DHCP라 날마다 바뀐다(7-31 `192.168.219.49` → 8-01 `192.168.0.236`). 씬에 박히는 값이라 바뀌면 `MVP_SH.unity`의 `_host`/`_backendHost` 수정 후 재빌드 필요. 공유기에서 고정 IP 할당 권장.

@@ -315,6 +315,10 @@ public class GraphSyncClient : MonoBehaviour
 
     private void HandleNodeTextUpdated(string nodeId, string newText)
     {
+        // [2026-08-01] 서버 미등록 노드에 보내면 [NODE404] 로 거부되고 에러 로그만 쌓인다.
+        //   (생성 ACK 전 구간. 텍스트는 NODE_CREATE 로 함께 올라가므로 여기서 건너뛰어도 유실 없다.)
+        if (_graphManager != null && !_graphManager.IsServerKnown(nodeId)) return;
+
         // 서버 NodeUpdatePayload = { node_id, text } (text는 non-blank 요구)
         var env = new NodeTextEnvelope
         {
@@ -338,6 +342,10 @@ public class GraphSyncClient : MonoBehaviour
 
     private void HandleNodeMoved(string nodeId, Vector3 position)
     {
+        // [2026-08-01] 서버 미등록 노드에 보내면 [NODE404] 로 거부된다(생성 ACK 전 구간).
+        //   보류된 위치는 ApplyServerNodeId 가 rekey 직후 한 번 재발행해 서버와 맞춘다.
+        if (_graphManager != null && !_graphManager.IsServerKnown(nodeId)) return;
+
         // API 명세: NODE_MOVE position 은 배열 [x, y, z] (NODE_CREATE 와 동일 표준).
         // ⚠️ 서버 _handle_node_move 가 배열을 읽도록 함께 바뀌어야 함(현재 dict 로 읽으면 실패).
         var env = new NodeMoveEnvelope

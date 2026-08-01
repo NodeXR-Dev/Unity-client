@@ -13,7 +13,7 @@
  * 클릭 흐름:
  *   1) _addButton 클릭 → BeginInput(): _isInputting=true, InputField 활성화.
  *   2) 사용자가 이름 입력 후 Enter → CommitInput(): 입력 텍스트(키보드)로 서버 REST 생성 요청
- *      (PartNodeApiClient.CreatePartKeyboard → POST /api/part_node/generate/keyboard). 서버 발급 UUID로 로컬 PART 생성.
+ *      (PartNodeApiClient.CreatePartKeyboard → POST /api/part_node/generate). 서버 발급 UUID로 로컬 PART 생성.
  *   3) InputField가 없으면 _defaultLabel로 생성 요청.
  * [주의] 생성은 서버 응답 후 비동기 반영된다(서버가 part_node_id 발급). 로컬 즉시 생성 아님.
  */
@@ -127,30 +127,42 @@ public class AddPartPort : MonoBehaviour,
         InvokeAdd(_defaultLabel);
     }
 
-    // 파트 생성은 서버 REST(part_node/generate/keyboard)로 위임한다. 입력창에 타이핑한 텍스트라 키보드 경로.
+    // 파트 생성은 서버 REST(part_node/generate)로 위임한다.
     // 서버가 발급한 part_node_id 로 로컬 PART가 생성되며, 응답 후(비동기) 화면이 갱신된다.
+    //
+    // [2026-07-30] 서버 경로가 실제로 열린 것을 확인해 서버 우선으로 되돌렸다.
+    //   (직전 MVP 우회는 `generate/keyboard` 404 때문에 로컬 우선이었고, 그 탓에 서버 호출이 도달하지 못했다.)
+    //   로컬/서버 어느 쪽으로 만들어도 GraphManager.AddNode 를 타므로 Fusion 전파는 동일하다.
+    //   차이는 node_id 발급 주체뿐 — 서버 UUID 여야 이후 2D 생성의 part_node_id 로 쓸 수 있다.
     private void InvokeAdd(string label)
     {
-        // MVP: 로컬 즉시 생성(서버 /api/part_node/generate/keyboard 는 현재 404).
-        // 로컬 생성은 GraphManager 이벤트로 Fusion 멀티플레이에도 전파된다.
-        if (_manager != null)
-        {
-            string id = _manager.RequestCreatePartNode(label, false);
-            if (!string.IsNullOrEmpty(id))
-            {
-                _onChanged?.Invoke();
-                return;
-            }
-        }
-
-        // 폴백: 서버 REST(연결돼 있으면).
         if (_apiClient != null)
+        {
             _apiClient.CreatePartKeyboard(label, false, transform.position, ok =>
             {
-                if (ok) _onChanged?.Invoke();
+                if (ok) { _onChanged?.Invoke(); return; }
+
+                // 서버 실패(오프라인/에러) → 로컬 생성으로 폴백해 조작 흐름은 끊지 않는다.
+                Debug.LogWarning("[AddPartPort] 서버 PART 생성 실패 → 로컬 생성으로 폴백(self-GUID).");
+                CreateLocalPart(label);
             });
-        else
+            return;
+        }
+
+        CreateLocalPart(label);
+    }
+
+    // 로컬 PART 생성(self-GUID). 서버가 없거나 실패했을 때만 사용한다.
+    private void CreateLocalPart(string label)
+    {
+        if (_manager == null)
+        {
             Debug.LogWarning("[AddPartPort] InvokeAdd 실패: GraphManager/PartNodeApiClient 모두 없음.");
+            return;
+        }
+
+        string id = _manager.RequestCreatePartNode(label, false);
+        if (!string.IsNullOrEmpty(id)) _onChanged?.Invoke();
     }
 
     // 우선순위: inputting > hovered > add(default)

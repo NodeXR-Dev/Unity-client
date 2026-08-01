@@ -1,3 +1,4 @@
+using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -19,6 +20,12 @@ public class NodeActionPanel : MonoBehaviour
     [SerializeField] private Button _deleteButton;
     [SerializeField] private Button _addButton;
     [SerializeField] private Button _referenceButton;
+
+    [Header("연결 버튼 (선택 — 프리팹에 만들어 연결하면 활성화)")]
+    [Tooltip("이 속성 노드를 파트에 연결하기 위한 버튼. 탭하면 무장되고, 이어서 메인 그래프의 PART/ALL 포트를 탭하면 연결된다.")]
+    [SerializeField] private Button _linkButton;
+    [Tooltip("연결 버튼 라벨(선택). 무장 중에는 '취소', 평소엔 '연결'로 바뀐다.")]
+    [SerializeField] private TMP_Text _linkLabel;
 
     private string       _nodeId;
     private GraphManager _manager;
@@ -49,6 +56,8 @@ public class NodeActionPanel : MonoBehaviour
         // placeholder 가 발화로 채워지면 서버 노드로 대체되고, 그 노드의 패널은 server-known → 활성.
         if (_addButton != null)
             _addButton.interactable = manager.IsServerKnown(nodeId);
+
+        RefreshLinkLabel();   // _nodeId 확정 후 연결/취소 라벨 동기화
     }
 
     private void OnEnable()
@@ -56,6 +65,10 @@ public class NodeActionPanel : MonoBehaviour
         if (_deleteButton    != null) _deleteButton.onClick.AddListener(InvokeDelete);
         if (_addButton       != null) _addButton.onClick.AddListener(InvokeAdd);
         if (_referenceButton != null) _referenceButton.onClick.AddListener(InvokeReference);
+        if (_linkButton      != null) _linkButton.onClick.AddListener(InvokeLink);
+
+        GraphLinkSelection.OnArmedChanged += HandleArmedChanged;
+        RefreshLinkLabel();
     }
 
     private void OnDisable()
@@ -63,6 +76,32 @@ public class NodeActionPanel : MonoBehaviour
         if (_deleteButton    != null) _deleteButton.onClick.RemoveListener(InvokeDelete);
         if (_addButton       != null) _addButton.onClick.RemoveListener(InvokeAdd);
         if (_referenceButton != null) _referenceButton.onClick.RemoveListener(InvokeReference);
+        if (_linkButton      != null) _linkButton.onClick.RemoveListener(InvokeLink);
+
+        GraphLinkSelection.OnArmedChanged -= HandleArmedChanged;
+    }
+
+    // 연결 버튼: 이 노드를 "연결 대기(무장)" 로 만든다. 실제 연결은 PART/ALL 포트를 탭할 때
+    //   PartPort/AllPort 가 GraphManager.RequestConnectFromPort 로 수행한다.
+    //   같은 버튼을 다시 누르면 취소(GraphLinkSelection.Arm 이 토글 처리).
+    public void InvokeLink()
+    {
+        if (!EnsureBound("InvokeLink")) return;
+        GraphLinkSelection.Arm(_nodeId);
+    }
+
+    private void HandleArmedChanged(string armedNodeId) => RefreshLinkLabel();
+
+    // 무장 중인 노드의 버튼만 '취소'로 표시한다(다른 노드는 '연결' 유지).
+    private void RefreshLinkLabel()
+    {
+        if (_linkLabel == null) return;
+
+        bool armedHere =
+            !string.IsNullOrEmpty(_nodeId) &&
+            GraphLinkSelection.ArmedNodeId == _nodeId;
+
+        _linkLabel.text = armedHere ? "취소" : "연결";
     }
 
     // X 버튼: 자손 캐스케이드 삭제 (훅이 있으면 확인 후 삭제)
