@@ -401,10 +401,10 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   _dotImage: {fileID: 1626164818773711843}
-  _emptySprite: {fileID: 21300000, guid: bd7c5e72f5380420e80f3db05a23dc5c, type: 3}
-  _hoverSprite: {fileID: 21300000, guid: 8192d2631faf94295b0ce6d3b1fc419b, type: 3}
-  _connectedSprite: {fileID: 21300000, guid: 506fa2593422f44dbbb63d8d1438188d, type: 3}
-  _pressedSprite: {fileID: 21300000, guid: 4215f02f034ec40e3b7ce382dff10adb, type: 3}
+  _emptySprite: {fileID: 21300000, guid: e3d9d804c11d146eeb52e417919bc1cb, type: 3}
+  _hoverSprite: {fileID: 21300000, guid: 8076a47f6797e413d83235dd38c30bac, type: 3}
+  _connectedSprite: {fileID: 21300000, guid: 044eda592f2614e27b0e723f7545cb34, type: 3}
+  _pressedSprite: {fileID: 21300000, guid: c064c15c5ee654384a0af6e1cb89f2fa, type: 3}
   _disabledSprite: {fileID: 0}
   _loadingSprite: {fileID: 0}
   _labelText: {fileID: 3506332598950608144}

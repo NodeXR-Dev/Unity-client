@@ -1,6 +1,29 @@
 # NodeXR TODO — 개발자 3 (노드그래프 / GraphData / 서버 반영)
 
-마지막 업데이트: 2026-07-15
+마지막 업데이트: 2026-08-01
+
+---
+
+## 2026-08-01 디자인 에셋 적용 + 씬 정리 + 미작동 기능 감사
+
+- [x] **Design_0527 디자인 에셋 반영**: `Assets/05_Design/JW/**` 를 디자이너 브랜치와 동기화(새 NodeBox `New_base.fbx`/`NewNodebox.prefab`, ShaderGraph 7종, `TextPannel.prefab`, `RotatingGradientBorder` 셰이더). 구 `Box_00~04.mat` → `Materials/old/`, `NodeBox2.fbx` → `NodeBox(Old).fbx` (GUID 보존 → 참조 무손상 확인). `ProjectSettings/GraphicsSettings.asset` 도 반영(Always Included Shaders 에 새 셰이더 1개 추가).
+- [x] **노드 외형 교체**: `NodeView_Sub.prefab` 루트의 옛 MeshFilter/MeshRenderer 제거 → 자식 `NodeBoxModel`(New_base 메시, localScale 102.3)로 대체. 크기 실측 0.397×0.184×0.205m 로 기존(0.397×0.2×0.2)과 사실상 동일 → 콜라이더/UI 무영향. `NodeView._meshRenderer` 재배선.
+- [x] **깊이·타입별 머티리얼 신규**: `01_Prefabs/Graph/Designer/Materials/` 에 `NodeDepth_00~04`(Shader00~04) + `NodeGrey`/`NodeRed`(ShaderGrey/Red) 생성. `_depthMaterials` 와 타입별 머티리얼(`_all/_part/_property/_reference/_unknown`) 재배선.
+- [x] **버튼 4상태 스프라이트**: 노드 X/R/+ 에 hover/pressed/disabled 연결(`m_Transition`=SpriteSwap). 기존엔 default 만 있어 눌러도 시각 반응 없었음.
+- [x] **PartPort/AddPartPort 스프라이트 오연결 수정**: `joint_all_*` → `joint_part_*`. (그림 자체는 all/part 가 동일해 시각 차이는 없음 — 정합성만 교정)
+- [x] **연결 버튼 톤 정합**(`MvpXrGraphLinkController`): 새 노드가 반투명(ShaderGraph Transparent, ZWrite off)이라 불투명 진청록 '연결' 패널이 노드 앞에 뜬 것처럼 보였음 → 배경 `(0.72,0.80,0.92,0.42)`, 라벨 어두운 톤으로 변경.
+- [x] **회귀 수정**: `RotatingGradientBorderUI` 를 붙였다 뗀 뒤 `LabelInputField` Image 가 투명(a=0, Sliced)에서 불투명 흰색으로 남는 문제 → 프리팹에서 원복.
+- [x] **개발용 찌꺼기 제거**(MVP.unity): `SeedGraphLoader`(청소로봇 더미 시드), `GraphConnectDragger`(레거시 마우스 연결) 삭제. 둘 다 런타임에 코드로 강제 비활성화되던 죽은 오브젝트. 플레이 검증 완료(노드 생성 정상, MVP 에러/경고 0).
+- [x] **불용 항목 정리**: `CableMat`/`CableRenderer.cs` 는 미채택 — CableMat 은 URP Lit 계열이라 LineRenderer vertex color 를 무시(활성 엣지 초록선이 깨짐), CableRenderer 는 EdgeView 의 베지어와 기능 중복.
+- [x] **TODO 정합**: 아래 "A. EdgeView ConnectorSphere", "B. ConnectedNodeButton.prefab" 은 실제로는 이미 배선 완료(프리팹 실측 확인). 미완료 표기가 낡았음.
+
+### 미작동 기능 감사 결과 (구현됐으나 실행 경로 없음)
+
+- [ ] **⚠️ 루트 노드 서버 등록 불가**: `SubGraphApiClient` 가 MVP.unity 에 없음 → `GraphManager.OnSubGraphRequested` 구독자 0 → 루트 노드가 `_pendingCreateNodeIds` 에 갇혀 영구 "서버 미등록". 재제출도 중복 가드에 막힘. (서버 `/api/sub_graph/generate` 도 미배포라 배선해도 404 — 최소한 pending 해제 폴백 필요)
+- [ ] **히스토리 완전 미연결**: `HistoryApiClient` 는 호출자 0 + 씬에 없음. 클래스만 존재.
+- [ ] **서버 그래프 콜드로드 미연결**: `GraphLoadApiClient` 씬에 없음(ContextMenu 로만 실행 가능).
+- [ ] **R 버튼 레퍼런스 검색 도달 불가**: `MvpXrGraphLinkController` 가 `ReferenceButton` 을 `SetActive(false)` 로 숨김 → MVP 40 에서 만든 `MvpReferencePanel` 진입점 없음.
+- [ ] **음성 모델 배포 문제**: `StreamingAssets/SherpaOnnx/ko-zipformer/` 121MB 가 gitignore → 다른 팀원 클론 시 음성 인식 미동작.
 
 ---
 
