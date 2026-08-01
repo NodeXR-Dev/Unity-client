@@ -32,6 +32,9 @@ EditorBuildSettings:
   - enabled: 0
     path: Assets/00_Scenes/20_MeetingRoom/MeetingRoom_Base.unity
     guid: 7d79aecd874c542fe8cfe195a9777fea
+  - enabled: 1
+    path: Assets/00_Scenes/MVP/MVP.unity
+    guid: 0f1e2d3c4b5a69788796a5b4c3d2e1f0
   m_configObjects:
     Unity.XR.Oculus.Settings: {fileID: 11400000, guid: aea880836b53e4558aac35286df7298c, type: 2}
     com.unity.input.settings.actions: {fileID: -944628639613478452, guid: 052faaac586de48259a63d0c4782560b, type: 3}

@@ -814,7 +814,7 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
         if (spawner != null)
             spawner.SpawnLocalPlayer();
         else
-            Debug.LogError("PlayerSpawner not found in scene");
+            Debug.Log("[NetworkManager] PlayerSpawner not found in scene. Skipping lobby-style player spawn.");
     }
 
 
