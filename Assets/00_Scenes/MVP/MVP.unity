@@ -1266,52 +1266,6 @@ Transform:
   m_Children: []
   m_Father: {fileID: 1201420276}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!1 &294548352
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 294548354}
-  - component: {fileID: 294548353}
-  m_Layer: 0
-  m_Name: SeedGraphLoader
-  m_TagString: Untagged
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 1
---- !u!114 &294548353
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 294548352}
-  m_Enabled: 0
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: ffa4b09360114f75887f050803b83212, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  _graphManager: {fileID: 1840588727}
-  _loadOnStart: 1
---- !u!4 &294548354
-Transform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 294548352}
-  serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 0.23200001, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children: []
-  m_Father: {fileID: 0}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &381997462
 GameObject:
   m_ObjectHideFlags: 0
@@ -1406,57 +1360,6 @@ Transform:
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 1866689969}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!1 &435264257
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 435264259}
-  - component: {fileID: 435264258}
-  m_Layer: 0
-  m_Name: GraphConnectDragger
-  m_TagString: Untagged
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 1
---- !u!114 &435264258
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 435264257}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 12758ac85296f78408f7f1a709edfdb6, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  _graphManager: {fileID: 1840588727}
-  _camera: {fileID: 863946082}
-  _pickRadiusPixels: 90
-  _lineWidth: 0.01
-  _lineColor: {r: 1, g: 0.9, b: 0.2, a: 1}
-  _connectedColor: {r: 0.2, g: 0.85, b: 0.3, a: 1}
-  _verbose: 1
---- !u!4 &435264259
-Transform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 435264257}
-  serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children: []
-  m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &498353303
 GameObject:
@@ -4527,6 +4430,7 @@ MonoBehaviour:
   _runner: {fileID: 0}
   _playerPrefab: {fileID: 3937044470431379454, guid: 00683ffc6b00f5145a3d3e5ef4b4ba39, type: 3}
   _graphNetworkPrefab: {fileID: 1877971033540268496, guid: 05da9879e9b70224e88bc5b146bb6138, type: 3}
+  _presenterViewPrefab: {fileID: 7768892039960263627, guid: d84708431556fbb4a95a03dc3e7b2a7c, type: 3}
   _spawnPoint: {fileID: 0}
   _bridge: {fileID: 0}
   _graphManager: {fileID: 0}
@@ -7700,7 +7604,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   _graphRoot: {fileID: 1662339466}
-  _nodePrefab: {fileID: 5974594015378068988, guid: f2ee65203c48f4a92a6ef578d85328c7, type: 3}
+  _nodePrefab: {fileID: 2007273310916252063, guid: 3bae9f63cc33045bfbb612e8e6f42531, type: 3}
   _edgePrefab: {fileID: 5315167706520079795, guid: 5399db9ba91bc4004a3f827f23c6ae6b, type: 3}
   _layoutHSpacing: 0.75
   _layoutVSpacing: 0.4
@@ -8978,10 +8882,8 @@ SceneRoots:
   - {fileID: 1840588728}
   - {fileID: 1662339466}
   - {fileID: 33985596}
-  - {fileID: 294548354}
   - {fileID: 1650281631}
   - {fileID: 258394969}
-  - {fileID: 435264259}
   - {fileID: 381997464}
   - {fileID: 644865317}
   - {fileID: 1030815419}

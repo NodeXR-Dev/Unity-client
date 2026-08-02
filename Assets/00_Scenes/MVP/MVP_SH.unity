@@ -4528,6 +4528,7 @@ MonoBehaviour:
   _runner: {fileID: 0}
   _playerPrefab: {fileID: 3937044470431379454, guid: 00683ffc6b00f5145a3d3e5ef4b4ba39, type: 3}
   _graphNetworkPrefab: {fileID: 1877971033540268496, guid: 05da9879e9b70224e88bc5b146bb6138, type: 3}
+  _presenterViewPrefab: {fileID: 7768892039960263627, guid: d84708431556fbb4a95a03dc3e7b2a7c, type: 3}
   _spawnPoint: {fileID: 0}
   _bridge: {fileID: 0}
   _graphManager: {fileID: 0}
@@ -6500,6 +6501,22 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   _syncClient: {fileID: 1650281630}
+--- !u!114 &1650281640
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1030815416}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 8eb621df54de4e299238837e56e60a4c, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  _graphManager: {fileID: 1840588727}
+  _lineWidth: 0.009
+  _dragColor: {r: 0.25, g: 0.88, b: 1, a: 0.95}
+  _linkedColor: {r: 0.27, g: 0.92, b: 0.63, a: 0.95}
 --- !u!1 &1662339465
 GameObject:
   m_ObjectHideFlags: 0
@@ -7750,22 +7767,6 @@ MonoBehaviour:
   _layoutHSpacing: 0.75
   _layoutVSpacing: 0.4
   _layoutTreeGap: 0.2
---- !u!114 &1650281640
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1030815416}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 8eb621df54de4e299238837e56e60a4c, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  _graphManager: {fileID: 1840588727}
-  _lineWidth: 0.009
-  _dragColor: {r: 0.25, g: 0.88, b: 1, a: 0.95}
-  _linkedColor: {r: 0.27, g: 0.92, b: 0.63, a: 0.95}
 --- !u!4 &1840588728
 Transform:
   m_ObjectHideFlags: 0

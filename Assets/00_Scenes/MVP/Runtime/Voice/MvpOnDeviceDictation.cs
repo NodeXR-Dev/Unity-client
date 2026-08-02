@@ -1,6 +1,8 @@
 using System;
 using System.Collections;
+using System.Collections.Concurrent;
 using System.IO;
+using System.Threading;
 using SherpaOnnx;
 using UnityEngine;
 using UnityEngine.Networking;
@@ -49,6 +51,23 @@ public class MvpOnDeviceDictation : MonoBehaviour
     private int _micReadPos;
     private bool _listening;
     private string _lastPartial = "";
+
+    // ── 인식 스레드 ───────────────────────────────────────────
+    // Decode() 한 번이 PC 에서도 20ms 대(측정치)라 메인 스레드에서 돌리면 VR 프레임
+    // 예산(72Hz = 13.9ms)을 통째로 넘겨 주기적으로 끊긴다. 그래서:
+    //   메인 스레드 = 마이크 링버퍼 읽기 + 큐 적재 + 이벤트 발화 (Unity API 제약)
+    //   워커 스레드 = AcceptWaveform / Decode / GetResult (네이티브 추론)
+    // _stream 은 워커가 소유한다 — 시작 시 메인이 만들어 넘기고, 정리(Dispose)까지
+    // 워커가 책임진다. 두 스레드가 같은 스트림을 동시에 만지는 지점은 없다.
+    private readonly ConcurrentQueue<float[]> _pending =
+        new ConcurrentQueue<float[]>();
+    private Thread _worker;
+    private volatile bool _workerRunning;
+    private volatile bool _flushRequested;   // 종료 신호: 남은 것 마저 처리하고 빠져나와라
+    private volatile bool _workerFinished;   // 마무리 디코딩까지 끝났다
+    private volatile string _workerPartial = "";
+    private volatile string _workerFinal;
+    private volatile bool _workerEndpoint;   // 문장 끝 무음 감지
 
     private static OnlineRecognizer Recognizer => _sharedRecognizer;
 
@@ -177,9 +196,80 @@ public class MvpOnDeviceDictation : MonoBehaviour
         _stream = Recognizer.CreateStream();
         _micReadPos = 0;
         _lastPartial = "";
+
+        while (_pending.TryDequeue(out _)) { }   // 이전 세션 잔여 제거
+        _workerPartial = "";
+        _workerFinal = null;
+        _workerEndpoint = false;
+        _workerFinished = false;
+        _flushRequested = false;
+        _workerRunning = true;
+        _worker = new Thread(WorkerLoop)
+        {
+            IsBackground = true,
+            Name = "MvpSttDecode"
+        };
+        _worker.Start();
+
         _listening = true;
         _activeListener = this;
         return true;
+    }
+
+    // 워커 스레드 본체. 큐에 쌓인 마이크 청크를 받아 디코딩하고 결과만 필드로 넘긴다.
+    // 종료(_flushRequested) 시 남은 청크 + 무음 패딩까지 처리한 뒤 스트림을 정리한다.
+    private void WorkerLoop()
+    {
+        OnlineStream stream = _stream;
+        try
+        {
+            while (_workerRunning && !_flushRequested)
+            {
+                bool fed = false;
+                while (_pending.TryDequeue(out float[] chunk))
+                {
+                    stream.AcceptWaveform(SampleRate, chunk);
+                    fed = true;
+                }
+
+                if (fed)
+                {
+                    while (Recognizer.IsReady(stream))
+                        Recognizer.Decode(stream);
+
+                    _workerPartial =
+                        (Recognizer.GetResult(stream).Text ?? "").Trim();
+                    if (Recognizer.IsEndpoint(stream))
+                        _workerEndpoint = true;
+                }
+
+                Thread.Sleep(fed ? 1 : 5);
+            }
+
+            // 마무리: 남은 청크 → 무음 패딩(스트리밍 모델은 마지막 어절이 잘리기 쉽다) → 끝까지 디코드
+            while (_pending.TryDequeue(out float[] tail))
+                stream.AcceptWaveform(SampleRate, tail);
+            stream.AcceptWaveform(
+                SampleRate, new float[(int)(SampleRate * 0.66f)]);
+            stream.InputFinished();
+            while (Recognizer.IsReady(stream))
+                Recognizer.Decode(stream);
+
+            _workerFinal = (Recognizer.GetResult(stream).Text ?? "").Trim();
+            _workerFinished = true;
+        }
+        catch (Exception exception)
+        {
+            // 스레드에서 터지면 조용히 죽으므로 반드시 남긴다. 부분 결과는 살려서 넘긴다.
+            Debug.LogWarning("[MVP STT] 인식 스레드 오류: " + exception.Message);
+            _workerFinal = _workerPartial ?? "";
+            _workerFinished = true;
+        }
+        finally
+        {
+            _workerRunning = false;
+            stream?.Dispose();
+        }
     }
 
     // 수동 종료(버튼 재탭)와 자동 종료(문장 끝 무음) 공용. 최종 텍스트를 반환하고 OnFinal 을 발화한다.
@@ -191,24 +281,26 @@ public class MvpOnDeviceDictation : MonoBehaviour
         if (_activeListener == this)
             _activeListener = null;
 
-        DrainMic();
+        DrainMic();                  // 남은 마이크 샘플을 큐에 밀어 넣고
         Microphone.End(_micDevice);
         _micClip = null;
         Level = 0f;
 
+        // 마무리 디코딩은 워커가 한다(무음 패딩 포함). 여기서는 결과만 기다린다.
         string text = "";
-        if (_stream != null)
+        if (_worker != null)
         {
-            // 스트리밍 모델은 마지막 어절이 잘리기 쉬우므로 무음 패딩으로 끝까지 디코드한다.
-            _stream.AcceptWaveform(
-                SampleRate, new float[(int)(SampleRate * 0.66f)]);
-            _stream.InputFinished();
-            while (Recognizer.IsReady(_stream))
-                Recognizer.Decode(_stream);
-            text = (Recognizer.GetResult(_stream).Text ?? "").Trim();
-            _stream.Dispose();
-            _stream = null;
+            _flushRequested = true;
+            if (!_worker.Join(1500))
+                Debug.LogWarning(
+                    "[MVP STT] 인식 스레드 마무리가 늦어 부분 결과를 사용합니다.");
+            text = _workerFinished
+                ? (_workerFinal ?? "")
+                : (_workerPartial ?? "");
+            _worker = null;
         }
+        // 스트림 정리는 워커의 finally 가 책임진다(대기 시간 초과로 아직 쓰는 중일 수 있다).
+        _stream = null;
 
         if (text.Length > 0)
             OnFinal?.Invoke(text);
@@ -217,29 +309,27 @@ public class MvpOnDeviceDictation : MonoBehaviour
 
     private void Update()
     {
-        if (!_listening || _stream == null)
+        if (!_listening)
             return;
 
-        DrainMic();
-        while (Recognizer.IsReady(_stream))
-            Recognizer.Decode(_stream);
+        DrainMic();   // 마이크 읽기만 메인 스레드. 디코딩은 워커가 한다.
 
-        string partial = (Recognizer.GetResult(_stream).Text ?? "").Trim();
-        if (partial.Length > 0 && partial != _lastPartial)
+        string partial = _workerPartial;
+        if (!string.IsNullOrEmpty(partial) && partial != _lastPartial)
         {
             _lastPartial = partial;
             OnPartial?.Invoke(partial);
         }
 
         // 말이 끝나고 무음이 이어지면 자동 확정한다.
-        if (Recognizer.IsEndpoint(_stream) && partial.Length > 0)
+        if (_workerEndpoint && !string.IsNullOrEmpty(partial))
             StopListening();
     }
 
     // 마이크 링버퍼에서 새로 쌓인 샘플만 인식기로 보낸다(랩어라운드 처리 포함).
     private void DrainMic()
     {
-        if (_micClip == null || _stream == null)
+        if (_micClip == null || !_workerRunning)
             return;
 
         int writePos = Microphone.GetPosition(_micDevice);
@@ -266,7 +356,7 @@ public class MvpOnDeviceDictation : MonoBehaviour
             return;
         float[] buffer = new float[count];
         _micClip.GetData(buffer, offset);
-        _stream.AcceptWaveform(SampleRate, buffer);
+        _pending.Enqueue(buffer);   // 소유권을 워커로 넘긴다(이후 메인은 건드리지 않는다)
 
         // RMS 기반 입력 레벨 (상승은 즉시, 하강은 부드럽게).
         float sum = 0f;
@@ -324,7 +414,18 @@ public class MvpOnDeviceDictation : MonoBehaviour
             Microphone.End(_micDevice);
             _listening = false;
         }
-        _stream?.Dispose();
+        if (_activeListener == this)
+            _activeListener = null;
+
+        // 워커를 세우고 짧게만 기다린다(에디터 정지·씬 전환에서 멈춰 보이면 안 된다).
+        // 스트림 Dispose 는 워커의 finally 가 한다.
+        if (_worker != null)
+        {
+            _flushRequested = true;
+            _workerRunning = false;
+            _worker.Join(300);
+            _worker = null;
+        }
         _stream = null;
         // 공유 인식기는 해제하지 않는다 — 다른 소비자가 계속 쓴다(프로세스 종료 시 정리).
     }

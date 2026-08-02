@@ -380,7 +380,10 @@ public class MvpXrGraphLinkController : MonoBehaviour
                 "MvpNodeLinkPort",
                 new Vector2(0f, -1.65f),
                 new Vector2(170f, 48f),
-                new Color(0.06f, 0.38f, 0.55f, 0.98f),
+                // 노드 본체가 반투명 유리 재질(ShaderGraph Transparent)로 바뀌어,
+                // 불투명 진청록 패널이 노드 앞에 떠 보였다. 노드와 같은 밝은 반투명
+                // 톤으로 맞춰 한 덩어리로 읽히게 한다.
+                new Color(0.72f, 0.80f, 0.92f, 0.42f),
                 true);
                 linkPoint.raycastTarget = true;
 
@@ -393,7 +396,8 @@ public class MvpXrGraphLinkController : MonoBehaviour
                 16f,
                 TextAlignmentOptions.Center,
                 false,
-                Color.white,
+                // 배경이 밝아졌으므로 흰 글씨는 읽히지 않는다. 노드 라벨과 같은 어두운 톤.
+                new Color(0.13f, 0.17f, 0.24f, 1f),
                 1);
             }
 
