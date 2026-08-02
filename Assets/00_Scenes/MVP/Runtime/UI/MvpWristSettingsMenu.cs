@@ -22,6 +22,9 @@ public class MvpWristSettingsMenu : MonoBehaviour
     private RectTransform _rootRect;
     private GameObject _settingsPanel;
     private GameObject _historyPanel;
+    private Button _shareButton;
+    private TMP_Text _shareButtonLabel;
+    private PresenterViewUIActions _shareActions;
     private RawImage _historyImage;
     private TMP_Text _historyTitle;
     private TMP_Text _historyIndex;
@@ -169,8 +172,10 @@ public class MvpWristSettingsMenu : MonoBehaviour
         _historyPanel.SetActive(false);
         _settingsPanel.SetActive(_menuOpen);
         _rootRect.sizeDelta = _menuOpen
-            ? new Vector2(560f, 310f)
+            ? new Vector2(560f, 390f)
             : new Vector2(110f, 110f);
+        if (_menuOpen)
+            RefreshShareButton();   // 열 때마다 공유 상태를 다시 읽는다
         SyncMenuVisuals();
         RewireCanvas();
     }
@@ -216,7 +221,7 @@ public class MvpWristSettingsMenu : MonoBehaviour
             parent,
             "WristSettingsPanel",
             Vector2.zero,
-            new Vector2(560f, 310f),
+            new Vector2(560f, 390f),   // 화면 공유 버튼 한 줄만큼 키웠다
             new Color(0.022f, 0.08f, 0.18f, 0.97f),
             true);
         _settingsPanel = panel.gameObject;
@@ -226,7 +231,7 @@ public class MvpWristSettingsMenu : MonoBehaviour
             panel.transform,
             "Title",
             "내 손목 메뉴",
-            new Vector2(0f, 116f),
+            new Vector2(0f, 150f),
             new Vector2(500f, 44f),
             25f,
             TextAlignmentOptions.Center,
@@ -238,7 +243,7 @@ public class MvpWristSettingsMenu : MonoBehaviour
             panel.transform,
             "ReturnToSeat",
             "의자로 돌아가기",
-            new Vector2(-130f, 36f),
+            new Vector2(-130f, 78f),
             new Vector2(240f, 66f),
             MvpStudentUiFactory.ElectricBlue,
             ReturnToSeat,
@@ -247,7 +252,7 @@ public class MvpWristSettingsMenu : MonoBehaviour
             panel.transform,
             "RecenterWorkspace",
             "작업판 맞추기",
-            new Vector2(130f, 36f),
+            new Vector2(130f, 78f),
             new Vector2(240f, 66f),
             MvpStudentUiFactory.GlassBlue,
             RecenterWorkspace,
@@ -256,11 +261,81 @@ public class MvpWristSettingsMenu : MonoBehaviour
             panel.transform,
             "OpenHistory",
             "내 그림 기록",
-            new Vector2(0f, -54f),
+            new Vector2(0f, -6f),
             new Vector2(500f, 68f),
             MvpStudentUiFactory.Cyan,
             ShowHistory,
             19f);
+
+        // 화면 공유는 "내 시점을 남에게 보여 주는" 개인 행동이라 공용 보드가 아니라
+        // 손목 메뉴에 둔다(내 그림 기록과 같은 성격).
+        _shareButton = MvpStudentUiFactory.CreateButton(
+            panel.transform,
+            "ShareView",
+            "내 화면 공유하기",
+            new Vector2(0f, -88f),
+            new Vector2(500f, 68f),
+            MvpStudentUiFactory.ElectricBlue,
+            ToggleShareView,
+            19f);
+        _shareButtonLabel = _shareButton.GetComponentInChildren<TMP_Text>();
+    }
+
+    // ── 화면 공유 ─────────────────────────────────────────────
+    // 실제 동작은 PresenterViewUIActions 가 맡는다(발표자 지정·시점 동기화·렌더).
+    // 여기서는 진입점만 제공하고 라벨로 현재 상태를 보여 준다.
+    private void ToggleShareView()
+    {
+        PresenterViewUIActions actions = ResolveShareActions();
+        if (actions == null)
+        {
+            SetShareLabel("공유를 쓸 수 없어요", MvpStudentUiFactory.Amber);
+            return;
+        }
+
+        actions.ToggleSharingMyView();
+        RefreshShareButton();
+    }
+
+    private PresenterViewUIActions ResolveShareActions()
+    {
+        if (_shareActions == null)
+            _shareActions = FindFirstObjectByType<PresenterViewUIActions>();
+        return _shareActions;
+    }
+
+    private void RefreshShareButton()
+    {
+        if (_shareButton == null)
+            return;
+
+        PresenterViewUIActions actions = ResolveShareActions();
+        // 혼자(오프라인)일 땐 공유할 상대가 없다 — 눌러도 아무 일도 안 일어나므로 미리 알린다.
+        bool online = PresenterViewSession.Instance != null;
+        if (actions == null || !online)
+        {
+            _shareButton.interactable = false;
+            SetShareLabel("혼자일 땐 공유할 수 없어요", MvpStudentUiFactory.GlassBlue);
+            return;
+        }
+
+        _shareButton.interactable = true;
+        bool sharing = actions.IsSharingMyView();
+        SetShareLabel(
+            sharing ? "공유 멈추기" : "내 화면 공유하기",
+            sharing ? MvpStudentUiFactory.Coral : MvpStudentUiFactory.ElectricBlue);
+    }
+
+    private void SetShareLabel(string text, Color color)
+    {
+        if (_shareButtonLabel != null)
+            _shareButtonLabel.text = text;
+        if (_shareButton != null)
+        {
+            Image image = _shareButton.GetComponent<Image>();
+            if (image != null)
+                image.color = color;
+        }
     }
 
     private void BuildHistoryPanel(Transform parent)

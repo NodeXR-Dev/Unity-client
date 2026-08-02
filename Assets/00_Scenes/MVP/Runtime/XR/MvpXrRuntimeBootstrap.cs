@@ -6,8 +6,10 @@ using UnityEngine.SceneManagement;
 // MVP 씬이 실행될 때 XR UI·그래프 어댑터와 손 비주얼 안전장치를 준비한다.
 public static class MvpXrRuntimeBootstrap
 {
-    private const string MvpScenePath =
-        "Assets/00_Scenes/MVP/MVP.unity";
+    // MVP 폴더 안의 모든 씬이 대상이다. 예전엔 MVP.unity 한 개만 봤는데,
+    // 작업용 사본(MVP_SH.unity 등)에서는 손목 메뉴·손 비주얼 가드가 아예 붙지 않았다.
+    private const string MvpSceneFolder =
+        "Assets/00_Scenes/MVP/";
 
     private static readonly List<Renderer> DuplicateRenderers =
         new List<Renderer>();
@@ -22,7 +24,9 @@ public static class MvpXrRuntimeBootstrap
     private static void EnsureMvpXrAdapters()
     {
         Scene scene = SceneManager.GetActiveScene();
-        if (scene.path != MvpScenePath)
+        if (string.IsNullOrEmpty(scene.path) ||
+            !scene.path.StartsWith(
+                MvpSceneFolder, StringComparison.OrdinalIgnoreCase))
             return;
 
         GameObject app = GameObject.Find("MvpApp");
@@ -37,6 +41,19 @@ public static class MvpXrRuntimeBootstrap
             app.AddComponent<MvpMeetingRoomPlayerController>();
         if (app.GetComponent<MvpNodeInteractionController>() == null)
             app.AddComponent<MvpNodeInteractionController>();
+
+        // 화면 공유(발표자 시점)의 로컬 부품. 방 단위 상태(PresenterViewSession)는
+        // MvpNetworkSession 이 마스터에서 한 번 스폰하고, 여기 셋은 클라이언트마다 필요하다.
+        //   LocalCameraReference  = 내 카메라 기준(내가 시점을 움직였는지 판정)
+        //   PresenterViewRenderer = 발표자 시점을 실제로 그려 주는 쪽(자체 카메라 생성)
+        //   PresenterViewUIActions= 손목 메뉴가 부르는 시작/중지 진입점
+        // 셋 다 autoFind 로 서로를 찾으므로 인스펙터 배선이 필요 없다.
+        if (app.GetComponent<LocalCameraReference>() == null)
+            app.AddComponent<LocalCameraReference>();
+        if (app.GetComponent<PresenterViewRenderer>() == null)
+            app.AddComponent<PresenterViewRenderer>();
+        if (app.GetComponent<PresenterViewUIActions>() == null)
+            app.AddComponent<PresenterViewUIActions>();
 
         MvpXrGraphLinkController graphLink =
             app.GetComponent<MvpXrGraphLinkController>();

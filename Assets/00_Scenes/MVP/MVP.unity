@@ -4430,6 +4430,7 @@ MonoBehaviour:
   _runner: {fileID: 0}
   _playerPrefab: {fileID: 3937044470431379454, guid: 00683ffc6b00f5145a3d3e5ef4b4ba39, type: 3}
   _graphNetworkPrefab: {fileID: 1877971033540268496, guid: 05da9879e9b70224e88bc5b146bb6138, type: 3}
+  _presenterViewPrefab: {fileID: 7768892039960263627, guid: d84708431556fbb4a95a03dc3e7b2a7c, type: 3}
   _spawnPoint: {fileID: 0}
   _bridge: {fileID: 0}
   _graphManager: {fileID: 0}
@@ -7603,7 +7604,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   _graphRoot: {fileID: 1662339466}
-  _nodePrefab: {fileID: 5974594015378068988, guid: f2ee65203c48f4a92a6ef578d85328c7, type: 3}
+  _nodePrefab: {fileID: 2007273310916252063, guid: 3bae9f63cc33045bfbb612e8e6f42531, type: 3}
   _edgePrefab: {fileID: 5315167706520079795, guid: 5399db9ba91bc4004a3f827f23c6ae6b, type: 3}
   _layoutHSpacing: 0.75
   _layoutVSpacing: 0.4

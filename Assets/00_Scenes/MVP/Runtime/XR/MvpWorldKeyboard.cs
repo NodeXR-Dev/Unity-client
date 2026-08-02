@@ -55,6 +55,10 @@ public class MvpWorldKeyboard : MonoBehaviour
     private int _medial = -1;
     private int _final;
     private bool _korean = true;
+    // 숫자·기호 레이아웃. _korean 은 "숫자 모드에서 빠져나올 때 돌아갈 언어"로 유지된다.
+    private bool _numeric;
+    // Shift: 한글이면 쌍자음/ㅒㅖ, 영문이면 대문자. 모드가 바뀌면 풀린다.
+    private bool _shift;
 
     public static bool IsOpen =>
         _instance != null && _instance.gameObject.activeInHierarchy;
@@ -371,17 +375,25 @@ public class MvpWorldKeyboard : MonoBehaviour
         for (int i = _keyRoot.childCount - 1; i >= 0; i--)
         Destroy(_keyRoot.GetChild(i).gameObject);
 
-        if (_korean)
+        if (_numeric)
+        BuildNumericKeys();
+        else if (_korean)
         BuildKoreanKeys();
         else
         BuildEnglishKeys();
 
         if (_modeLabel != null)
         {
-            _modeLabel.text = _korean ? "한글 입력" : "영문 입력";
-            _modeLabel.color = _korean
-            ? MvpStudentUiFactory.HoloCyan
-            : MvpStudentUiFactory.Amber;
+            _modeLabel.text = _numeric
+            ? "숫자·기호"
+            : _korean
+                ? (_shift ? "한글 입력 (쌍자음)" : "한글 입력")
+                : (_shift ? "영문 입력 (대문자)" : "영문 입력");
+            _modeLabel.color = _numeric
+            ? MvpStudentUiFactory.Mint
+            : _korean
+                ? MvpStudentUiFactory.HoloCyan
+                : MvpStudentUiFactory.Amber;
         }
 
         PrepareKeyboardButtons();
@@ -413,8 +425,11 @@ public class MvpWorldKeyboard : MonoBehaviour
 
     private void BuildKoreanKeys()
     {
+        // 두벌식 그대로: Shift 를 누르면 윗줄이 쌍자음(ㅃㅉㄸㄲㅆ)과 ㅒ/ㅖ 로 바뀐다.
         CreateRow(
-            new[] { "ㅂ", "ㅈ", "ㄷ", "ㄱ", "ㅅ", "ㅛ", "ㅕ", "ㅑ", "ㅐ", "ㅔ" },
+            _shift
+            ? new[] { "ㅃ", "ㅉ", "ㄸ", "ㄲ", "ㅆ", "ㅛ", "ㅕ", "ㅑ", "ㅒ", "ㅖ" }
+            : new[] { "ㅂ", "ㅈ", "ㄷ", "ㄱ", "ㅅ", "ㅛ", "ㅕ", "ㅑ", "ㅐ", "ㅔ" },
             118f,
             68f);
         CreateRow(
@@ -426,31 +441,73 @@ public class MvpWorldKeyboard : MonoBehaviour
             -26f,
             74f);
 
-        CreateKey("쌍자음", -282f, -105f, 142f, ToggleDoubleConsonant);
-        CreateKey("쉼표", -118f, -105f, 118f, () => AddLiteral(","));
-        CreateKey("마침표", 22f, -105f, 118f, () => AddLiteral("."));
-        CreateKey("← 지우기", 222f, -105f, 190f, Backspace);
+        BuildUtilityRow();
     }
 
     private void BuildEnglishKeys()
     {
-        CreateRow(
-            new[] { "Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P" },
+        // 기본은 소문자, Shift 를 누르면 대문자. 키캡 글자도 실제 입력될 글자와 같게 보여 준다.
+        CreateRow(ShiftCase(
+            new[] { "q", "w", "e", "r", "t", "y", "u", "i", "o", "p" }),
             118f,
             68f);
-        CreateRow(
-            new[] { "A", "S", "D", "F", "G", "H", "J", "K", "L" },
+        CreateRow(ShiftCase(
+            new[] { "a", "s", "d", "f", "g", "h", "j", "k", "l" }),
             46f,
             68f);
-        CreateRow(
-            new[] { "Z", "X", "C", "V", "B", "N", "M" },
+        CreateRow(ShiftCase(
+            new[] { "z", "x", "c", "v", "b", "n", "m" }),
             -26f,
             74f);
 
-        CreateKey("쉼표", -220f, -105f, 130f, () => AddLiteral(","));
-        CreateKey("마침표", -65f, -105f, 130f, () => AddLiteral("."));
-        CreateKey("-", 90f, -105f, 130f, () => AddLiteral("-"));
-        CreateKey("← 지우기", 258f, -105f, 190f, Backspace);
+        BuildUtilityRow();
+    }
+
+    private void BuildNumericKeys()
+    {
+        CreateRow(
+            new[] { "1", "2", "3", "4", "5", "6", "7", "8", "9", "0" },
+            118f,
+            68f);
+        CreateRow(
+            new[] { "-", "/", ":", ";", "(", ")", "₩", "&", "@" },
+            46f,
+            68f);
+        CreateRow(
+            new[] { "?", "!", "'", "\"", "+", "=", "_", "%" },
+            -26f,
+            68f);
+
+        BuildUtilityRow();
+    }
+
+    // 세 레이아웃이 공유하는 아랫줄. 숫자 모드에서는 Shift 대신 언어 복귀 키가 온다.
+    private void BuildUtilityRow()
+    {
+        if (_numeric)
+        {
+            // 숫자 모드에서는 "123" 이 필요 없다(문자로 돌아가는 키 하나면 충분).
+            CreateKey(_korean ? "가나다" : "ABC", -330f, -105f, 156f, ToggleNumeric);
+        }
+        else
+        {
+            CreateKey(_shift ? "⇧ 켜짐" : "⇧ Shift", -330f, -105f, 156f, ToggleShift);
+            CreateKey("123", -172f, -105f, 130f, ToggleNumeric);
+        }
+
+        CreateKey("쉼표", -34f, -105f, 118f, () => AddLiteral(","));
+        CreateKey("마침표", 96f, -105f, 118f, () => AddLiteral("."));
+        CreateKey("← 지우기", 272f, -105f, 190f, Backspace);
+    }
+
+    private string[] ShiftCase(string[] lower)
+    {
+        if (!_shift)
+            return lower;
+        string[] upper = new string[lower.Length];
+        for (int i = 0; i < lower.Length; i++)
+            upper[i] = lower[i].ToUpperInvariant();
+        return upper;
     }
 
     private void CreateRow(string[] labels, float y, float width)
@@ -477,7 +534,8 @@ public class MvpWorldKeyboard : MonoBehaviour
         float width,
         Action action)
     {
-        bool utilityKey = label.Length > 2 || label == "-";
+        // 숫자 모드의 "-" 는 기능키가 아니라 문자키다.
+        bool utilityKey = label.Length > 2 || (label == "-" && !_numeric);
         Color keyColor = utilityKey
             ? new Color(0.13f, 0.31f, 0.52f, 1f)
             : new Color(0.10f, 0.20f, 0.36f, 1f);
@@ -507,9 +565,11 @@ public class MvpWorldKeyboard : MonoBehaviour
 
     private void PressCharacter(string value)
     {
-        if (!_korean)
+        // 숫자·기호와 영문은 조합 없이 그대로 붙인다. 키캡에 보이는 글자가 곧 입력값이다
+        // (예전엔 영문을 무조건 소문자로 바꿔 넣어 대문자를 칠 방법이 아예 없었다).
+        if (_numeric || !_korean)
         {
-            AddLiteral(value.ToLowerInvariant());
+            AddLiteral(value);
             return;
         }
 
@@ -669,24 +729,29 @@ public class MvpWorldKeyboard : MonoBehaviour
     {
         CommitComposition();
         _korean = !_korean;
+        _numeric = false;   // 한/영 은 항상 문자 레이아웃으로 돌아온다
+        _shift = false;
 
         RebuildKeys();
         RefreshPreview();
     }
 
-    private void ToggleDoubleConsonant()
+    // 쌍자음/대문자 전환. 한 글자만 바꾸는 게 아니라 계속 켜져 있는 토글이다
+    // (VR 에서 "누르고 있기"가 어려워 실제 키보드의 CapsLock 처럼 동작시킨다).
+    private void ToggleShift()
     {
-        if (_initial < 0 || _medial >= 0)
-            return;
+        _shift = !_shift;
+        RebuildKeys();
+    }
 
-        string doubled = CombineInitial(
-            Initials[_initial],
-            Initials[_initial]);
-        if (doubled != null)
-        {
-            _initial = _initialIndex[doubled];
-            RefreshPreview();
-        }
+    // 숫자·기호 레이아웃 ↔ 직전 언어. Shift 는 레이아웃이 달라지므로 함께 푼다.
+    private void ToggleNumeric()
+    {
+        CommitComposition();
+        _numeric = !_numeric;
+        _shift = false;
+        RebuildKeys();
+        RefreshPreview();
     }
 
     private void ApplyAndClose()
