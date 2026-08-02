@@ -26,14 +26,24 @@ public class MvpWaterRocketGraphController : MonoBehaviour
         }
     }
 
+    // [2026-08-01] _partIds(내부 맵) 대신 GraphManager 를 단일 출처로 삼는다.
+    //   AddPartPort → PartNodeApiClient → GraphManager.RequestCreatePartNode 로 만든 파트는
+    //   _partIds 에 등록되지 않아 PartCount 가 0 으로 남았고, 그 탓에 '그림 생성하기' 버튼의
+    //   활성 조건(MvpClassroomFlow:3138-3142)이 영원히 거짓이 되어 onClick 이 발생하지 않았다
+    //   (퀘스트 실기 확인 — 서버에 파트·속성·엣지가 모두 있는데도 버튼이 잠김).
+    //   RequirementCount / AppliedConnectionCount 는 이미 GraphManager 를 보고 있어 이제 셋이 일관된다.
+    //   is_global(=ALL) 제외는 기존의 "전체" 키 제외와 같은 의미다. _partIds 는 라벨 매핑용으로 유지.
     public int PartCount
     {
         get
         {
             int count = 0;
-            foreach (KeyValuePair<string, string> pair in _partIds)
-                if (pair.Key != "전체" &&
-                    !string.IsNullOrEmpty(pair.Value))
+            if (_graphManager == null) return count;
+
+            foreach (NodeData node in _graphManager.GetAllNodes())
+                if (node != null &&
+                    node.NodeType == NodeType.PART &&
+                    !node.is_global)
                     count++;
             return count;
         }

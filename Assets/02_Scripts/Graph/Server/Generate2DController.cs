@@ -40,6 +40,17 @@ public class Generate2DController : MonoBehaviour
         ResolveReferences();
         if (_syncClient != null)
             _syncClient.OnImage2DGenerated += HandleImageGenerated;
+
+        // [2026-08-01] _generateButton 은 지금까지 interactable 제어에만 쓰였고 클릭 리스너가 없었다.
+        //   그 결과 2D 생성 진입점이 MvpClassroomFlow 의 버튼 하나뿐이었다.
+        //   (중복 호출은 _isGenerating 가드가 막는다. 비어 있으면 아무 일도 없다.)
+        if (_generateButton != null)
+        {
+            _generateButton.onClick.RemoveListener(RequestGenerateGraphAll);
+            _generateButton.onClick.AddListener(RequestGenerateGraphAll);
+        }
+
+
         SetStatus("부품과 속성을 연결한 뒤 생성하세요.");
         SetButtonInteractable(true);
     }
@@ -48,9 +59,12 @@ public class Generate2DController : MonoBehaviour
     {
         if (_syncClient != null)
             _syncClient.OnImage2DGenerated -= HandleImageGenerated;
+        if (_generateButton != null)
+            _generateButton.onClick.RemoveListener(RequestGenerateGraphAll);
         StopGenerationTimeout();
         _isGenerating = false;
     }
+
 
     // ─────────────────────────────────────────────
     // 생성/변경 요청 (결과는 WS 2D_GENERATED 로 별도 통보)

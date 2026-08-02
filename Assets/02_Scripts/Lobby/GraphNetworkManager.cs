@@ -17,8 +17,8 @@ public class GraphNetworkManager : NetworkBehaviour
     [SerializeField] private bool allowStateAuthorityLockOverride = true;
     [SerializeField] private bool logLockConflicts = true;
 
-    [Networked, Capacity(128)]
-    private NetworkDictionary<NetworkString<_128>, PlayerRef> NodeLocks => default;
+    [Networked, Capacity(32)]
+    private NetworkDictionary<NetworkString<_64>, PlayerRef> NodeLocks => default;
 
     public event Action<string, PlayerRef> NodeLockAcquired;
     public event Action<string, PlayerRef> NodeLockReleased;
@@ -847,7 +847,7 @@ public class GraphNetworkManager : NetworkBehaviour
             return;
         }
 
-        NetworkString<_128> key = ToLockKey(nodeId);
+        NetworkString<_64> key = ToLockKey(nodeId);
         if (NodeLocks.Add(key, requester))
             RPC_BroadcastNodeLockChanged(nodeId, requester, true);
     }
@@ -879,7 +879,7 @@ public class GraphNetworkManager : NetworkBehaviour
             return;
 
         List<string> releaseList = new List<string>();
-        foreach (KeyValuePair<NetworkString<_128>, PlayerRef> pair in NodeLocks)
+        foreach (KeyValuePair<NetworkString<_64>, PlayerRef> pair in NodeLocks)
         {
             if (pair.Value == player)
                 releaseList.Add(pair.Key.ToString());
@@ -927,7 +927,7 @@ public class GraphNetworkManager : NetworkBehaviour
         if (!IsReadyForRpc)
             return;
 
-        foreach (KeyValuePair<NetworkString<_128>, PlayerRef> pair in NodeLocks)
+        foreach (KeyValuePair<NetworkString<_64>, PlayerRef> pair in NodeLocks)
             lockCache[pair.Key.ToString()] = pair.Value;
     }
 
@@ -975,9 +975,9 @@ public class GraphNetworkManager : NetworkBehaviour
         return value ?? string.Empty;
     }
 
-    private static NetworkString<_128> ToLockKey(string nodeId)
+    private static NetworkString<_64> ToLockKey(string nodeId)
     {
-        NetworkString<_128> key = Safe(nodeId);
+        NetworkString<_64> key = Safe(nodeId);
         return key;
     }
 
