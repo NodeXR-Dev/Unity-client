@@ -737,7 +737,8 @@ API 명세의 `GET /api/graph`(sub_graphs 중첩)로 서버 그래프를 받아 
   - `RequestUpdateNodeText`: 서버 미등록 노드면 생성 경로를 함께 호출. 제스처 경로(`MvpSpatialNodeGestureController.cs:527-536` → `RequestCreateRootPropertyNode` → `RequestUpdateNodeText`)가 서버 등록을 한 번도 거치지 않던 문제.
   - `ApplyServerNodeId`: rekey 직후 현재 위치를 한 번 발행(ACK 전 이동분 보정).
 - [x] **회귀 수정.** 위 작업 중 `OnNodeTextUpdated`/`OnNodeMoved` 발행 자체를 억제했다가 Fusion 전파(`MvpGraphNetworkBridge`)와 MVP 시나리오(`MvpWaterRocketGraphController`)까지 끊겼다(에디터에서 텍스트 수정 불가). **이벤트는 항상 발행하고, 서버 송신 억제는 서버 경계(`GraphSyncClient.HandleNodeTextUpdated`/`HandleNodeMoved`에서 `IsServerKnown` 확인)로 이동.** 엣지가 이미 쓰던 패턴(`GraphSyncClient:375`)과 일관.
-- [ ] **네이티브 크래시 — 내 영역 아님(전달 필요). 근본 원인 확정.**
+- [x] **네이티브 크래시 해결됨(개발자1, `011a78b`).** `Capacity(128)` × `NetworkString<_128>` → `Capacity(32)` × `NetworkString<_64>` (2,048워드, 상한 32,768 대비 여유). Spawn 실패가 사라져 `Spawned()`가 정상 호출되고, 이후 `NodeLocks` 예외 폭주와 SIGSEGV도 함께 해소. 아래는 원인 규명 기록.
+- [x] **(원인 기록) 네이티브 크래시**
   ```
   AssertException: 25500 >= NetworkObjectHeader.WORDS && 102000 <= 32768
     at Fusion.NetworkRunner.Spawn(...)
@@ -749,3 +750,30 @@ API 명세의 `GET /api/graph`(sub_graphs 중첩)로 서버 그래프를 받아 
   - 개발자1(`02_Scripts/Lobby/GraphNetworkManager.cs`) 사안. **이게 안 고쳐지면 노드 조작마다 앱이 죽어 실기 검증이 계속 끊긴다.**
 - [ ] 서버팀 전달: `requirements.txt:28` `passlib[bcrypt]`에 `bcrypt==4.0.1` 핀 추가(미핀이라 신규 설치 환경마다 재발). 개발자1 로비(`NetworkManager.cs:170`)도 같은 엔드포인트라 동일 영향.
 - 참고: LAN IP는 DHCP라 날마다 바뀐다(7-31 `192.168.219.49` → 8-01 `192.168.0.236`). 씬에 박히는 값이라 바뀌면 `MVP_SH.unity`의 `_host`/`_backendHost` 수정 후 재빌드 필요. 공유기에서 고정 IP 할당 권장.
+
+## 2026-08-02 서버 연동 3 (개발자3 — 2D 생성 왕복 완주 + 초대 코드 단축)
+
+**Quest 3S 실기에서 서버 연동 전 구간이 통했다.** 방 생성 → WS 연결 → 노드 생성(제스처) → 파트 생성 → 속성↔파트 연결 → 2D 생성 → 이미지 수신·표시.
+
+- [x] **2D 생성이 아예 트리거되지 않던 문제 해결.** 버튼을 눌러도 `Generate2DController` 로그가 0건이었다. 원인은 버튼의 `interactable` 이 항상 false — `MvpClassroomFlow:3138` 의 활성 조건이 보는 `MvpWaterRocketGraphController.PartCount` 만 `GraphManager` 가 아닌 내부 맵 `_partIds` 를 세고 있었다. `AddPartPort → PartNodeApiClient → RequestCreatePartNode` 로 만든 파트는 `_partIds` 에 없어 항상 0. **`interactable=false` 인 Button 은 onClick 을 발생시키지 않으므로 어떤 핸들러도 불리지 않는다**(개발자2의 `BeginWorkspaceGenerate` 도 마찬가지였다).
+  - `PartCount` 를 `GraphManager` 의 PART 노드 기준으로 변경(`is_global`=ALL 제외). 세 카운트가 모두 GraphManager 단일 출처가 됨.
+  - `Generate2DController`: `_generateButton` 에 onClick 리스너 연결(그동안 interactable 제어에만 사용).
+  - 진단 과정에서 `_workspaceGenBusy` 잠김 / VR 입력 문제 등 잘못된 가설을 여러 번 세웠다. **무로그 조기 반환이 많은 구간은 로그 부재를 근거로 추론하면 안 된다**는 교훈.
+- [x] **2D 이미지 다운로드 실패 해결(로컬 우회).** 서버는 생성까지 정상인데 헤드셋이 `Cannot connect to destination host` 로 즉시 실패했다. 원인은 MinIO(9000)가 Docker Desktop 퍼블리시 포트라 **LAN 의 다른 기기에서 안 닿는 것**(uvicorn 8000 은 네이티브라 정상). 맥에서 자기 LAN IP 로 테스트하면 루프백이라 통과해 오진하기 쉽다.
+  - 네이티브 파이썬 TCP 포워더(`0.0.0.0:9100 → 127.0.0.1:9000`)를 띄우고 `.env` 의 `MINIO_PUBLIC_BASE_URL` 을 9100 으로 변경 → 다운로드 성공.
+  - **임시 조치다.** 근본 해결은 서버팀이 MinIO 를 네이티브로 띄우거나 Docker 네트워크를 조정하는 것.
+- [x] **초대 코드 6자리 단축.** 36자 UUID 를 그대로 노출해 공유가 어려웠다. 서버 변경 없이 클라에서만 6자 코드를 만들고 `GET /api/rooms/list` 로 복원한다.
+  - 처음 16진수(UUID 앞 6자)로 했다가 **공간 키보드(`MvpWorldKeyboard.BuildEnglishKeys`)에 숫자 행이 없어 입력 자체가 불가능**한 것을 실기에서 발견 → UUID 앞 7자(28비트)를 26진수 6자(A~Z)로 인코딩하도록 변경. 28비트(2.68억) < 26^6(3.09억) 이라 손실 없음.
+  - 대소문자 무관, UUID 전체 붙여넣기 하위호환, 코드가 여러 방과 겹치면 입장 거부.
+- [x] 속성↔파트 연결 UI 배선 완료. `GraphLinkSelection`(무장 상태) + `NodeActionPanel._linkButton/_linkLabel` + `PartPort`/`AllPort` 완료 처리. `NewNodebox.prefab` 에 LinkButton 추가(사용자가 에디터에서 배치).
+- [x] 노드 프리팹을 새 디자인(`Designer/NewNodebox`)으로 전환하고 `Test_SH` 도 재지정. 누락돼 있던 디자인 에셋(프리팹·NM 머티리얼·셰이더그래프·FBX) 26 파일 커밋 — git 이력이 전혀 없어 "삭제"가 아니라 "애초에 미추가" 였다.
+- [x] Quest 빌드를 막던 항목들 해소: `microphoneUsageDescription` 공백(Android 빌드 거부), `insecureHttpOption: 0`(**Unity 는 loopback 만 예외라 에디터에선 안 드러나고 헤드셋이 LAN IP 로 붙는 순간 모든 REST 차단**), 빌드 씬 목록의 깨진 씬(`AotPreBuilder` 가 `.enabled` 를 무시하고 목록의 모든 씬을 열어, 체크 해제가 아니라 **제거**해야 함), 빌드 타깃이 macOS 였던 것.
+
+### 남은 것
+
+- [ ] **엣지 선이 안 보인다.** `EdgePrefab` 의 `_lineWidth 0.004` / `_connectorScale 0.001`(1mm) 이 과소해 선도 연결구도 보이지 않는다. `EdgeView` 참조·포트 좌표·프리팹 구조는 모두 정상 확인. 값만 키우면 되고 적정값은 에디터에서 눈으로 맞추는 편이 빠르다.
+- [ ] **2D/3D 결과가 요청자에게만 간다.** `image_2d_generation_task_service.py:102` 가 `send_to_user` 로 보내고 `connection_manager.py:172` 의 `broadcast_to_room` 은 주석 처리 상태. 멀티에서 다른 참가자는 이미지를 받지 못한다. job_id 문제가 아니라 **전달 범위 문제**다.
+  - 권장: 서버가 방 전체로 브로드캐스트(서버팀). 클라가 Fusion 으로 전파하는 우회도 가능하나 요청자가 나가면 끊기고 URL 도달성 문제가 남는다.
+- [ ] **공간 키보드에 숫자 행이 없다.** 초대 코드는 알파벳으로 우회했지만 **방 비밀번호에는 여전히 숫자를 못 넣는다.** `MvpWorldKeyboard.BuildEnglishKeys()` 에 숫자 행 추가 필요(개발자2 영역). 영문 입력이 항상 소문자로 강제되는 것(`:512`)도 함께 검토.
+- [ ] 서버팀 전달: `requirements.txt:28` `bcrypt==4.0.1` 핀.
+- [ ] 백엔드 주소가 씬에 박혀 있어 IP 변경·사람마다 수정이 반복된다(하루에 3번 바뀐 날도 있음). **`_backendHost`(방/초대코드)와 `_host`(WS/그래프) 두 곳을 함께 바꿔야 하며**, 한쪽만 바꾸면 방은 A 서버, 그래프는 B 서버로 갈라져 "코드를 찾지 못함" 이 된다(실제 발생). 설정 파일이나 런타임 입력으로 빼는 것을 권장.

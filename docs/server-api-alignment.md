@@ -1,9 +1,10 @@
 # 서버 API 정렬 기준 (개발자 3 기준)
 
-마지막 업데이트: 2026-07-30  
-서버 코드 기준: 로컬 클론 `nodexr-server` commit `44a3db1` (2026-07-30 실서버 기동 + `/openapi.json` 대조 + REST 왕복 검증)
+마지막 업데이트: 2026-08-02  
+서버 코드 기준: 로컬 클론 `nodexr-server` commit `44a3db1` (실서버 기동 + `/openapi.json` 대조 + REST/WS 왕복 검증, Quest 3S 실기 포함)
 
-> 하단 2026-06-24 이후 섹션은 과거 가정이 섞여 있어, 아래 **0. 현행 정합성(2026-07-15 검증)** 이 우선한다.
+> 아래 **0. 현행 정합성** 이 가장 최신이며, 그 안에서도 날짜가 늦은 절이 우선한다.
+> 하단 2026-06-24 이후 섹션은 과거 가정이 섞여 있다.
 
 ---
 
@@ -40,11 +41,25 @@
 
 영향: MVP 는 방 생성 실패 시 체험 모드로 빠지고(`MvpClassroomFlow.cs:2827-2832`), `if (_session.online)` 가 false 라 `ConfigureGraphSocket()` 이 호출되지 않아 **GraphSyncClient 가 끝까지 비활성** → WS 뮤테이션 경로 전체가 미검증 상태다. 클라 문제가 아니다.
 
-서버팀 전달 완료(2026-07-30). 수정 후 재검증 대상: WS 연결 → `NODE_TEXT_UPDATE`/`NODE_MOVE` DB 반영 → 2D 생성 왕복 → `GET /api/history/{room_id}`.
+서버팀 전달 완료(2026-07-30). **로컬에서는 `bcrypt==4.0.1` 로 내려 해소**했고 이후 전 구간을 검증했다(아래 2026-08-02 절). 리포 차원 수정(`requirements.txt` 핀)은 서버팀 몫으로 남아 있다.
 
-### 서버측 죽은 채널(클라가 기대하나 미동작)
-- `GRAPH_UPDATED` 브로드캐스트 미emit(broadcast_to_room 주석) → 전체 그래프 동기화·타 유저 전파·레퍼런스/파트 반영 경로 죽음.
-- `3D_GENERATED`/3D 생성 스텁(`Model3DGenerationService`가 print만) → 3D는 클라 mock(`MvpRocket3DStage`)로 처리.
+### ✅ 2026-08-02 — 전 구간 실기 검증 완료 (Quest 3S)
+
+```
+방 생성 → /enter → WS 연결 → NODE_CREATE(ACK rekey) → part_node/generate
+→ EDGE_CREATE → 2d/generate/graph → WS 2D_GENERATED → MinIO 이미지 다운로드·표시
+```
+
+- `POST /api/2d/generate/graph` 는 `connections=[{part_node_id, node_id}]` 만 보면 되고 **엣지 방향을 서버가 해석하지 않는다**(`Connection2D` 스키마). 서버 생성 코드에 `from_node_id`/`to_node_id` 참조 없음.
+- **엣지 방향 규약은 이미 양방향 번역돼 있다.** 로컬 표준 `PROPERTY/REFERENCE → PART`, 서버 저장 표준 `PART → PROPERTY/REFERENCE`, 변환은 `GraphSyncClient.HandleEdgeCreated`(송신)와 `GraphSnapshotDto.ToGraphData()`(수신)가 전담한다. DB 에서 `PART→PROPERTY` 로 보이는 것은 정상이며, 이를 버그로 오인해 로컬 규약을 뒤집으면 번역이 이중으로 걸려 깨진다.
+- 2D 결과 이미지 URL 은 `.env` 의 `MINIO_PUBLIC_BASE_URL` 을 그대로 쓴다. `localhost` 로 두면 헤드셋에서 받을 수 없다.
+
+### 🚫 2026-08-02 남은 서버측 제약
+
+- **2D/3D 결과가 요청자 1인에게만 간다.** `image_2d_generation_task_service.py:102` 가 `send_to_user` 로 보내고, `connection_manager.py:172` 의 `broadcast_to_room` 은 주석 처리 상태. 멀티에서 다른 참가자는 이미지를 못 받는다. **job_id 유무 문제가 아니라 전달 범위 문제**이므로, 서버가 방 전체로 브로드캐스트하는 것이 정답이다(클라 Fusion 전파는 요청자 이탈·URL 도달성 문제가 남는 우회책).
+- `GRAPH_UPDATED` 브로드캐스트도 같은 이유로 미emit → 전체 그래프 동기화·타 유저 전파 경로가 죽어 있다. 그래서 초기 그래프는 콜드로드(`GET /api/graph` 미구현)도, push 도 없다.
+- `3D_GENERATED`/3D 생성 스텁(`Model3DGenerationService` 가 print 만) → 3D 는 클라 mock(`MvpRocket3DStage`)로 처리.
+- **MinIO(9000)가 LAN 의 다른 기기에서 안 닿는다.** Docker Desktop 퍼블리시 포트 특성으로, 네이티브 프로세스인 uvicorn(8000)은 정상인데 MinIO 만 즉시 연결 거부된다. 맥에서 자기 LAN IP 로 curl 하면 루프백이라 통과해 오진하기 쉽다. 현재는 네이티브 TCP 포워더(9100→9000)로 우회 중이며, 근본 해결은 서버 쪽 배포 방식 변경이 필요하다.
 
 ### 멀티플레이 반영
 - 서버 그래프 동기화가 죽어 있으므로, MVP 협업의 실채널은 **Photon Fusion**이다.
