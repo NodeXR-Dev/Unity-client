@@ -28,8 +28,14 @@ public class GraphNetworkManager : NetworkBehaviour
     // 본인은 로컬 적용이 먼저라 Apply 가 no-op 이 된다). MVP UX 가 "누가 했는지" 안내에 사용.
     public event Action<string, string> RemoteNodeCreated;  // (nodeId, createdBy)
     public event Action<string> RemoteNodeDeleted;          // (nodeId)
+    public event Action<int, string, PlayerRef> Generated2DStartReceived;
+    public event Action<PlayerRef> Generated2DStartRejected;
+    public event Action<int, string, string, string> Generated2DServerImageReceived;
+    public event Action<int> Generated2DFinishedReceived;
 
     private readonly Dictionary<string, PlayerRef> lockCache = new Dictionary<string, PlayerRef>();
+    private bool generated2DInProgress;
+    private int generated2DVersion;
 
     // 원격(RPC/오프라인)으로 그래프 op를 GraphManager에 적용하는 동안 true.
     // 로컬→네트워크 브리지가 이 플래그를 보고 재브로드캐스트(에코 루프)를 막는다.
@@ -38,6 +44,9 @@ public class GraphNetworkManager : NetworkBehaviour
 
     private bool IsReadyForRpc => Runner != null && Runner.IsRunning && Object != null;
     private bool CanBroadcast => IsReadyForRpc && HasStateAuthority;
+    public bool IsRpcReady => IsReadyForRpc;
+    public PlayerRef LocalPlayerRef =>
+        IsReadyForRpc ? Runner.LocalPlayer : PlayerRef.None;
 
     public override void Spawned()
     {
@@ -399,6 +408,43 @@ public class GraphNetworkManager : NetworkBehaviour
         }
     }
 
+    public void RequestGenerated2DStart(string designJson)
+    {
+        if (!IsReadyForRpc)
+            return;
+
+        if (CanBroadcast)
+            TryBeginGenerated2DAsAuthority(Safe(designJson), Runner.LocalPlayer);
+        else
+            RPC_RequestGenerated2DStart(Safe(designJson));
+    }
+
+    public void RequestGenerated2DServerImage(
+        int version,
+        string assetId,
+        string mimeType,
+        string imgUrl)
+    {
+        if (!IsReadyForRpc)
+            return;
+
+        if (CanBroadcast)
+            FinishGenerated2DWithImageAsAuthority(version, assetId, mimeType, imgUrl);
+        else
+            RPC_RequestGenerated2DServerImage(version, Safe(assetId), Safe(mimeType), Safe(imgUrl));
+    }
+
+    public void RequestGenerated2DFinish(int version)
+    {
+        if (!IsReadyForRpc)
+            return;
+
+        if (CanBroadcast)
+            FinishGenerated2DAsAuthority(version);
+        else
+            RPC_RequestGenerated2DFinish(version);
+    }
+
     [Rpc(RpcSources.All, RpcTargets.StateAuthority)]
     private void RPC_RequestLockNode(string nodeId, RpcInfo info = default)
     {
@@ -584,6 +630,63 @@ public class GraphNetworkManager : NetworkBehaviour
         ApplySetNodeActive(Safe(nodeId), active);
     }
 
+    [Rpc(RpcSources.All, RpcTargets.StateAuthority)]
+    private void RPC_RequestGenerated2DStart(string designJson, RpcInfo info = default)
+    {
+        TryBeginGenerated2DAsAuthority(Safe(designJson), GetRequester(info));
+    }
+
+    [Rpc(RpcSources.StateAuthority, RpcTargets.All)]
+    private void RPC_BroadcastGenerated2DStart(
+        int version,
+        string designJson,
+        PlayerRef requester)
+    {
+        Generated2DStartReceived?.Invoke(version, Safe(designJson), requester);
+    }
+
+    [Rpc(RpcSources.StateAuthority, RpcTargets.All)]
+    private void RPC_BroadcastGenerated2DStartRejected(PlayerRef requester)
+    {
+        Generated2DStartRejected?.Invoke(requester);
+    }
+
+    [Rpc(RpcSources.All, RpcTargets.StateAuthority)]
+    private void RPC_RequestGenerated2DServerImage(
+        int version,
+        string assetId,
+        string mimeType,
+        string imgUrl)
+    {
+        FinishGenerated2DWithImageAsAuthority(version, assetId, mimeType, imgUrl);
+    }
+
+    [Rpc(RpcSources.StateAuthority, RpcTargets.All)]
+    private void RPC_BroadcastGenerated2DServerImage(
+        int version,
+        string assetId,
+        string mimeType,
+        string imgUrl)
+    {
+        Generated2DServerImageReceived?.Invoke(
+            version,
+            Safe(assetId),
+            Safe(mimeType),
+            Safe(imgUrl));
+    }
+
+    [Rpc(RpcSources.All, RpcTargets.StateAuthority)]
+    private void RPC_RequestGenerated2DFinish(int version)
+    {
+        FinishGenerated2DAsAuthority(version);
+    }
+
+    [Rpc(RpcSources.StateAuthority, RpcTargets.All)]
+    private void RPC_BroadcastGenerated2DFinish(int version)
+    {
+        Generated2DFinishedReceived?.Invoke(version);
+    }
+
     private void ApplyCreateNode(
         string nodeId,
         int nodeType,
@@ -766,6 +869,69 @@ public class GraphNetworkManager : NetworkBehaviour
             graphManager.RequestSetNodeActive(nodeId, active);
         }
         finally { _remoteApplyDepth--; }
+    }
+
+    // StateAuthority가 2D 생성 요청을 직렬화해서 같은 방에서 한 번에 하나만 진행되게 한다.
+    private void TryBeginGenerated2DAsAuthority(string designJson, PlayerRef requester)
+    {
+        if (!HasStateAuthority)
+            return;
+
+        PlayerRef safeRequester =
+            requester != PlayerRef.None
+                ? requester
+                : Runner != null
+                    ? Runner.LocalPlayer
+                    : PlayerRef.None;
+
+        if (generated2DInProgress)
+        {
+            RPC_BroadcastGenerated2DStartRejected(safeRequester);
+            return;
+        }
+
+        generated2DInProgress = true;
+        generated2DVersion++;
+        if (generated2DVersion <= 0)
+            generated2DVersion = 1;
+
+        RPC_BroadcastGenerated2DStart(
+            generated2DVersion,
+            Safe(designJson),
+            safeRequester);
+    }
+
+    private void FinishGenerated2DWithImageAsAuthority(
+        int version,
+        string assetId,
+        string mimeType,
+        string imgUrl)
+    {
+        if (!HasStateAuthority || !IsCurrentGenerated2DVersion(version))
+            return;
+
+        generated2DInProgress = false;
+        RPC_BroadcastGenerated2DServerImage(
+            version,
+            Safe(assetId),
+            Safe(mimeType),
+            Safe(imgUrl));
+    }
+
+    private void FinishGenerated2DAsAuthority(int version)
+    {
+        if (!HasStateAuthority || !IsCurrentGenerated2DVersion(version))
+            return;
+
+        generated2DInProgress = false;
+        RPC_BroadcastGenerated2DFinish(version);
+    }
+
+    private bool IsCurrentGenerated2DVersion(int version)
+    {
+        return generated2DInProgress &&
+               version > 0 &&
+               version == generated2DVersion;
     }
 
     // rekey 시 잠금 사전의 키도 새 id 로 옮긴다(StateAuthority 만 네트워크 사전을 수정할 수 있다).
