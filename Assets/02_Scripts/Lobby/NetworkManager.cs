@@ -41,6 +41,7 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
 
     [Header("Password Panel")]
     public GameObject passwordPanel;
+    public TMP_InputField passwordPanelNicknameInput;
     public TMP_InputField passwordCheckInput;
     public GameObject passwordWarningImage;
 
@@ -108,9 +109,15 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
     private void Start()
     {
         // ✅ 시작 시 기존에 저장된 닉네임이 있다면 인풋필드에 표시
+        string savedNickname = PlayerPrefs.GetString("PlayerNickname", "Actor_1");
         if (nicknameInput != null)
         {
-            nicknameInput.text = PlayerPrefs.GetString("PlayerNickname", "Actor_1");
+            nicknameInput.text = savedNickname;
+        }
+
+        if (passwordPanelNicknameInput != null)
+        {
+            passwordPanelNicknameInput.text = savedNickname;
         }
 
         if (networkStatusText != null)
@@ -276,6 +283,11 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
         {
             selectedSession = session;
             passwordCheckInput.text = "";
+            if (passwordPanelNicknameInput != null)
+            {
+                passwordPanelNicknameInput.text = GetCurrentNickname();
+            }
+
             passwordPanel.SetActive(true);
         }
     }
@@ -290,6 +302,8 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
 
         if (inputPwd == correctPwd)
         {
+            ApplyPasswordPanelNickname();
+
             if (passwordWarningImage != null) passwordWarningImage.SetActive(false);
             passwordPanel.SetActive(false);
             StartCoroutine(JoinRoomRoutine(selectedSession.Name));
@@ -311,6 +325,32 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
     {
         selectedSession = null;
         passwordPanel.SetActive(false);
+    }
+
+    private void ApplyPasswordPanelNickname()
+    {
+        if (passwordPanelNicknameInput == null)
+            return;
+
+        string newNickname = passwordPanelNicknameInput.text.Trim();
+        if (string.IsNullOrEmpty(newNickname))
+            return;
+
+        PlayerPrefs.SetString("PlayerNickname", newNickname);
+        PlayerPrefs.Save();
+
+        if (nicknameInput != null)
+            nicknameInput.text = newNickname;
+
+        Debug.Log($"Nickname saved: {newNickname}");
+    }
+
+    private string GetCurrentNickname()
+    {
+        if (nicknameInput != null && !string.IsNullOrWhiteSpace(nicknameInput.text))
+            return nicknameInput.text.Trim();
+
+        return PlayerPrefs.GetString("PlayerNickname", "Actor_1");
     }
 
     private IEnumerator JoinRoomRoutine(string sessionName)
