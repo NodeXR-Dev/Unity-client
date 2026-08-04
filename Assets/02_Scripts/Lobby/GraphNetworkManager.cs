@@ -32,10 +32,15 @@ public class GraphNetworkManager : NetworkBehaviour
     public event Action<PlayerRef> Generated2DStartRejected;
     public event Action<int, string, string, string> Generated2DServerImageReceived;
     public event Action<int> Generated2DFinishedReceived;
+    public event Action<int, string, PlayerRef> Generated3DStartReceived;
+    public event Action<PlayerRef> Generated3DStartRejected;
+    public event Action<int> Generated3DFinishedReceived;
 
     private readonly Dictionary<string, PlayerRef> lockCache = new Dictionary<string, PlayerRef>();
     private bool generated2DInProgress;
     private int generated2DVersion;
+    private bool generated3DInProgress;
+    private int generated3DVersion;
 
     // 원격(RPC/오프라인)으로 그래프 op를 GraphManager에 적용하는 동안 true.
     // 로컬→네트워크 브리지가 이 플래그를 보고 재브로드캐스트(에코 루프)를 막는다.
@@ -445,6 +450,28 @@ public class GraphNetworkManager : NetworkBehaviour
             RPC_RequestGenerated2DFinish(version);
     }
 
+    public void RequestGenerated3DStart(string designJson)
+    {
+        if (!IsReadyForRpc)
+            return;
+
+        if (CanBroadcast)
+            TryBeginGenerated3DAsAuthority(Safe(designJson), Runner.LocalPlayer);
+        else
+            RPC_RequestGenerated3DStart(Safe(designJson));
+    }
+
+    public void RequestGenerated3DFinish(int version)
+    {
+        if (!IsReadyForRpc)
+            return;
+
+        if (CanBroadcast)
+            FinishGenerated3DAsAuthority(version);
+        else
+            RPC_RequestGenerated3DFinish(version);
+    }
+
     [Rpc(RpcSources.All, RpcTargets.StateAuthority)]
     private void RPC_RequestLockNode(string nodeId, RpcInfo info = default)
     {
@@ -685,6 +712,39 @@ public class GraphNetworkManager : NetworkBehaviour
     private void RPC_BroadcastGenerated2DFinish(int version)
     {
         Generated2DFinishedReceived?.Invoke(version);
+    }
+
+    [Rpc(RpcSources.All, RpcTargets.StateAuthority)]
+    private void RPC_RequestGenerated3DStart(string designJson, RpcInfo info = default)
+    {
+        TryBeginGenerated3DAsAuthority(Safe(designJson), GetRequester(info));
+    }
+
+    [Rpc(RpcSources.StateAuthority, RpcTargets.All)]
+    private void RPC_BroadcastGenerated3DStart(
+        int version,
+        string designJson,
+        PlayerRef requester)
+    {
+        Generated3DStartReceived?.Invoke(version, Safe(designJson), requester);
+    }
+
+    [Rpc(RpcSources.StateAuthority, RpcTargets.All)]
+    private void RPC_BroadcastGenerated3DStartRejected(PlayerRef requester)
+    {
+        Generated3DStartRejected?.Invoke(requester);
+    }
+
+    [Rpc(RpcSources.All, RpcTargets.StateAuthority)]
+    private void RPC_RequestGenerated3DFinish(int version)
+    {
+        FinishGenerated3DAsAuthority(version);
+    }
+
+    [Rpc(RpcSources.StateAuthority, RpcTargets.All)]
+    private void RPC_BroadcastGenerated3DFinish(int version)
+    {
+        Generated3DFinishedReceived?.Invoke(version);
     }
 
     private void ApplyCreateNode(
@@ -935,6 +995,51 @@ public class GraphNetworkManager : NetworkBehaviour
     }
 
     // rekey 시 잠금 사전의 키도 새 id 로 옮긴다(StateAuthority 만 네트워크 사전을 수정할 수 있다).
+    private void TryBeginGenerated3DAsAuthority(string designJson, PlayerRef requester)
+    {
+        if (!HasStateAuthority)
+            return;
+
+        PlayerRef safeRequester =
+            requester != PlayerRef.None
+                ? requester
+                : Runner != null
+                    ? Runner.LocalPlayer
+                    : PlayerRef.None;
+
+        if (generated3DInProgress)
+        {
+            RPC_BroadcastGenerated3DStartRejected(safeRequester);
+            return;
+        }
+
+        generated3DInProgress = true;
+        generated3DVersion++;
+        if (generated3DVersion <= 0)
+            generated3DVersion = 1;
+
+        RPC_BroadcastGenerated3DStart(
+            generated3DVersion,
+            Safe(designJson),
+            safeRequester);
+    }
+
+    private void FinishGenerated3DAsAuthority(int version)
+    {
+        if (!HasStateAuthority || !IsCurrentGenerated3DVersion(version))
+            return;
+
+        generated3DInProgress = false;
+        RPC_BroadcastGenerated3DFinish(version);
+    }
+
+    private bool IsCurrentGenerated3DVersion(int version)
+    {
+        return generated3DInProgress &&
+               version > 0 &&
+               version == generated3DVersion;
+    }
+
     private void RekeyLockAsAuthority(string oldNodeId, string newNodeId)
     {
         if (!HasStateAuthority)
