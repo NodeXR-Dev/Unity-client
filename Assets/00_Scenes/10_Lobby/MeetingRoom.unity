@@ -408,8 +408,8 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: dc42784cf147c0c48a680349fa168899, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
+  m_Name:
+  m_EditorClassIdentifier:
   m_IgnoreReversedGraphics: 1
   m_BlockingObjects: 0
   m_BlockingMask:
@@ -20258,6 +20258,8 @@ Transform:
   - {fileID: 3100000001}
   - {fileID: 3400000001}
   - {fileID: 3500000001}
+  - {fileID: 3600000001}
+  - {fileID: 3700000001}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &3400000000
@@ -20364,6 +20366,144 @@ Transform:
   - {fileID: 3200000201}
   m_Father: {fileID: 3300000001}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1 &3600000000
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 3600000001}
+  - component: {fileID: 3600000002}
+  m_Layer: 0
+  m_Name: MvpGenerated2DTransferRoot
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &3600000001
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 3600000000}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 3300000001}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &3600000002
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 3600000000}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 25091d37fb584f44b4145cf007d04631, type: 3}
+  m_Name:
+  m_EditorClassIdentifier:
+  graphNetwork: {fileID: 0}
+  generate2DController: {fileID: 0}
+  graphSyncClient: {fileID: 0}
+  waterRocketGraph: {fileID: 0}
+  centerImage: {fileID: 0}
+  generateButton: {fileID: 0}
+  statusText: {fileID: 0}
+  autoFindReferences: 1
+  replaceGenerateButtonClick: 1
+  requestTimeoutSeconds: 125
+--- !u!1 &3700000000
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 3700000001}
+  - component: {fileID: 3700000002}
+  - component: {fileID: 3700000003}
+  m_Layer: 0
+  m_Name: MvpSpawnLayoutTransferRoot
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &3700000001
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 3700000000}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 3300000001}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &3700000002
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 3700000000}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: f7bb9a60a6d34497bca23bd36a1766b7, type: 3}
+  m_Name:
+  m_EditorClassIdentifier:
+  centerTransform: {fileID: 3700000001}
+  centerObjectName:
+  useOwnTransformAsCenter: 1
+  spawnRadius: 2.2
+  spawnHeightOffset: 0
+  occupiedRadius: 1.1
+  extraRingSpacing: 1.5
+  maxExtraRings: 3
+  minimumSlotCount: 6
+  slotCenterAngleDegrees: -90
+  slotArcDegrees: 180
+  faceCenterOnSpawn: 1
+  preferLocalPlayerSlot: 1
+  includePlayerInfoObjects: 1
+  gizmoPreviewPlayerCount: 6
+  drawGizmosWhenUnselected: 1
+  gizmoPointRadius: 0.12
+--- !u!114 &3700000003
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 3700000000}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: c5052d61560d49b7828b39340b4e5f9c, type: 3}
+  m_Name:
+  m_EditorClassIdentifier:
+  spawnLayout: {fileID: 3700000002}
+  runner: {fileID: 0}
+  moveLocalXrRig: 1
+  cameraRigObjectName: '[BuildingBlock] Camera Rig'
+  moveLocalPlayerObject: 1
+  applyOnEnable: 1
+  waitTimeoutSeconds: 30
+  retryIntervalSeconds: 0.1
+  stabilizeFrames: 45
+  logAppliedPose: 1
 --- !u!1001 &385170652765160668
 PrefabInstance:
   m_ObjectHideFlags: 0

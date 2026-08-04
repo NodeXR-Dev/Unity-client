@@ -10,6 +10,8 @@ public static class PresenterViewTestBuildMenu
 {
     private const string ScenePath = "Assets/00_Scenes/10_Lobby/PresenterViewTest.unity";
     private const string OutputPath = "Builds/PresenterViewTest/PresenterViewTest.exe";
+    private const string SenderLogPath = "Builds/PresenterViewTest/HandSyncSender.log";
+    private const string WatcherLogPath = "Builds/PresenterViewTest/HandSyncWatcher.log";
     private const int WindowWidth = 1280;
     private const int WindowHeight = 720;
 
@@ -25,12 +27,34 @@ public static class PresenterViewTestBuildMenu
         BuildTestClient(BuildOptions.Development);
     }
 
-    private static void BuildTestClient(BuildOptions options)
+    [MenuItem("Tools/Presenter View Test/Build And Run Hand Sync Test Pair")]
+    public static void BuildAndRunHandSyncTestPair()
+    {
+        if (!BuildTestClient(BuildOptions.Development))
+        {
+            return;
+        }
+
+        LaunchTestClient(
+            "HandSyncSender",
+            SenderLogPath,
+            "-presenterViewMockHands -presenterViewHandAutoSend -presenterViewAutoQuitSeconds 90");
+        LaunchTestClient(
+            "HandSyncWatcher",
+            WatcherLogPath,
+            "-presenterViewHandAutoWatch -presenterViewAutoQuitSeconds 90");
+
+        Debug.Log(
+            "Hand sync test pair launched. Watch the second window for the remote gray hand skeleton. " +
+            $"Logs: {Path.GetFullPath(SenderLogPath)}, {Path.GetFullPath(WatcherLogPath)}");
+    }
+
+    private static bool BuildTestClient(BuildOptions options)
     {
         if (!File.Exists(ScenePath))
         {
             Debug.LogError($"Presenter view test scene was not found: {ScenePath}");
-            return;
+            return false;
         }
 
         string outputDirectory = Path.GetDirectoryName(OutputPath);
@@ -90,11 +114,11 @@ public static class PresenterViewTestBuildMenu
             if (summary.result == BuildResult.Succeeded)
             {
                 Debug.Log($"Presenter view test build succeeded: {Path.GetFullPath(OutputPath)}");
+                return true;
             }
-            else
-            {
-                Debug.LogError($"Presenter view test build failed: {summary.result}");
-            }
+
+            Debug.LogError($"Presenter view test build failed: {summary.result}");
+            return false;
         }
         finally
         {
@@ -122,5 +146,39 @@ public static class PresenterViewTestBuildMenu
             PlayerSettings.runInBackground = originalRunInBackground;
             PlayerSettings.forceSingleInstance = originalForceSingleInstance;
         }
+    }
+
+    private static void LaunchTestClient(string processName, string logPath, string extraArgs)
+    {
+        string exePath = Path.GetFullPath(OutputPath);
+        if (!File.Exists(exePath))
+        {
+            Debug.LogError($"Presenter view test executable was not found: {exePath}");
+            return;
+        }
+
+        string logFullPath = Path.GetFullPath(logPath);
+        string logDirectory = Path.GetDirectoryName(logFullPath);
+        if (!string.IsNullOrEmpty(logDirectory))
+        {
+            Directory.CreateDirectory(logDirectory);
+        }
+
+        string arguments =
+            $"-screen-fullscreen 0 -screen-width {WindowWidth} -screen-height {WindowHeight} " +
+            $"-logFile \"{logFullPath}\" {extraArgs}";
+
+        var startInfo = new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = exePath,
+            Arguments = arguments,
+            WorkingDirectory = Path.GetDirectoryName(exePath) ?? Directory.GetCurrentDirectory(),
+            UseShellExecute = false
+        };
+
+        System.Diagnostics.Process process = System.Diagnostics.Process.Start(startInfo);
+        Debug.Log(process != null
+            ? $"Started {processName}: pid={process.Id}"
+            : $"Failed to start {processName}");
     }
 }
