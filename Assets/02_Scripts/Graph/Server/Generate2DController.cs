@@ -6,12 +6,16 @@ using UnityEngine;
 using UnityEngine.Networking;
 using UnityEngine.UI;
 
-// 2D 생성/변경 흐름 컨트롤러. (API 명세 2026-07-10)
-//   RequestGenerateFeature(): POST /api/2d/generate/feature { room_id, user_id } — 요구사항(feature) 기반 기본 스케치.
-//   RequestGenerateGraph():   POST /api/2d/generate/graph   { room_id, user_id, connections } — 그래프(PART↔속성) 기반 스케치.
-//   RequestColorChange():     POST /api/2d/color_change (multipart) { room_id, file, asset_id } — 색상 변경.
+// 2D 생성/변경 흐름 컨트롤러. (서버 aa81878 "job_id 추가" 반영, 2026-08-03)
+//   RequestGenerateFeature(): POST /api/2d/generate/feature { room_id, user_id, job_id } — 요구사항(feature) 기반 기본 스케치.
+//   RequestGenerateGraph():   POST /api/2d/generate/graph   { room_id, user_id, job_id, connections } — 그래프(PART↔속성) 기반 스케치.
+//   RequestColorChange():     POST /api/2d/color_change (multipart) { room_id, user_id, job_id, asset_id, file, metadata } — 색상 변경.
 //   결과 이미지는 HTTP 응답이 아니라 WS 2D_GENERATED{img_url} 로 온다.
 //     GraphSyncClient.OnImage2DGenerated 를 구독해 img_url 텍스처를 중앙 RawImage 에 표시한다.
+//
+// [job_id] 요청마다 새로 발급해 보내고(_pendingJobId), 결과 수신 시 대조한다. 서버 스키마에서 필수라 비우면 422.
+//   서버가 broadcast_to_room 을 삭제하고 요청자에게만 보내도록 바뀌었으므로(aa81878),
+//   같은 클라가 요청을 연달아 보냈을 때 늦게 도착한 이전 결과가 최신 화면을 덮는 것을 막는 것이 목적이다.
 //
 // host/room_id/user_id 는 GraphSyncClient 재사용. connections 는 GraphManager 의 적용 엣지에서 빌드.
 // [주의] 서버 2D 엔드포인트 배포 전엔 실패 가능. 이 컨트롤러는 계약 대비 선구현.
@@ -30,6 +34,16 @@ public class Generate2DController : MonoBehaviour
     private Texture2D _currentTexture;   // 이전 다운로드 텍스처(교체 시 파기용)
     private Coroutine _timeoutCoroutine;
     private bool _isGenerating;
+    private string _pendingJobId;        // 진행 중인 요청의 job_id. 결과 수신 시 대조용(비어 있으면 대기 중인 요청 없음).
+    private string _currentAssetId;      // 현재 중앙에 표시 중인 2D 이미지의 서버 asset_id
+
+    // 요청 접수부터 이미지 표시(또는 실패/타임아웃)까지 true.
+    // 호출부(MvpClassroomFlow)가 "언제까지 기다려야 하는지" 판단하는 데 쓴다.
+    public bool IsGenerating => _isGenerating;
+
+    // 현재 표시 중인 2D 이미지의 서버 asset_id. 3D 생성의 source_asset_id 로 쓴다.
+    // 비어 있으면 아직 서버 이미지를 받은 적이 없다는 뜻이고, 그 상태에서는 3D 를 만들 수 없다.
+    public string CurrentAssetId => _currentAssetId;
 
     // ─────────────────────────────────────────────
     // 생명주기 / 구독
@@ -81,12 +95,14 @@ public class Generate2DController : MonoBehaviour
     {
         if (_isGenerating) return;
         if (!EnsureConn("RequestGenerateFeature")) return;
+        string jobId = NewJobId();
         string body = JsonUtility.ToJson(new Generate2DFeatureRequest
         {
             room_id = _syncClient.RoomId,
             user_id = _syncClient.UserId,
+            job_id  = jobId,
         });
-        BeginGeneration("2D 생성 요청을 보내는 중...");
+        BeginGeneration("2D 생성 요청을 보내는 중...", jobId);
         StartCoroutine(PostJson("2d/generate/feature", body));
     }
 
@@ -113,18 +129,22 @@ public class Generate2DController : MonoBehaviour
             SetStatus("속성을 부품에 연결한 뒤 생성하세요.");
             return;
         }
+        string jobId = NewJobId();
         var req = new Generate2DGraphRequest
         {
             room_id     = _syncClient.RoomId,
             user_id     = _syncClient.UserId,
+            job_id      = jobId,
             connections = connections,
         };
-        BeginGeneration("2D 생성 요청을 보내는 중...");
+        BeginGeneration("2D 생성 요청을 보내는 중...", jobId);
         StartCoroutine(PostJson("2d/generate/graph", JsonUtility.ToJson(req)));
     }
 
     // 색상 변경(multipart). imageData/fileName/mime 는 호출부(스케치 보드 등)가 제공.
-    public void RequestColorChange(string assetId, byte[] imageData, string fileName, string mime)
+    // width/height 를 0 으로 두면 imageData 를 디코드해 크기를 구한다. 서버 metadata 는 width/height > 0 을 요구한다.
+    public void RequestColorChange(string assetId, byte[] imageData, string fileName, string mime,
+                                   int width = 0, int height = 0)
     {
         if (_isGenerating) return;
         if (!EnsureConn("RequestColorChange")) return;
@@ -134,8 +154,32 @@ public class Generate2DController : MonoBehaviour
             SetStatus("변경할 이미지가 없습니다.");
             return;
         }
-        BeginGeneration("색상 변경 요청을 보내는 중...");
-        StartCoroutine(PostColorChange(assetId, imageData, fileName, mime));
+        if (!ResolveImageSize(imageData, ref width, ref height))
+        {
+            Debug.LogWarning("[Generate2DController] RequestColorChange 실패: 이미지 크기를 확인할 수 없습니다.");
+            SetStatus("이미지 크기를 확인할 수 없습니다.");
+            return;
+        }
+        string jobId = NewJobId();
+        BeginGeneration("색상 변경 요청을 보내는 중...", jobId);
+        StartCoroutine(PostColorChange(assetId, imageData, fileName, mime, width, height, jobId));
+    }
+
+    // width/height 가 지정돼 있으면 그대로 쓰고, 아니면 imageData 를 디코드해 채운다.
+    // 서버 ColorChangeMetadataRequest 가 width/height 를 gt=0 으로 검증하므로 0 이면 422 가 된다.
+    private bool ResolveImageSize(byte[] imageData, ref int width, ref int height)
+    {
+        if (width > 0 && height > 0) return true;
+
+        var probe = new Texture2D(2, 2);
+        try
+        {
+            if (!probe.LoadImage(imageData)) return false;
+            width  = probe.width;
+            height = probe.height;
+            return width > 0 && height > 0;
+        }
+        finally { Destroy(probe); }
     }
 
     private bool EnsureConn(string from)
@@ -188,15 +232,28 @@ public class Generate2DController : MonoBehaviour
         }
     }
 
-    private IEnumerator PostColorChange(string assetId, byte[] imageData, string fileName, string mime)
+    private IEnumerator PostColorChange(string assetId, byte[] imageData, string fileName, string mime,
+                                        int width, int height, string jobId)
     {
+        string mimeType = string.IsNullOrEmpty(mime) ? "image/png" : mime;
+        // metadata 는 JSON 문자열 폼 필드다(서버가 json.loads 후 ColorChangeMetadataRequest 로 검증).
+        string metadata = JsonUtility.ToJson(new ColorChangeMetadata
+        {
+            mime_type = mimeType,
+            width     = width,
+            height    = height,
+        });
+
         var form = new List<IMultipartFormSection>
         {
             new MultipartFormDataSection("room_id",  _syncClient.RoomId),
+            new MultipartFormDataSection("user_id",  _syncClient.UserId),
+            new MultipartFormDataSection("job_id",   jobId),
             new MultipartFormDataSection("asset_id", assetId ?? ""),
+            new MultipartFormDataSection("metadata", metadata),
             new MultipartFormFileSection("file", imageData,
                 string.IsNullOrEmpty(fileName) ? "sketch.png" : fileName,
-                string.IsNullOrEmpty(mime) ? "image/png" : mime),
+                mimeType),
         };
         string url = $"http://{_syncClient.Host}/api/2d/color_change";
 
@@ -222,14 +279,41 @@ public class Generate2DController : MonoBehaviour
     // 결과 수신 (WS 2D_GENERATED → 중앙 이미지)
     // ─────────────────────────────────────────────
 
-    private void HandleImageGenerated(string imgUrl)
+    private void HandleImageGenerated(GraphSyncClient.Image2DResult result)
     {
+        string imgUrl = result.ImgUrl;
+        string jobId  = result.JobId;
+
         if (string.IsNullOrEmpty(imgUrl))
         {
             Debug.LogWarning("[Generate2DController] 2D_GENERATED img_url 이 비어 있습니다.");
             FinishGeneration("생성 결과 주소가 비어 있습니다.");
             return;
         }
+
+        // "생성 버튼을 누른 그때의 결과만 보여준다" 규칙.
+        //   1) 대기 중인 요청이 없으면 무시한다. 이전 요청의 결과가 뒤늦게 도착해 최신 화면을 덮는 것을 막는다.
+        //      (서버가 요청자에게만 보내므로, 내가 요청하지 않은 결과는 화면에 올릴 이유가 없다.)
+        //   2) 대기 중인데 job_id 가 다르면 무시한다. 연속 요청 시 이전 것이 늦게 온 경우다.
+        //      서버가 job_id 를 안 실어 보내면("") 판정할 수 없으므로 그대로 받는다(구버전 호환).
+        if (string.IsNullOrEmpty(_pendingJobId))
+        {
+            Debug.Log($"[Generate2DController] 2D_GENERATED 무시(대기 중인 요청 없음): 수신 job_id={jobId}");
+            return;
+        }
+        if (!string.IsNullOrEmpty(jobId) &&
+            !string.Equals(_pendingJobId, jobId, System.StringComparison.OrdinalIgnoreCase))
+        {
+            Debug.Log($"[Generate2DController] 2D_GENERATED 무시(job_id 불일치): 수신={jobId} 대기중={_pendingJobId}");
+            return;
+        }
+
+        // 수락한 job 은 즉시 소비한다. 서버가 같은 결과를 두 번 보내도 중복 다운로드하지 않는다.
+        _pendingJobId = null;
+
+        // 3D 생성이 이 asset_id 를 source 로 쓴다. 화면에 뜬 이미지와 짝을 맞추기 위해 여기서 갱신한다.
+        _currentAssetId = result.AssetId;
+
         _isGenerating = true;
         SetButtonInteractable(false);
         SetStatus("생성된 스케치를 불러오는 중...");
@@ -296,9 +380,13 @@ public class Generate2DController : MonoBehaviour
         }
     }
 
-    private void BeginGeneration(string status)
+    // 요청마다 새 job_id 를 발급한다. 서버 스키마가 UUID 를 요구하므로 Guid 형식(하이픈 포함)을 그대로 쓴다.
+    private static string NewJobId() => System.Guid.NewGuid().ToString();
+
+    private void BeginGeneration(string status, string jobId)
     {
         _isGenerating = true;
+        _pendingJobId = jobId;
         SetButtonInteractable(false);
         SetStatus(status);
         RestartGenerationTimeout();
@@ -308,6 +396,7 @@ public class Generate2DController : MonoBehaviour
     {
         StopGenerationTimeout();
         _isGenerating = false;
+        _pendingJobId = null;
         SetButtonInteractable(true);
         SetStatus(status);
     }

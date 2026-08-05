@@ -10,15 +10,16 @@ using UnityEngine;
 // 엔드포인트(서버 ws_room_event.py 기준):
 //   ws://{host}/ws/rooms/event
 //   room_id/user_id 는 URL이 아니라 매 메시지 본문(WSEvent)에서 읽는다.
-// 이벤트 봉투: { "event_type": "...", "room_id": "<uuid>", "user_id": "<uuid>", "payload": {...} }
+// 이벤트 봉투: { "event_type": "...", "room_id": "<uuid>", "user_id": "<uuid>", "job_id": "<uuid>|null", "payload": {...} }
 //   user_id 는 서버 WSEvent 필수 키 → 모든 송신 메시지에 포함한다(비우면 WS400).
+//   job_id 는 서버 aa81878 에서 봉투 최상위에 추가됐다(수신 전용, 송신 시엔 payload 안에 넣는다 — 아래 참고).
 //
 // [송신] NODE_CREATE / EDGE_CREATE / EDGE_DELETE / NODE_TEXT_UPDATE / NODE_DELETE / NODE_MOVE
 //   - NODE_CREATE / EDGE_CREATE: 로컬 임시 id 를 job_id 로 실어 보낸다(서버가 node_id/edge_id 발급).
 //     서버 ACK(요청자에게만, { payload.result: { job_id, node_id|edge_id } })를 받아
 //     GraphManager.ApplyServerNodeId / ApplyServerEdgeId 로 로컬 id 를 서버 발급 id 로 rekey 한다.
 //   - GRAPH_UPDATED: 서버가 semantic 업데이트 결과로 push 하는 전체 그래프 스냅샷 → LoadGraph+RenderGraph 로 전체 갱신.
-//   - 2D_GENERATED: img_url 을 구독자에게 전달. 그 외 수신은 로그만(뮤테이션 이벤트를 GraphManager 로 재적용하지 않음 — echo loop 방지).
+//   - 2D_GENERATED / 2D_COLOR_CHANGED: (img_url, 봉투 job_id) 를 구독자에게 전달. 그 외 수신은 로그만(뮤테이션 이벤트를 GraphManager 로 재적용하지 않음 — echo loop 방지).
 //   - EDGE_CREATE 는 교차 엣지(포트↔서브그래프)만 송신. 트리 엣지는 서버가 NODE_CREATE 시 자동 생성한다.
 //
 // [노드 생성 경로 2종 — 의도적 분리]
@@ -46,8 +47,45 @@ public class GraphSyncClient : MonoBehaviour
     private WebSocket _socket;
     private bool _isSubscribed;
 
-    // 서버 2D 생성 완료(2D_GENERATED) 통보 시 img_url 을 전달한다. (Generate2DController 가 구독)
-    public event Action<string> OnImage2DGenerated;
+    // 서버 2D 생성 완료(2D_GENERATED / 2D_COLOR_CHANGED) 통보. (Generate2DController 가 구독)
+    // job_id 는 봉투 최상위 필드(payload 안이 아니다). 서버가 안 실어 보내면 "" 로 온다.
+    // asset_id 는 3D 생성 요청의 입력(source asset)이라 반드시 함께 전달해야 한다.
+    public event Action<Image2DResult> OnImage2DGenerated;
+
+    // 서버 3D 생성 완료(3D_GENERATED) 통보. (Generate3DController 가 구독)
+    public event Action<Model3DResult> OnModel3DGenerated;
+
+    // 2D 생성 결과. 인자가 늘어 Action<string,string,...> 로는 호출부에서 순서를 헷갈리기 쉬워 묶었다.
+    public readonly struct Image2DResult
+    {
+        public readonly string ImgUrl;
+        public readonly string JobId;    // 봉투 job_id. 없으면 "".
+        public readonly string AssetId;  // 서버 asset_id. 3D 생성의 source_asset_id 로 쓴다.
+
+        public Image2DResult(string imgUrl, string jobId, string assetId)
+        {
+            ImgUrl  = imgUrl;
+            JobId   = jobId;
+            AssetId = assetId;
+        }
+    }
+
+    // 3D 생성 결과. model_url 은 GLB(.glb) 주소다.
+    public readonly struct Model3DResult
+    {
+        public readonly string ModelUrl;
+        public readonly string JobId;
+        public readonly string AssetId;   // 생성된 3D asset_id (source 가 아니다)
+        public readonly string MimeType;
+
+        public Model3DResult(string modelUrl, string jobId, string assetId, string mimeType)
+        {
+            ModelUrl = modelUrl;
+            JobId    = jobId;
+            AssetId  = assetId;
+            MimeType = mimeType;
+        }
+    }
 
     // HTTP(2D generate / part_node / utterances POST) 등에서 재사용하도록 연결 정보 노출.
     public string Host   => _host;
@@ -166,21 +204,49 @@ public class GraphSyncClient : MonoBehaviour
             return;
         }
 
-        // 2D 생성 완료 통보 → img_url 을 구독자에게 전달. (그래프 뮤테이션 아님 → echo loop 무관)
-        if (eventType == "2D_GENERATED")
+        // 2D 생성/색상변경 완료 통보 → img_url 을 구독자에게 전달. (그래프 뮤테이션 아님 → echo loop 무관)
+        // 색상 변경은 event_type 만 2D_COLOR_CHANGED 로 다르고 payload 구조(asset_id/mime_type/img_url)는 같다.
+        // 이 분기가 없으면 색상 변경 결과가 영영 반영되지 않고 컨트롤러가 타임아웃난다.
+        if (eventType == "2D_GENERATED" || eventType == "2D_COLOR_CHANGED")
         {
             try
             {
                 var evt = JsonUtility.FromJson<Image2DEvent>(raw);
                 string url = evt?.payload?.img_url;
                 if (!string.IsNullOrEmpty(url))
-                    OnImage2DGenerated?.Invoke(url);
+                    OnImage2DGenerated?.Invoke(new Image2DResult(
+                        url,
+                        evt.job_id ?? "",
+                        evt.payload.asset_id ?? ""));
                 else
-                    Debug.LogWarning("[GraphSyncClient] 2D_GENERATED 수신했으나 img_url 이 비어 있습니다.");
+                    Debug.LogWarning($"[GraphSyncClient] {eventType} 수신했으나 img_url 이 비어 있습니다.");
             }
             catch (Exception e)
             {
-                Debug.LogWarning($"[GraphSyncClient] 2D_GENERATED 파싱 실패: {e.Message}");
+                Debug.LogWarning($"[GraphSyncClient] {eventType} 파싱 실패: {e.Message}");
+            }
+            return;
+        }
+
+        // 3D 생성 완료 통보 → model_url(GLB) 을 구독자에게 전달.
+        if (eventType == "3D_GENERATED")
+        {
+            try
+            {
+                var evt = JsonUtility.FromJson<Model3DEvent>(raw);
+                string url = evt?.payload?.model_url;
+                if (!string.IsNullOrEmpty(url))
+                    OnModel3DGenerated?.Invoke(new Model3DResult(
+                        url,
+                        evt.job_id ?? "",
+                        evt.payload.asset_id ?? "",
+                        evt.payload.mime_type ?? ""));
+                else
+                    Debug.LogWarning("[GraphSyncClient] 3D_GENERATED 수신했으나 model_url 이 비어 있습니다.");
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"[GraphSyncClient] 3D_GENERATED 파싱 실패: {e.Message}");
             }
         }
     }
@@ -447,9 +513,14 @@ public class GraphSyncClient : MonoBehaviour
 
     [Serializable] private class IncomingHeader { public string event_type; }
 
-    // 서버 2D_GENERATED 이벤트 파싱용
-    [Serializable] private class Image2DEvent { public string event_type; public Image2DPayload payload; }
+    // 서버 2D_GENERATED 이벤트 파싱용. job_id 는 payload 가 아니라 봉투 최상위에 온다(서버 ws_response.ws_success_event).
+    [Serializable] private class Image2DEvent { public string event_type; public string job_id; public Image2DPayload payload; }
     [Serializable] private class Image2DPayload { public string asset_id; public string mime_type; public string img_url; }
+
+    // 서버 3D_GENERATED 이벤트 파싱용(서버 Model3DGeneratedWSEvent / Model3DAssetPayload).
+    // 이 이벤트에는 user_id 가 없다(서버 스키마가 room_id/job_id/payload 만 가진다).
+    [Serializable] private class Model3DEvent { public string event_type; public string job_id; public Model3DPayload payload; }
+    [Serializable] private class Model3DPayload { public string asset_id; public string mime_type; public string model_url; }
 
     [Serializable] private class NodeTextPayload { public string node_id; public string text; }
     [Serializable] private class NodeIdPayload   { public string node_id; }

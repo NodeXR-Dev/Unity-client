@@ -17,6 +17,7 @@ public class MvpClassroomFlow : MonoBehaviour
     [SerializeField] private MvpWaterRocketGraphController _waterRocketGraph;
     [SerializeField] private GraphSyncClient _graphSyncClient;
     [SerializeField] private Generate2DController _generate2DController;
+    [SerializeField] private Generate3DController _generate3DController;
     [SerializeField] private MainSketchView _mainSketchView;
     [SerializeField] private MvpWorkspaceLayout _workspaceLayout;
 
@@ -24,6 +25,15 @@ public class MvpClassroomFlow : MonoBehaviour
     [SerializeField] private string _backendHost = "127.0.0.1:8000";
     [SerializeField] private bool _tryBackendFirst = true;
     [SerializeField] private float _imageWaitSeconds = 9f;
+
+    // 서버 AI 이미지 대기 상한(초). 실제 대기는 Generate2DController.IsGenerating 이 끝나면
+    // 함께 끝나므로, 이 값은 컨트롤러가 응답 없이 멈춘 경우를 대비한 안전장치다.
+    // 컨트롤러 자체 타임아웃(_generationTimeoutSeconds, 기본 120초)보다 넉넉하게 잡는다.
+    private const float ServerImageWaitCapSeconds = 150f;
+
+    // 서버 3D(Meshy) 대기 상한(초). Meshy 폴링 상한이 서버 기본 900초라 그보다 넉넉히 잡는다.
+    // 실제 대기는 Generate3DController.IsGenerating 이 끝나면 함께 끝난다.
+    private const float ServerModelWaitCapSeconds = 960f;
 
     private readonly MvpSessionData _session = new MvpSessionData();
     private readonly List<MvpSketchHistoryItem> _history =
@@ -344,6 +354,9 @@ public class MvpClassroomFlow : MonoBehaviour
         if (_generate2DController == null)
             _generate2DController =
                 FindFirstObjectByType<Generate2DController>();
+        if (_generate3DController == null)
+            _generate3DController =
+                FindFirstObjectByType<Generate3DController>();
         if (_mainSketchView == null)
             _mainSketchView =
                 FindFirstObjectByType<MainSketchView>();
@@ -1444,8 +1457,58 @@ public class MvpClassroomFlow : MonoBehaviour
     }
 
     // 3D는 매번 새로 만들지 않는다. 이미 있으면 토글해 회의 중 비교할 수 있다.
+    //
+    // 온라인이면 서버 3D(Meshy GLB)를, 오프라인이면 기존 mock(MvpRocket3DStage)을 쓴다.
+    // [비용] 서버 3D 는 호출 1회당 Meshy 과금이 발생하고 서버에 중복 방지가 없다.
+    //   그래서 "이미 만든 모델이 있으면 절대 재생성하지 않고 토글만" 하는 기존 성격을 그대로 살린다.
     private void ToggleOrCreateWorkspace3D()
     {
+        bool useServer3D =
+            _session.online &&
+            _graphSyncClient != null &&
+            _graphSyncClient.IsConnected &&
+            _generate3DController != null;
+
+        if (useServer3D)
+        {
+            // 1) 이미 만든 서버 모델이 있으면 보이기/숨기기만 한다. 재요청하지 않는다.
+            if (_generate3DController.HasModel)
+            {
+                bool show = !_generate3DController.IsModelVisible;
+                _generate3DController.SetModelVisible(show);
+                if (MvpAudioCue.Instance != null)
+                    MvpAudioCue.Instance.Play(MvpAudioCue.Cue.KeyClick);
+                SetWorkspaceMessage(
+                    show ? "3D 모델을 보입니다." : "3D 모델을 숨겼어요.",
+                    MvpStudentUiFactory.Cyan);
+                RefreshThreeDViewButton();
+                return;
+            }
+
+            // 2) 이미 만드는 중이면 중복 요청하지 않는다(그대로 두면 과금이 두 배가 된다).
+            if (_generate3DController.IsGenerating)
+            {
+                SetWorkspaceMessage(
+                    "3D 모델을 만드는 중이에요. 조금만 기다려 주세요.",
+                    MvpStudentUiFactory.Cyan);
+                return;
+            }
+
+            // 3) 3D 는 2D 결과(asset_id)를 입력으로 받는다. 없으면 요청 자체를 보내지 않는다.
+            if (_generate2DController == null ||
+                string.IsNullOrEmpty(_generate2DController.CurrentAssetId))
+            {
+                SetWorkspaceMessage(
+                    "먼저 2D 그림을 만들어 주세요.",
+                    MvpStudentUiFactory.Amber);
+                return;
+            }
+
+            StartCoroutine(ServerGenerate3DRoutine());
+            return;
+        }
+
+        // 오프라인(체험 모드): 서버가 없으므로 기존 mock 로켓을 쓴다.
         if (_rocketStage == null)
         {
             BeginWorkspace3D();
@@ -1453,6 +1516,44 @@ public class MvpClassroomFlow : MonoBehaviour
         }
 
         ToggleRocketVisibility();
+    }
+
+    // 서버 3D 생성을 요청하고 완료까지 기다린다. 기다리는 동안 버튼을 눌러도
+    // 위 (2) 분기가 막으므로 중복 과금이 나지 않는다.
+    private IEnumerator ServerGenerate3DRoutine()
+    {
+        SetWorkspaceMessage(
+            "AI가 3D 모델을 만들고 있어요. 시간이 걸릴 수 있어요...",
+            MvpStudentUiFactory.Cyan);
+
+        _generate3DController.RequestGenerate3D();
+
+        // 컨트롤러가 손을 뗄 때까지(성공·실패·자체 타임아웃) 기다린다.
+        // 요청이 거부된 경우엔 IsGenerating 이 서지 않아 즉시 빠진다.
+        float elapsed = 0f;
+        while (_generate3DController.IsGenerating &&
+               elapsed < ServerModelWaitCapSeconds)
+        {
+            elapsed += Time.unscaledDeltaTime;
+            yield return null;
+        }
+
+        if (_generate3DController.HasModel)
+        {
+            if (MvpAudioCue.Instance != null)
+                MvpAudioCue.Instance.Play(MvpAudioCue.Cue.Success);
+            SetWorkspaceMessage(
+                "3D 모델이 만들어졌어요.",
+                MvpStudentUiFactory.Mint);
+        }
+        else
+        {
+            SetWorkspaceMessage(
+                "3D 모델을 만들지 못했어요. 잠시 후 다시 시도해 주세요.",
+                MvpStudentUiFactory.Coral);
+        }
+
+        RefreshThreeDViewButton();
     }
 
 
@@ -1492,9 +1593,13 @@ public class MvpClassroomFlow : MonoBehaviour
         if (_threeDViewButton == null)
             return;
 
-        bool hasModel = _rocketStage != null;
+        // 서버 3D(GLB)와 오프라인 mock 중 어느 쪽이든 "모델이 있다"로 본다.
+        bool hasServerModel =
+            _generate3DController != null && _generate3DController.HasModel;
+        bool hasModel = _rocketStage != null || hasServerModel;
         bool visible =
-            hasModel && _rocketStage.gameObject.activeSelf;
+            (_rocketStage != null && _rocketStage.gameObject.activeSelf) ||
+            (hasServerModel && _generate3DController.IsModelVisible);
 
         TMP_Text label =
             _threeDViewButton.GetComponentInChildren<TMP_Text>();
@@ -1554,33 +1659,95 @@ public class MvpClassroomFlow : MonoBehaviour
                 ? _waterRocketGraph.GetRocketDesign(_history.Count)
                 : new MvpRocketDesign();
 
-        // 즉시: 설계(연결+활성 노드) 반영 mock을 가운데에 표시.
-        Texture2D sketch =
-            MvpFallbackSketchGenerator.CreateWaterRocketSketch(design);
-        if (_centerSketchImage != null)
-        {
-            _centerSketchImage.texture = sketch;
-            _centerSketchImage.enabled = true;
-            _centerSketchImage.color = Color.white;
-        }
-        HideSketchPlaceholder();   // '아직 그림이 없어요' 문구 제거
-        RecordWorkspaceSketch(sketch);   // 개인 손목 히스토리에만 저장
-        if (_workspaceMockTexture != null)
-            Destroy(_workspaceMockTexture);
-        _workspaceMockTexture = sketch;
-
-        if (MvpAudioCue.Instance != null)
-            MvpAudioCue.Instance.Play(MvpAudioCue.Cue.Success);
-        SetWorkspaceMessage(
-            "가운데에 새 설계 그림을 만들었어요.",
-            MvpStudentUiFactory.Mint);
-
-        // 온라인이면 서버 AI 이미지 요청 — 도착하면 Generate2DController가 중앙 이미지를 교체.
-        if (_session.online &&
+        // 온라인이면 서버 AI 이미지만 보여준다.
+        // 예전에는 로컬 mock(MvpFallbackSketchGenerator)을 먼저 띄우고 서버 이미지가 오면 교체했는데,
+        // 그 mock 이 설계값으로 그린 물로켓 그림이라 매번 비슷하게 나와 "새로 만든 게 아니라
+        // 예전 걸 다시 보여준다"는 인상을 줬다. 서버 요청이 실패하면(예: job_id 누락 422)
+        // AI 이미지가 영영 오지 않아 mock 만 남는 것도 구분이 안 됐다.
+        bool useServer =
+            _session.online &&
             _graphSyncClient != null &&
             _graphSyncClient.IsConnected &&
-            _generate2DController != null)
+            _generate2DController != null;
+
+        if (useServer)
+        {
+            // 이전 결과를 지운다 — 이번에 생성한 이미지만 보이게 하기 위함.
+            // 지운 뒤 texture 가 다시 채워지는 것이 곧 "이번 요청의 결과 도착" 신호가 된다.
+            if (_centerSketchImage != null)
+            {
+                _centerSketchImage.texture = null;
+                _centerSketchImage.enabled = true;
+                _centerSketchImage.color = Color.white;
+            }
+            HideSketchPlaceholder();
+            SetWorkspaceMessage(
+                "AI가 새 그림을 그리고 있어요...",
+                MvpStudentUiFactory.Cyan);
+
+            // 도착하면 Generate2DController 가 중앙 이미지를 채운다.
             _generate2DController.RequestGenerateGraphAll();
+
+            // 결과를 기다린다. _workspaceGenBusy 가 유지되므로 이 사이 재요청은 막힌다.
+            float cap = Mathf.Max(_imageWaitSeconds, ServerImageWaitCapSeconds);
+            float elapsed = 0f;
+            bool arrived = false;
+            while (elapsed < cap)
+            {
+                if (_centerSketchImage != null &&
+                    _centerSketchImage.texture != null)
+                {
+                    arrived = true;
+                    break;
+                }
+                // 컨트롤러가 손을 뗐는데 이미지가 없으면 실패로 끝난 것이다.
+                if (!_generate2DController.IsGenerating)
+                    break;
+
+                elapsed += Time.unscaledDeltaTime;
+                yield return null;
+            }
+
+            if (arrived)
+            {
+                // 손목 히스토리에는 AI 결과를 남긴다(예전엔 여기서 mock 을 남겼다).
+                RecordWorkspaceSketch(_centerSketchImage.texture as Texture2D);
+                if (MvpAudioCue.Instance != null)
+                    MvpAudioCue.Instance.Play(MvpAudioCue.Cue.Success);
+                SetWorkspaceMessage(
+                    "가운데에 새 그림이 도착했어요.",
+                    MvpStudentUiFactory.Mint);
+            }
+            else
+            {
+                SetWorkspaceMessage(
+                    "그림을 만들지 못했어요. 잠시 후 다시 시도해 주세요.",
+                    MvpStudentUiFactory.Coral);
+            }
+        }
+        else
+        {
+            // 오프라인(체험 모드): 서버가 없으므로 설계 반영 mock 을 그대로 쓴다.
+            Texture2D sketch =
+                MvpFallbackSketchGenerator.CreateWaterRocketSketch(design);
+            if (_centerSketchImage != null)
+            {
+                _centerSketchImage.texture = sketch;
+                _centerSketchImage.enabled = true;
+                _centerSketchImage.color = Color.white;
+            }
+            HideSketchPlaceholder();   // '아직 그림이 없어요' 문구 제거
+            RecordWorkspaceSketch(sketch);   // 개인 손목 히스토리에만 저장
+            if (_workspaceMockTexture != null)
+                Destroy(_workspaceMockTexture);
+            _workspaceMockTexture = sketch;
+
+            if (MvpAudioCue.Instance != null)
+                MvpAudioCue.Instance.Play(MvpAudioCue.Cue.Success);
+            SetWorkspaceMessage(
+                "가운데에 새 설계 그림을 만들었어요.",
+                MvpStudentUiFactory.Mint);
+        }
 
         yield return null;
         _workspaceGenBusy = false;
@@ -3149,16 +3316,23 @@ public class MvpClassroomFlow : MonoBehaviour
                 : null;
         bool fromServer = false;
 
-        if (_session.online &&
+        bool useServer =
+            _session.online &&
             _graphSyncClient != null &&
             _graphSyncClient.IsConnected &&
-            _generate2DController != null)
+            _generate2DController != null;
+
+        if (useServer)
         {
             _generate2DController.RequestGenerateGraphAll();
+
+            // 서버 생성은 OpenAI(프롬프트) → Gemini(이미지) 2단이라 수십 초가 걸린다.
+            // 고정 9초(_imageWaitSeconds)로 기다리면 정상 동작 중에도 거의 항상 시간 초과로
+            // 떨어졌다. 컨트롤러가 작업을 끝낼 때까지(성공·실패·자체 타임아웃) 기다린다.
+            float cap = Mathf.Max(_imageWaitSeconds, ServerImageWaitCapSeconds);
             float elapsed = 0f;
-            while (elapsed < Mathf.Max(3f, _imageWaitSeconds))
+            while (elapsed < cap)
             {
-                elapsed += Time.unscaledDeltaTime;
                 Texture current =
                     _centerSketchImage != null
                         ? _centerSketchImage.texture
@@ -3168,6 +3342,12 @@ public class MvpClassroomFlow : MonoBehaviour
                     fromServer = true;
                     break;
                 }
+                // 컨트롤러가 손을 뗐는데 이미지가 안 바뀌었으면 실패로 끝난 것이다.
+                // (요청 자체가 거부된 경우엔 애초에 IsGenerating 이 서지 않아 즉시 빠진다.)
+                if (!_generate2DController.IsGenerating)
+                    break;
+
+                elapsed += Time.unscaledDeltaTime;
                 yield return null;
             }
         }
@@ -3188,6 +3368,16 @@ public class MvpClassroomFlow : MonoBehaviour
             _centerSketchImage.texture != null)
         {
             result = CloneTexture(_centerSketchImage.texture);
+        }
+        else if (useServer)
+        {
+            // 온라인인데 서버 이미지가 안 왔다. mock 으로 덮으면 "생성된 것처럼" 보여
+            // 실패를 알아챌 수 없으므로, 화면을 그대로 두고 설계 화면으로 돌려보낸다.
+            SetWorkspaceMessage(
+                "그림을 만들지 못했어요. 잠시 후 다시 시도해 주세요.",
+                MvpStudentUiFactory.Coral);
+            ShowState(MvpFlowState.Design);
+            yield break;
         }
         else
         {
