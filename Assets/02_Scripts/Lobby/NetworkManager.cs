@@ -17,6 +17,11 @@ using UnityEditor;
 
 public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
 {
+    public delegate IEnumerator BeforeSessionStartRoutine(
+        string roomId,
+        string userId,
+        Action<bool> setCanStartSession);
+
     public static NetworkRunner runnerInsatance;
 
     public string lobbyName = "default";
@@ -163,19 +168,37 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
     // -------------------------------
     public void CreateCustomSession()
     {
-        StartCoroutine(CreateCustomSessionRoutine());
+        StartCoroutine(CreateCustomSessionRoutine(null, null));
     }
 
-   private IEnumerator CreateCustomSessionRoutine()
+    public void CreateCustomSessionWithBeforeStart(
+        BeforeSessionStartRoutine beforeSessionStart,
+        Action onFailed = null)
+    {
+        StartCoroutine(CreateCustomSessionRoutine(beforeSessionStart, onFailed));
+    }
+
+   private IEnumerator CreateCustomSessionRoutine(
+       BeforeSessionStartRoutine beforeSessionStart,
+       Action onFailed)
     {
         // 1. 입력값 준비 (기존 동일)
-        string topic = string.IsNullOrEmpty(roomNameInput.text) ? "DefaultRoom" : roomNameInput.text;
-        string pw = passwordInput.text;
-        string nick = string.IsNullOrEmpty(nicknameInput.text) ? "Unknown" : nicknameInput.text;
+        string topic = roomNameInput == null || string.IsNullOrEmpty(roomNameInput.text)
+            ? "DefaultRoom"
+            : roomNameInput.text.Trim();
+        string pw = passwordInput == null ? string.Empty : passwordInput.text;
+        string nick = nicknameInput == null || string.IsNullOrEmpty(nicknameInput.text)
+            ? "Unknown"
+            : nicknameInput.text.Trim();
 
         // 2. 서버 API 호출
         string serverUrl = "http://localhost:8000/api/rooms/generate";
-        string jsonPayload = $"{{\"room_topic\":\"{topic}\", \"password\":\"{pw}\", \"nickname\":\"{nick}\"}}";
+        string jsonPayload = JsonUtility.ToJson(new CreateRoomRequestBody
+        {
+            room_topic = topic,
+            password = pw,
+            nickname = nick,
+        });
         
         using (UnityWebRequest request = new UnityWebRequest(serverUrl, "POST"))
         {
@@ -190,12 +213,18 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
             {
                 RoomResponse response = JsonUtility.FromJson<RoomResponse>(request.downloadHandler.text);
                 string assignedRoomId = response.result.room_id;
+                string leaderUserId = response.result.user_id;
                 string currentTime = DateTime.Now.ToString("HH:mm");
 
                 // ------------------------------------------------------------------
                 // ✅ [최종 방어 로직] 상태에 따른 단계적 접속
                 // ------------------------------------------------------------------
-                if (runnerInsatance == null) { Debug.LogError("Runner가 없습니다!"); yield break; }
+                if (runnerInsatance == null)
+                {
+                    Debug.LogError("Runner가 없습니다!");
+                    onFailed?.Invoke();
+                    yield break;
+                }
 
                 // A. 만약 이미 로비에 있거나 접속 중이라면 JoinLobby를 호출하지 않고 대기만 합니다.
                 if (runnerInsatance.LobbyInfo.IsValid) 
@@ -225,6 +254,7 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
                     if (timeout >= 10f)
                     {
                         Debug.LogError("로비 접속 시간 초과!");
+                        onFailed?.Invoke();
                         yield break;
                     }
                 }
@@ -232,6 +262,38 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
                 // ------------------------------------------------------------------
 
                 // 3. 세션 설정 및 StartGame
+                if (string.IsNullOrEmpty(leaderUserId))
+                {
+                    yield return FetchRoomUserIdRoutine(
+                        assignedRoomId,
+                        nick,
+                        pw,
+                        userId => leaderUserId = userId);
+                }
+
+                if (beforeSessionStart != null)
+                {
+                    if (string.IsNullOrEmpty(leaderUserId))
+                    {
+                        Debug.LogError(
+                            "[NetworkManager] Cannot continue room creation because user_id is empty.");
+                        onFailed?.Invoke();
+                        yield break;
+                    }
+
+                    bool canStartSession = false;
+                    yield return beforeSessionStart(
+                        assignedRoomId,
+                        leaderUserId,
+                        ok => canStartSession = ok);
+
+                    if (!canStartSession)
+                    {
+                        onFailed?.Invoke();
+                        yield break;
+                    }
+                }
+
                 var props = new Dictionary<string, SessionProperty>();
                 if (!string.IsNullOrEmpty(pw)) props["password"] = pw;
                 props["UserNames"] = nick;
@@ -239,6 +301,12 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
                 props["StartTime"] = currentTime; 
 
                 int sceneIndex = GetSceneIndex(gameplaySceneName);
+                if (sceneIndex < 0)
+                {
+                    Debug.LogError($"'{gameplaySceneName}' 씬을 찾을 수 없습니다!");
+                    onFailed?.Invoke();
+                    yield break;
+                }
 
                 Debug.Log($"세션 시작 시도: {assignedRoomId}");
                 
@@ -260,9 +328,25 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
 
                     if (!startTask.IsFaulted && !startTask.IsCanceled)
                     {
-                        RememberSessionForRecovery(assignedRoomId, nick, null);
+                        RememberSessionForRecovery(assignedRoomId, nick, leaderUserId);
+                    }
+                    else
+                    {
+                        onFailed?.Invoke();
                     }
                 }
+                else
+                {
+                    Debug.LogError("[NetworkManager] Runner is not cloud ready.");
+                    onFailed?.Invoke();
+                }
+            }
+            else
+            {
+                Debug.LogError(
+                    $"[NetworkManager] Room create failed: {request.error} " +
+                    $"(code={request.responseCode})\n{request.downloadHandler.text}");
+                onFailed?.Invoke();
             }
         }
     }
@@ -270,6 +354,45 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
     // -------------------------------
     // 세션 참가
     // -------------------------------
+    private IEnumerator FetchRoomUserIdRoutine(
+        string roomId,
+        string nickname,
+        string password,
+        Action<string> onComplete)
+    {
+        string url = "http://localhost:8000/api/rooms/enter";
+        string jsonPayload = JsonUtility.ToJson(new RoomEnterRequestBody
+        {
+            room_id = roomId,
+            nickname = nickname,
+            password = password,
+        });
+
+        using (UnityWebRequest request = new UnityWebRequest(url, "POST"))
+        {
+            byte[] bodyRaw = Encoding.UTF8.GetBytes(jsonPayload);
+            request.uploadHandler = new UploadHandlerRaw(bodyRaw);
+            request.downloadHandler = new DownloadHandlerBuffer();
+            request.SetRequestHeader("Content-Type", "application/json");
+
+            yield return request.SendWebRequest();
+
+            if (request.result != UnityWebRequest.Result.Success)
+            {
+                Debug.LogError(
+                    $"[NetworkManager] Room enter failed while resolving user_id: {request.error} " +
+                    $"(code={request.responseCode})\n{request.downloadHandler.text}");
+                onComplete?.Invoke(null);
+                yield break;
+            }
+
+            RoomEnterResponse response =
+                JsonUtility.FromJson<RoomEnterResponse>(
+                    request.downloadHandler.text);
+            onComplete?.Invoke(response.result.user_id);
+        }
+    }
+
     public void RequestJoinSession(SessionInfo session)
     {
         bool hasPwd = session.Properties.ContainsKey("password") &&
@@ -277,7 +400,7 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
 
         if (!hasPwd)
         {
-            StartCoroutine(JoinRoomRoutine(session.Name));
+            StartCoroutine(JoinRoomRoutine(session.Name, string.Empty));
         }
         else
         {
@@ -306,7 +429,7 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
 
             if (passwordWarningImage != null) passwordWarningImage.SetActive(false);
             passwordPanel.SetActive(false);
-            StartCoroutine(JoinRoomRoutine(selectedSession.Name));
+            StartCoroutine(JoinRoomRoutine(selectedSession.Name, inputPwd));
         }
         else
         {
@@ -353,7 +476,7 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
         return PlayerPrefs.GetString("PlayerNickname", "Actor_1");
     }
 
-    private IEnumerator JoinRoomRoutine(string sessionName)
+    private IEnumerator JoinRoomRoutine(string sessionName, string password)
     {
         StopSessionRecovery();
 
@@ -363,7 +486,12 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
         string url = "http://localhost:8000/api/rooms/enter";
         string myNickname = PlayerPrefs.GetString("PlayerNickname", "Unknown");
         
-        string jsonPayload = $"{{\"room_id\":\"{sessionName}\", \"nickname\":\"{myNickname}\"}}";
+        string jsonPayload = JsonUtility.ToJson(new RoomEnterRequestBody
+        {
+            room_id = sessionName,
+            nickname = myNickname,
+            password = password,
+        });
 
         using (UnityWebRequest request = new UnityWebRequest(url, "POST"))
         {
@@ -954,6 +1082,20 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
 
 // JSON 파싱을 위한 클래스 (파일 끝에 추가하세요)
 [System.Serializable]
+public class CreateRoomRequestBody {
+    public string room_topic;
+    public string password;
+    public string nickname;
+}
+
+[System.Serializable]
+public class RoomEnterRequestBody {
+    public string room_id;
+    public string nickname;
+    public string password;
+}
+
+[System.Serializable]
 public class RoomResponse {
     public bool isSuccess;
     public RoomResult result;
@@ -962,6 +1104,7 @@ public class RoomResponse {
 [System.Serializable]
 public class RoomResult {
     public string room_id;
+    public string user_id;
 }
 
 [System.Serializable]
