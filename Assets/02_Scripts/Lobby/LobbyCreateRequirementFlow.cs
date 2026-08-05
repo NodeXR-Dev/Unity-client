@@ -1,7 +1,10 @@
 using System;
 using System.Collections;
+using System.Text;
+using TMPro;
 using Photon.Voice.Unity;
 using UnityEngine;
+using UnityEngine.Networking;
 using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 
@@ -40,8 +43,31 @@ public class LobbyCreateRequirementFlow : MonoBehaviour
     [SerializeField] private bool autoFindNetworkManager = true;
     [SerializeField] private float creationTimeoutSeconds = 30f;
 
+    [Header("Feature API")]
+    [SerializeField] private bool sendFeatureTextToServer = true;
+    [SerializeField] private string apiHost = "localhost:8000";
+    [SerializeField] private int featureRequestTimeoutSeconds = 60;
+    [SerializeField] private TMP_InputField featureTextInput;
+    [SerializeField, TextArea] private string testFeatureText;
+
+    [Header("Server Info")]
+    [SerializeField] private bool autoFindServerInfoObjects = true;
+    [SerializeField] private GameObject serverInfoRoot;
+    [SerializeField] private GameObject serverConnectedObject;
+    [SerializeField] private GameObject serverConnectingObject;
+    [SerializeField] private GameObject serverDisconnectedObject;
+    [SerializeField] private float serverInfoRefreshSeconds = 0.25f;
+
     [Header("Loading")]
     [SerializeField] private float loadingFrameSeconds = 0.18f;
+
+    private enum ServerInfoState
+    {
+        Unknown,
+        Connecting,
+        Connected,
+        Disconnected
+    }
 
     private bool waitingForRoomCreation;
     private string sourceSceneName;
@@ -53,17 +79,22 @@ public class LobbyCreateRequirementFlow : MonoBehaviour
     private string microphoneDevice;
     private float[] microphoneSamples;
     private bool usingMicrophoneFallback;
+    private string pendingFeatureText;
+    private ServerInfoState currentServerInfoState = ServerInfoState.Unknown;
+    private float nextServerInfoRefreshAt;
 
     private void Awake()
     {
         ResolveReferences();
         HideError();
         ApplyLoadingFrame(0);
+        RefreshServerInfoObjects(true);
     }
 
     private void OnEnable()
     {
         ResolveReferences();
+        RefreshServerInfoObjects(true);
     }
 
     private void OnDisable()
@@ -73,6 +104,8 @@ public class LobbyCreateRequirementFlow : MonoBehaviour
 
     private void Update()
     {
+        RefreshServerInfoObjects(false);
+
         if (makeImagePanel != null && makeImagePanel.activeInHierarchy)
             TickLoadingAnimation();
 
@@ -101,6 +134,8 @@ public class LobbyCreateRequirementFlow : MonoBehaviour
             makeImagePanel.SetActive(false);
         if (requirementsPanel != null)
             requirementsPanel.SetActive(true);
+
+        RefreshServerInfoObjects(true);
     }
 
     public void StartCreationFromRequirements()
@@ -119,6 +154,24 @@ public class LobbyCreateRequirementFlow : MonoBehaviour
             makeImagePanel.SetActive(false);
 
         requirementRoutine = StartCoroutine(StartCreationAfterRequirements());
+    }
+
+    public void SetRequirementFeatureText(string featureText)
+    {
+        pendingFeatureText = string.IsNullOrWhiteSpace(featureText)
+            ? string.Empty
+            : featureText.Trim();
+    }
+
+    public void ClearRequirementFeatureText()
+    {
+        pendingFeatureText = string.Empty;
+    }
+
+    public void StartRequirementSpeechToText()
+    {
+        // STT 담당자가 여기에서 마이크 시작 -> 음성 텍스트 변환 ->
+        // SetRequirementFeatureText(finalText) 호출까지 연결하면 됩니다.
     }
 
     public void ShowErrorState()
@@ -179,13 +232,123 @@ public class LobbyCreateRequirementFlow : MonoBehaviour
 
         try
         {
-            networkManager.CreateCustomSession();
+            if (sendFeatureTextToServer)
+            {
+                networkManager.CreateCustomSessionWithBeforeStart(
+                    SendFeatureGenerateBeforeSessionStart,
+                    ShowErrorState);
+            }
+            else
+            {
+                networkManager.CreateCustomSession();
+            }
         }
         catch (Exception exception)
         {
             Debug.LogException(exception);
             ShowErrorState();
         }
+    }
+
+    private IEnumerator SendFeatureGenerateBeforeSessionStart(
+        string roomId,
+        string userId,
+        Action<bool> setCanStartSession)
+    {
+        string featureText = GetFeatureText();
+        if (string.IsNullOrWhiteSpace(featureText))
+        {
+            Debug.LogWarning(
+                "[LobbyCreateRequirementFlow] Feature text is empty.");
+            setCanStartSession?.Invoke(false);
+            yield break;
+        }
+
+        bool success = false;
+        yield return SendFeatureGenerate(
+            roomId,
+            userId,
+            featureText,
+            ok => success = ok);
+
+        setCanStartSession?.Invoke(success);
+    }
+
+    private IEnumerator SendFeatureGenerate(
+        string roomId,
+        string userId,
+        string featureText,
+        Action<bool> onComplete)
+    {
+        string url = BuildApiUrl("features/generate");
+        string body = JsonUtility.ToJson(new FeatureGenerateRequestBody
+        {
+            room_id = roomId,
+            user_id = userId,
+            job_id = Guid.NewGuid().ToString(),
+            feature_text = featureText,
+        });
+
+        using (UnityWebRequest request =
+               new UnityWebRequest(url, UnityWebRequest.kHttpVerbPOST))
+        {
+            request.timeout = Mathf.Max(1, featureRequestTimeoutSeconds);
+            request.uploadHandler =
+                new UploadHandlerRaw(Encoding.UTF8.GetBytes(body));
+            request.downloadHandler = new DownloadHandlerBuffer();
+            request.SetRequestHeader("Content-Type", "application/json");
+
+            Debug.Log($"[LobbyCreateRequirementFlow] POST {url} body={body}");
+            yield return request.SendWebRequest();
+
+            bool success = request.result == UnityWebRequest.Result.Success;
+            if (!success)
+            {
+                Debug.LogError(
+                    "[LobbyCreateRequirementFlow] Feature generate failed: " +
+                    $"{request.error} (code={request.responseCode})\n" +
+                    request.downloadHandler.text);
+                onComplete?.Invoke(false);
+                yield break;
+            }
+
+            Debug.Log(
+                "[LobbyCreateRequirementFlow] Feature generate accepted: " +
+                request.downloadHandler.text);
+            onComplete?.Invoke(true);
+        }
+    }
+
+    private string GetFeatureText()
+    {
+        if (!string.IsNullOrWhiteSpace(pendingFeatureText))
+            return pendingFeatureText.Trim();
+
+        if (featureTextInput != null &&
+            !string.IsNullOrWhiteSpace(featureTextInput.text))
+        {
+            return featureTextInput.text.Trim();
+        }
+
+        return string.IsNullOrWhiteSpace(testFeatureText)
+            ? string.Empty
+            : testFeatureText.Trim();
+    }
+
+    private string BuildApiUrl(string path)
+    {
+        string host = string.IsNullOrWhiteSpace(apiHost)
+            ? "localhost:8000"
+            : apiHost.Trim();
+        host = host.TrimEnd('/');
+
+        if (host.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+            host.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+        {
+            return $"{host}/api/{path}";
+        }
+
+        return $"http://{host}/api/{path}";
     }
 
     private IEnumerator WaitForSpeechRequirement(Action<bool> setPassed)
@@ -247,6 +410,178 @@ public class LobbyCreateRequirementFlow : MonoBehaviour
 
         if (autoFindVoiceRecorder && voiceRecorder == null)
             voiceRecorder = FindFirstObjectByType<Recorder>();
+
+        ResolveServerInfoObjects();
+    }
+
+    private void ResolveServerInfoObjects()
+    {
+        if (!autoFindServerInfoObjects)
+            return;
+
+        if (serverInfoRoot == null)
+        {
+            Transform root = FindTransformInLoadedScenes("server_info");
+            if (root != null)
+                serverInfoRoot = root.gameObject;
+        }
+
+        if (serverInfoRoot == null)
+            return;
+
+        if (serverConnectedObject == null)
+            serverConnectedObject = FindDirectChildByName(serverInfoRoot, "green", "connected");
+        if (serverConnectingObject == null)
+            serverConnectingObject = FindDirectChildByName(serverInfoRoot, "yellow", "connecting");
+        if (serverDisconnectedObject == null)
+            serverDisconnectedObject = FindDirectChildByName(serverInfoRoot, "red", "disconnected", "failed");
+
+        if (serverConnectedObject == null && serverInfoRoot.transform.childCount > 0)
+            serverConnectedObject = serverInfoRoot.transform.GetChild(0).gameObject;
+        if (serverConnectingObject == null && serverInfoRoot.transform.childCount > 1)
+            serverConnectingObject = serverInfoRoot.transform.GetChild(1).gameObject;
+        if (serverDisconnectedObject == null && serverInfoRoot.transform.childCount > 2)
+            serverDisconnectedObject = serverInfoRoot.transform.GetChild(2).gameObject;
+    }
+
+    private void RefreshServerInfoObjects(bool force)
+    {
+        if (force)
+            ResolveServerInfoObjects();
+
+        if (!force && Time.unscaledTime < nextServerInfoRefreshAt)
+            return;
+
+        nextServerInfoRefreshAt =
+            Time.unscaledTime + Mathf.Max(0.05f, serverInfoRefreshSeconds);
+
+        ServerInfoState state = GetServerInfoState();
+        if (!force && state == currentServerInfoState)
+            return;
+
+        currentServerInfoState = state;
+        SetOnlyServerInfoObjectActive(state);
+    }
+
+    private ServerInfoState GetServerInfoState()
+    {
+        if (networkManager != null && networkManager.networkStatusText != null)
+        {
+            string status = networkManager.networkStatusText.text;
+            if (!string.IsNullOrWhiteSpace(status))
+            {
+                status = status.ToLowerInvariant();
+
+                if (status.Contains("failed") ||
+                    status.Contains("disconnected") ||
+                    status.Contains("shutdown"))
+                {
+                    return ServerInfoState.Disconnected;
+                }
+
+                if (status.Contains("reconnecting") ||
+                    status.Contains("connecting"))
+                {
+                    return ServerInfoState.Connecting;
+                }
+
+                if (status.Contains("connected"))
+                    return ServerInfoState.Connected;
+            }
+        }
+
+        var runner = NetworkManager.runnerInsatance;
+        if (runner == null)
+            return ServerInfoState.Connecting;
+
+        if (runner.LobbyInfo.IsValid || runner.IsCloudReady)
+            return ServerInfoState.Connected;
+
+        return ServerInfoState.Connecting;
+    }
+
+    private void SetOnlyServerInfoObjectActive(ServerInfoState state)
+    {
+        SetActiveIfNeeded(
+            serverConnectedObject,
+            state == ServerInfoState.Connected);
+        SetActiveIfNeeded(
+            serverConnectingObject,
+            state == ServerInfoState.Connecting ||
+            state == ServerInfoState.Unknown);
+        SetActiveIfNeeded(
+            serverDisconnectedObject,
+            state == ServerInfoState.Disconnected);
+    }
+
+    private static void SetActiveIfNeeded(GameObject target, bool active)
+    {
+        if (target != null && target.activeSelf != active)
+            target.SetActive(active);
+    }
+
+    private static GameObject FindDirectChildByName(
+        GameObject root,
+        params string[] names)
+    {
+        if (root == null)
+            return null;
+
+        Transform rootTransform = root.transform;
+        for (int i = 0; i < rootTransform.childCount; i++)
+        {
+            Transform child = rootTransform.GetChild(i);
+            string childName = child.name.ToLowerInvariant();
+
+            for (int j = 0; j < names.Length; j++)
+            {
+                if (childName.Contains(names[j]))
+                    return child.gameObject;
+            }
+        }
+
+        return null;
+    }
+
+    private static Transform FindTransformInLoadedScenes(string targetName)
+    {
+        for (int sceneIndex = 0;
+             sceneIndex < SceneManager.sceneCount;
+             sceneIndex++)
+        {
+            Scene scene = SceneManager.GetSceneAt(sceneIndex);
+            if (!scene.isLoaded)
+                continue;
+
+            GameObject[] roots = scene.GetRootGameObjects();
+            for (int i = 0; i < roots.Length; i++)
+            {
+                Transform result =
+                    FindTransformRecursive(roots[i].transform, targetName);
+                if (result != null)
+                    return result;
+            }
+        }
+
+        return null;
+    }
+
+    private static Transform FindTransformRecursive(
+        Transform root,
+        string targetName)
+    {
+        if (root.name == targetName)
+            return root;
+
+        for (int i = 0; i < root.childCount; i++)
+        {
+            Transform result =
+                FindTransformRecursive(root.GetChild(i), targetName);
+            if (result != null)
+                return result;
+        }
+
+        return null;
     }
 
     private void SetCreateSessionPanelsActive(bool active)
@@ -398,5 +733,14 @@ public class LobbyCreateRequirementFlow : MonoBehaviour
         Sprite frame = loadingFrames[safeIndex];
         if (frame != null)
             loadingImage.sprite = frame;
+    }
+
+    [Serializable]
+    private class FeatureGenerateRequestBody
+    {
+        public string room_id;
+        public string user_id;
+        public string job_id;
+        public string feature_text;
     }
 }
