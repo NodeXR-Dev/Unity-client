@@ -5,36 +5,9 @@ EditorBuildSettings:
   m_ObjectHideFlags: 0
   serializedVersion: 2
   m_Scenes:
-  - enabled: 0
-    path: Assets/Scenes/MeetingRoom.unity
-    guid: 99c9720ab356a0642a771bea13969a05
   - enabled: 1
-    path: Assets/00_Scenes/10_Lobby/PresenterViewTest.unity
-    guid: ee0bda0c168a4a2d8382295b8832d5b5
-  - enabled: 0
-    path: Assets/00_Scenes/00_App_Bootstrap/App_Bootstrap.unity
-    guid: 632a3d68c7d9e40de877c9334addcb61
-  - enabled: 0
-    path: Assets/00_Scenes/10_Lobby/Lobby_Core.unity
-    guid: 01ecfafbf5b3981418026cb3e76c2a79
-  - enabled: 0
-    path: Assets/00_Scenes/10_Lobby/backup/Lobby.unity
-    guid: 3d00cc925f62bba43a98b9d7bccfd203
-  - enabled: 0
-    path: Assets/00_Scenes/10_Lobby/UiTest.unity
-    guid: 73664930b787e49fabff8eba8034f6b2
-  - enabled: 0
-    path: Assets/00_Scenes/20_MeetingRoom/MeetingRoom_GraphContent.unity
-    guid: 55411b796d8c14608902f6b59038757d
-  - enabled: 0
-    path: Assets/00_Scenes/20_MeetingRoom/MeetingRoom_Interaction.unity
-    guid: 4dee82f7f6062415a8943e77c82aff99
-  - enabled: 0
-    path: Assets/00_Scenes/20_MeetingRoom/MeetingRoom_Base.unity
-    guid: 7d79aecd874c542fe8cfe195a9777fea
-  - enabled: 1
-    path: Assets/00_Scenes/MVP/MVP.unity
-    guid: 0f1e2d3c4b5a69788796a5b4c3d2e1f0
+    path: Assets/00_Scenes/MVP/MVP_SH.unity
+    guid: 7a3c9e15d8b24f6ea0c14b73f5d9e28c
   m_configObjects:
     Unity.XR.Oculus.Settings: {fileID: 11400000, guid: aea880836b53e4558aac35286df7298c, type: 2}
     com.unity.input.settings.actions: {fileID: -944628639613478452, guid: 052faaac586de48259a63d0c4782560b, type: 3}

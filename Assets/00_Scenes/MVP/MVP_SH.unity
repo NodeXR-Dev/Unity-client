@@ -3925,7 +3925,7 @@ MonoBehaviour:
   _generate2DController: {fileID: 1650281632}
   _mainSketchView: {fileID: 555310988}
   _workspaceLayout: {fileID: 381997463}
-  _backendHost: 192.168.0.102:8000
+  _backendHost: 192.168.0.196:8000
   _tryBackendFirst: 1
   _imageWaitSeconds: 9
   _networkSession: {fileID: 1137757600}
@@ -6373,6 +6373,7 @@ GameObject:
   - component: {fileID: 1650281635}
   - component: {fileID: 1650281636}
   - component: {fileID: 1650281637}
+  - component: {fileID: 1650281638}
   m_Layer: 0
   m_Name: GraphSyncClient
   m_TagString: Untagged
@@ -6393,7 +6394,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   _graphManager: {fileID: 1840588727}
-  _host: 192.168.0.102:8000
+  _host: 192.168.0.196:8000
   _roomId: aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa
   _userId: 11111111-1111-1111-1111-111111111111
   _autoConnect: 1
@@ -6501,6 +6502,24 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   _syncClient: {fileID: 1650281630}
+--- !u!114 &1650281638
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1650281629}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 7e765a7dc2bfa492bb051ee77e41f900, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  _syncClient: {fileID: 0}
+  _generate2DController: {fileID: 0}
+  _modelParent: {fileID: 0}
+  _generateButton: {fileID: 0}
+  _statusText: {fileID: 0}
+  _generationTimeoutSeconds: 600
 --- !u!114 &1650281640
 MonoBehaviour:
   m_ObjectHideFlags: 0
