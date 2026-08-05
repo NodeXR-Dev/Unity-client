@@ -772,8 +772,27 @@ API 명세의 `GET /api/graph`(sub_graphs 중첩)로 서버 그래프를 받아 
 ### 남은 것
 
 - [ ] **엣지 선이 안 보인다.** `EdgePrefab` 의 `_lineWidth 0.004` / `_connectorScale 0.001`(1mm) 이 과소해 선도 연결구도 보이지 않는다. `EdgeView` 참조·포트 좌표·프리팹 구조는 모두 정상 확인. 값만 키우면 되고 적정값은 에디터에서 눈으로 맞추는 편이 빠르다.
-- [ ] **2D/3D 결과가 요청자에게만 간다.** `image_2d_generation_task_service.py:102` 가 `send_to_user` 로 보내고 `connection_manager.py:172` 의 `broadcast_to_room` 은 주석 처리 상태. 멀티에서 다른 참가자는 이미지를 받지 못한다. job_id 문제가 아니라 **전달 범위 문제**다.
-  - 권장: 서버가 방 전체로 브로드캐스트(서버팀). 클라가 Fusion 으로 전파하는 우회도 가능하나 요청자가 나가면 끊기고 URL 도달성 문제가 남는다.
-- [ ] **공간 키보드에 숫자 행이 없다.** 초대 코드는 알파벳으로 우회했지만 **방 비밀번호에는 여전히 숫자를 못 넣는다.** `MvpWorldKeyboard.BuildEnglishKeys()` 에 숫자 행 추가 필요(개발자2 영역). 영문 입력이 항상 소문자로 강제되는 것(`:512`)도 함께 검토.
-- [ ] 서버팀 전달: `requirements.txt:28` `bcrypt==4.0.1` 핀.
+- [x] ~~**2D/3D 결과가 요청자에게만 간다** → 서버가 방 전체 브로드캐스트 권장~~ **서버가 반대로 확정했다(`aa81878`).** `broadcast_to_room` 이 아예 삭제됐고(`connection_manager.py` -78줄) 요청자 전용 `send_personal_message` + `job_id` 매칭으로 갔다. 브로드캐스트 요청은 폐기한다. 멀티 참가자 공유가 필요하면 **클라가 Fusion 으로 전파**해야 한다(요청자 이탈 시 끊김·URL 도달성 문제는 그대로 남는다).
+- [x] ~~**공간 키보드에 숫자 행이 없다**~~ 개발자2 가 해결(`c6bcdb1`). `BuildNumericKeys()` 숫자·기호 레이아웃 + `123` 토글 + `ShiftCase()` 대문자까지 들어갔다. 방 비밀번호 숫자 입력 가능.
+- [x] ~~서버팀 전달: `bcrypt==4.0.1` 핀~~ 서버팀 반영 완료(`requirements.txt:31`).
 - [ ] 백엔드 주소가 씬에 박혀 있어 IP 변경·사람마다 수정이 반복된다(하루에 3번 바뀐 날도 있음). **`_backendHost`(방/초대코드)와 `_host`(WS/그래프) 두 곳을 함께 바꿔야 하며**, 한쪽만 바꾸면 방은 A 서버, 그래프는 B 서버로 갈라져 "코드를 찾지 못함" 이 된다(실제 발생). 설정 파일이나 런타임 입력으로 빼는 것을 권장.
+
+## 2026-08-03 서버 규약 재정합 (개발자3 — job_id 도입)
+
+서버 `develop` 17커밋을 받으니 **2D 생성 요청 스키마가 깨져 있었다.** `aa81878` 이 생성 요청에 `job_id`(UUID, 필수)를 추가해, 지금까지의 클라 요청은 전부 422 로 거부되는 상태였다. 실기 테스트 전에 발견.
+
+- [x] **요청 DTO 에 `job_id` 추가.** `Generate2DDto.cs` — feature/graph 양쪽. 클라가 `Guid.NewGuid()` 로 발급한다.
+- [x] **결과 대조.** `Generate2DController._pendingJobId` 에 보관하고 WS 수신 job_id 와 대조해 불일치면 무시. 서버가 요청자에게만 보내도록 바뀌었으므로 **연속 요청 시 늦게 온 이전 결과가 최신 화면을 덮는 것**을 막는 용도다. 양쪽 다 값이 있을 때만 판정해 구버전 서버와 호환된다.
+- [x] **WS 봉투 최상위 `job_id` 파싱.** `GraphSyncClient.Image2DEvent` 에 필드 추가, `OnImage2DGenerated` 를 `Action<string>` → `Action<string,string>` 으로 변경(구독자는 `Generate2DController` 하나뿐이라 안전).
+- [x] **`2D_COLOR_CHANGED` 분기 추가.** payload 구조는 `2D_GENERATED` 와 같은데 event_type 만 달라 클라가 통째로 무시하고 있었다. **색상 변경 결과가 영영 안 오고 타임아웃나는 상태였다.**
+- [x] **`color_change` 폼 필드 보강.** `user_id`/`job_id`/`metadata` 가 빠져 있었다(`metadata` 누락은 이번 변경과 무관한 기존 결함 — 이 경로는 한 번도 통과한 적이 없었던 것으로 보인다). `metadata` 는 `{mime_type,width,height}` JSON 문자열이고 서버가 width/height 를 `gt=0` 으로 검증하므로, 호출부가 크기를 안 주면 `ResolveImageSize()` 가 이미지를 디코드해 채운다.
+- [x] 검증: 서버 `/openapi.json` 과 대조해 4개 엔드포인트의 필수 필드가 정확히 일치함을 확인(추측 아님).
+
+### 남은 것
+
+- [ ] **[사용자] Unity 컴파일 확인 + 2D 생성 왕복 재검증.** 위 수정은 아직 에디터에서 컴파일되지 않았다.
+- [ ] **3D 생성 경로가 클라에 아예 없다.** 서버는 `POST /api/3d/generate {room_id,user_id,job_id,asset_id}` + WS `3D_GENERATED{asset_id,mime_type,model_url}` 로 준비됨(`03199d0`). 클라는 `MvpClassroomFlow.cs:1350` 의 `"Generate3D"` 문자열 하나뿐 — 요청·수신·모델 표시 전부 신규 구현 필요.
+- [ ] **레퍼런스 노드 제약.** 서버 `846680f` 커밋 메시지: "Unity 상에서 레퍼런스 노드 자식은 생성하지 못하도록 해야 함". REFERENCE 노드에 자식 생성 UI 를 막아야 한다.
+- [ ] **`GET /api/graph` 전체 조회 스펙 확인**(`af0cd6a`). 콜드로드 경로가 새 응답 형식과 맞는지 미확인.
+- [ ] **`9fc276e` 의 asset + graph_snapshot 저장 형식 변경**이 클라에 영향 있는지 미확인.
+- [ ] **[사용자] MinIO 공개 주소.** `.env:18` 이 `http://localhost:9000` 으로 되돌아가 있다. 헤드셋 테스트 시 `http://<맥 LAN IP>:9100` + `tools/minio_forward.py` 필요(8/2 와 동일한 함정).
