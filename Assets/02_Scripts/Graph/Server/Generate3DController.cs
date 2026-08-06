@@ -37,6 +37,12 @@ public class Generate3DController : MonoBehaviour
     [Tooltip("서버 3D 생성 대기 상한(초). 서버 Meshy 폴링 상한이 900초라 그보다 넉넉히 잡는다.")]
     [SerializeField] private float _generationTimeoutSeconds = 600f;
 
+    [Header("테스트 (비용 절약)")]
+    [Tooltip("값이 있으면 서버에 요청하지 않고 이 GLB 를 바로 불러온다. " +
+             "위치·크기·셰이더를 확인할 때 Meshy 과금 없이 반복 테스트하기 위한 용도. " +
+             "실제 생성을 하려면 반드시 비워야 한다.")]
+    [SerializeField] private string _debugModelUrl = "";
+
     [Header("배치")]
     [Tooltip("모델 최장변을 이 크기(m)로 맞춘다. Meshy GLB 는 스케일이 제각각이라 정규화가 필요하다.")]
     [SerializeField] private float _targetSize = 0.45f;
@@ -44,6 +50,8 @@ public class Generate3DController : MonoBehaviour
     [SerializeField] private float _placementDistance = 1.0f;
     [Tooltip("_modelParent 가 비었을 때: 눈높이 대비 상하 오프셋(m). 음수면 아래.")]
     [SerializeField] private float _placementHeightOffset = -0.25f;
+    [Tooltip("모델 Y축 회전 보정(도). GLB 의 정면 축이 배치 기준과 달라 반대를 볼 때 180 으로 돌린다.")]
+    [SerializeField] private float _modelYawOffset = 180f;
 
     private bool _isGenerating;
     private string _pendingJobId;
@@ -67,11 +75,23 @@ public class Generate3DController : MonoBehaviour
 
     public bool IsModelVisible => _currentModel != null && _currentModel.activeSelf;
 
+    // 테스트 URL 이 설정돼 있으면 서버·2D 결과 없이도 3D 를 띄울 수 있다.
+    // 호출부가 "2D 를 먼저 만들라"는 안내로 막지 않도록 알려준다.
+    public bool HasDebugModelUrl => !string.IsNullOrEmpty(_debugModelUrl);
+
     // 모델을 파기하지 않고 보이기/숨기기만 한다(회의 중 비교용).
     public void SetModelVisible(bool visible)
     {
         if (_currentModel != null)
             _currentModel.SetActive(visible);
+    }
+
+    // 모델이 놓일 자리를 외부에서 지정한다(MvpClassroomFlow 가 보드 기준 스테이지를 만들어 넘긴다).
+    // XR 에서는 Camera.main 좌표가 실제 시점과 달라 카메라 기준 배치가 시야 밖으로 나간다.
+    // 실측: pos=(0.08, -1.46, -1.54) — 발밑보다 아래, 뒤쪽.
+    public void SetModelParent(Transform parent)
+    {
+        _modelParent = parent;
     }
 
     // ─────────────────────────────────────────────
@@ -128,6 +148,19 @@ public class Generate3DController : MonoBehaviour
             return;
         }
         ResolveReferences();
+
+        // [테스트] _debugModelUrl 이 있으면 서버를 거치지 않고 그 GLB 를 바로 불러온다.
+        // Meshy 는 호출 1회당 과금이라, 위치·크기·셰이더를 확인하는 반복 테스트에는
+        // 이미 만들어둔 결과물을 재사용한다. 실제 생성 시에는 이 필드를 비워야 한다.
+        if (!string.IsNullOrEmpty(_debugModelUrl))
+        {
+            Debug.Log($"[Generate3DController] 테스트 모드 — 서버 요청 없이 불러옵니다: {_debugModelUrl}");
+            SetStatus("저장된 3D를 불러오는 중...");
+            _isGenerating = true;
+            SetButtonInteractable(false);
+            StartCoroutine(LoadAndShow(_debugModelUrl));
+            return;
+        }
 
         if (_syncClient == null ||
             string.IsNullOrEmpty(_syncClient.Host) ||
@@ -362,7 +395,11 @@ public class Generate3DController : MonoBehaviour
             }
         }
 
-        root.transform.SetPositionAndRotation(anchorPos, anchorRot);
+        // GLB 자체의 정면 축이 배치 기준과 다를 수 있다(Meshy 출력은 대개 반대를 본다).
+        // 기준 회전에 Y축 보정을 더해 사용자를 향하게 맞춘다.
+        root.transform.SetPositionAndRotation(
+            anchorPos,
+            anchorRot * Quaternion.Euler(0f, _modelYawOffset, 0f));
 
         // --- 크기 정규화 ---
         if (!TryGetRendererBounds(root, out Bounds bounds))
@@ -378,12 +415,19 @@ public class Generate3DController : MonoBehaviour
             root.transform.localScale *= k;
         }
 
-        // --- 중심 정렬 (스케일 후 바운즈가 바뀌므로 다시 계산) ---
+        // --- 정렬 (스케일 후 바운즈가 바뀌므로 다시 계산) ---
+        // x/z 는 기준점 중앙, y 는 모델 바닥이 기준점에 닿도록 올린다.
+        // 중심을 기준점에 맞추면 모델 절반이 원판 아래로 파묻힌다.
         if (TryGetRendererBounds(root, out bounds))
-            root.transform.position += anchorPos - bounds.center;
+        {
+            Vector3 delta = anchorPos - bounds.center;
+            delta.y = anchorPos.y - bounds.min.y;
+            root.transform.position += delta;
+        }
 
         Debug.Log($"[Generate3DController] 배치 완료 — scale={root.transform.localScale.x:F3} " +
-                  $"size={bounds.size} pos={root.transform.position}");
+                  $"size={bounds.size} pos={root.transform.position} " +
+                  $"parent={(_modelParent != null ? _modelParent.name : "(카메라 기준)")}");
     }
 
     private static bool TryGetRendererBounds(GameObject root, out Bounds bounds)
