@@ -35,6 +35,9 @@ public class MvpClassroomFlow : MonoBehaviour
     // 실제 대기는 Generate3DController.IsGenerating 이 끝나면 함께 끝난다.
     private const float ServerModelWaitCapSeconds = 960f;
 
+    // 서버 3D 모델 받침 원판의 반지름(m). 모델 최장변(_targetSize 0.45)보다 조금 크게.
+    private const float ServerStagePadRadius = 0.28f;
+
     private readonly MvpSessionData _session = new MvpSessionData();
     private readonly List<MvpSketchHistoryItem> _history =
         new List<MvpSketchHistoryItem>();
@@ -43,6 +46,7 @@ public class MvpClassroomFlow : MonoBehaviour
     private Canvas _flowCanvas;
     private MvpXrCanvasAnchor _flowAnchor;   // 가운데 패널을 유저 앞에 고정하는 앵커
     private MvpRocket3DStage _rocketStage;   // 3D 단계에서 유저 앞에 조립되는 mock 3D 로켓
+    private Transform _serverModelStage;     // 서버 3D(GLB)가 놓이는 스테이지(받침 원판 포함)
     private Texture2D _workspaceMockTexture; // 워크스페이스 '2D 만들기'가 만든 로컬 mock(교체 시 파괴)
     private bool _workspaceGenBusy;
     [SerializeField] private MvpNetworkSession _networkSession; // room_id 기반 Fusion 멀티플레이 세션
@@ -1456,6 +1460,90 @@ public class MvpClassroomFlow : MonoBehaviour
         }
     }
 
+    // 서버 3D 모델이 놓일 스테이지(받침 원판 포함)를 만들고 그 Transform 을 돌려준다.
+    // 이미 있으면 재사용한다.
+    //
+    // 자리는 mock 로켓(MvpRocket3DStage)과 동일하게 메인 보드 기준으로 잡는다. 카메라 기준으로
+    // 두면 XR 에서 Camera.main 좌표가 실제 시점과 달라 시야 밖으로 나간다(실측 y=-1.46).
+    private Transform EnsureServerModelStage()
+    {
+        if (_serverModelStage != null)
+        {
+            _serverModelStage.gameObject.SetActive(true);
+            return _serverModelStage;
+        }
+
+        var go = new GameObject("ServerModelStage");
+        _serverModelStage = go.transform;
+
+        Transform board =
+            _workspaceLayout != null
+                ? _workspaceLayout.MainSketchPanel
+                : null;
+        if (board != null)
+        {
+            go.transform.position =
+                board.position +
+                board.right * 0.55f -
+                board.forward * 0.38f +
+                Vector3.up * 0.05f;
+            go.transform.rotation =
+                Quaternion.LookRotation(board.forward, Vector3.up);
+            // 보드에 붙여둔다. '내 자리 설정'으로 워크스페이스를 다시 배치하면 보드가 움직이는데,
+            // 루트 오브젝트로 두면 모델만 제자리에 남아 보드와 따로 논다.
+            go.transform.SetParent(board, true);
+        }
+        else
+        {
+            Camera cam = Camera.main;
+            if (cam != null)
+            {
+                Vector3 forward = Vector3.ProjectOnPlane(
+                    cam.transform.forward, Vector3.up).normalized;
+                if (forward.sqrMagnitude < 0.001f)
+                    forward = Vector3.forward;
+                go.transform.position =
+                    cam.transform.position + forward * 1.05f - Vector3.up * 0.28f;
+                go.transform.rotation = Quaternion.LookRotation(forward, Vector3.up);
+            }
+        }
+
+        // 받침 원판. 기본 실린더는 반지름 0.5·높이 2 라 원하는 치수로 스케일한다.
+        GameObject pad = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+        pad.name = "Pad";
+        Collider padCollider = pad.GetComponent<Collider>();
+        if (padCollider != null)
+            Destroy(padCollider);   // 손/레이가 원판에 걸리지 않도록
+        pad.transform.SetParent(_serverModelStage, false);
+        pad.transform.localPosition = Vector3.zero;
+        pad.transform.localScale = new Vector3(ServerStagePadRadius * 2f, 0.004f, ServerStagePadRadius * 2f);
+
+        // [중요] CreatePrimitive 가 붙여주는 머티리얼은 Built-in 파이프라인의 Standard 셰이더라
+        // URP 프로젝트에서는 그대로 핑크(셰이더 없음)로 렌더된다. URP 셰이더로 교체해야 한다.
+        var renderer = pad.GetComponent<Renderer>();
+        if (renderer != null)
+        {
+            Shader padShader =
+                Shader.Find("Universal Render Pipeline/Lit") ??
+                Shader.Find("Universal Render Pipeline/Unlit") ??
+                Shader.Find("Sprites/Default");   // 최후 수단(Always Included 에 있는 셰이더)
+            if (padShader != null)
+            {
+                var padMaterial = new Material(padShader);
+                // 회색이 살짝 도는 흰색. mock 로켓의 어두운 남색(PadColor)은 회의실 조명에서
+                // 거의 검게 보여 모델 아래가 구멍처럼 뚫린 느낌을 준다.
+                padMaterial.color = new Color(0.90f, 0.90f, 0.92f, 1f);
+                renderer.material = padMaterial;
+            }
+            else
+            {
+                Debug.LogWarning("[MvpClassroomFlow] 원판용 URP 셰이더를 찾지 못했습니다.");
+            }
+        }
+
+        return _serverModelStage;
+    }
+
     // 3D는 매번 새로 만들지 않는다. 이미 있으면 토글해 회의 중 비교할 수 있다.
     //
     // 온라인이면 서버 3D(Meshy GLB)를, 오프라인이면 기존 mock(MvpRocket3DStage)을 쓴다.
@@ -1476,6 +1564,9 @@ public class MvpClassroomFlow : MonoBehaviour
             {
                 bool show = !_generate3DController.IsModelVisible;
                 _generate3DController.SetModelVisible(show);
+                // 원판도 같이 숨긴다. 모델만 사라지고 받침만 남으면 어색하다.
+                if (_serverModelStage != null)
+                    _serverModelStage.gameObject.SetActive(show);
                 if (MvpAudioCue.Instance != null)
                     MvpAudioCue.Instance.Play(MvpAudioCue.Cue.KeyClick);
                 SetWorkspaceMessage(
@@ -1495,8 +1586,10 @@ public class MvpClassroomFlow : MonoBehaviour
             }
 
             // 3) 3D 는 2D 결과(asset_id)를 입력으로 받는다. 없으면 요청 자체를 보내지 않는다.
-            if (_generate2DController == null ||
-                string.IsNullOrEmpty(_generate2DController.CurrentAssetId))
+            //    (테스트 URL 이 설정돼 있으면 서버를 안 거치므로 이 검사를 건너뛴다.)
+            if (!_generate3DController.HasDebugModelUrl &&
+                (_generate2DController == null ||
+                 string.IsNullOrEmpty(_generate2DController.CurrentAssetId)))
             {
                 SetWorkspaceMessage(
                     "먼저 2D 그림을 만들어 주세요.",
@@ -1526,6 +1619,11 @@ public class MvpClassroomFlow : MonoBehaviour
             "AI가 3D 모델을 만들고 있어요. 시간이 걸릴 수 있어요...",
             MvpStudentUiFactory.Cyan);
 
+        // 요청이 들어갔다는 신호로 받침 원판을 먼저 띄운다. 모델은 나중에 이 위에 올라온다.
+        // (mock 로켓 MvpRocket3DStage 의 Pad 와 같은 자리·같은 톤)
+        Transform stage = EnsureServerModelStage();
+        _generate3DController.SetModelParent(stage);
+
         _generate3DController.RequestGenerate3D();
 
         // 컨트롤러가 손을 뗄 때까지(성공·실패·자체 타임아웃) 기다린다.
@@ -1548,6 +1646,9 @@ public class MvpClassroomFlow : MonoBehaviour
         }
         else
         {
+            // 실패하면 받침만 덩그러니 남는다. 같이 치운다.
+            if (_serverModelStage != null)
+                _serverModelStage.gameObject.SetActive(false);
             SetWorkspaceMessage(
                 "3D 모델을 만들지 못했어요. 잠시 후 다시 시도해 주세요.",
                 MvpStudentUiFactory.Coral);
@@ -3424,6 +3525,12 @@ public class MvpClassroomFlow : MonoBehaviour
         _workspaceLayout?.SetSpatialPlacementMode(false);
         _waterRocketGraph?.ClearGraph();
         ClearRocketStage();
+        if (_serverModelStage != null)
+        {
+            // 스테이지를 지우면 그 아래 붙은 서버 3D 모델도 함께 사라진다.
+            Destroy(_serverModelStage.gameObject);
+            _serverModelStage = null;
+        }
         if (_workspaceMockTexture != null)
         {
             Destroy(_workspaceMockTexture);
