@@ -997,8 +997,8 @@ MonoBehaviour:
   sessionListEntryPrefab: {fileID: 7717861025995004143, guid: 97df7ada387d6264f840f02a98e4fb31, type: 3}
   gameplaySceneAsset: {fileID: 102900000, guid: 0f1e2d3c4b5a69788796a5b4c3d2e1f0, type: 3}
   lobbySceneAsset: {fileID: 102900000, guid: 01ecfafbf5b3981418026cb3e76c2a79, type: 3}
-  gameplaySceneName: MVP
-  lobbySceneName: Lobby_Core
+  gameplaySceneName: MVP_SH
+  lobbySceneName: Lobby_Core_MVP
   playerPrefab: {fileID: 3937044470431379454, guid: 00683ffc6b00f5145a3d3e5ef4b4ba39, type: 3}
   roomNameInput: {fileID: 363992408}
   passwordInput: {fileID: 351589245}
@@ -2864,7 +2864,7 @@ MonoBehaviour:
   m_TargetGraphic: {fileID: 351021363}
   m_HandleRect: {fileID: 351021362}
   m_Direction: 2
-  m_Value: 1
+  m_Value: 0
   m_Size: 1
   m_NumberOfSteps: 0
   m_OnValueChanged:
@@ -11189,7 +11189,7 @@ MonoBehaviour:
   m_TargetGraphic: {fileID: 1106776036}
   m_HandleRect: {fileID: 1106776035}
   m_Direction: 0
-  m_Value: 1
+  m_Value: 0
   m_Size: 1
   m_NumberOfSteps: 0
   m_OnValueChanged:
@@ -33609,6 +33609,12 @@ MonoBehaviour:
   featureRequestTimeoutSeconds: 60
   featureTextInput: {fileID: 0}
   testFeatureText: 
+  autoFindServerInfoObjects: 1
+  serverInfoRoot: {fileID: 0}
+  serverConnectedObject: {fileID: 0}
+  serverConnectingObject: {fileID: 0}
+  serverDisconnectedObject: {fileID: 0}
+  serverInfoRefreshSeconds: 0.25
   loadingFrameSeconds: 0.18
 --- !u!1001 &782634133043601570
 PrefabInstance:

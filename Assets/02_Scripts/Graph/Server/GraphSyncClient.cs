@@ -47,10 +47,18 @@ public class GraphSyncClient : MonoBehaviour
     private WebSocket _socket;
     private bool _isSubscribed;
 
-    // 서버 2D 생성 완료(2D_GENERATED / 2D_COLOR_CHANGED) 통보. (Generate2DController 가 구독)
+    // 서버 2D 생성 완료(2D_GENERATED / 2D_COLOR_CHANGED) 통보 — img_url 만 전달하는 호환 이벤트.
+    //
+    // [이 이벤트를 유지하는 이유] 개발자1의 MvpGenerated2DSync 가 Action<string> 으로 구독한다.
+    //   3D 생성에 asset_id 가 필요해 아래 OnImage2DResult 를 새로 만들었는데, 그때 이 이벤트의
+    //   시그니처까지 바꿔버리면 그쪽 코드가 컴파일되지 않는다(파일이 달라 git 은 충돌을 잡지 못한다).
+    //   내가 만든 변경이므로 여기서 흡수한다. 새 코드는 OnImage2DResult 를 쓸 것.
+    public event Action<string> OnImage2DGenerated;
+
+    // 2D 생성 결과 전체(img_url + job_id + asset_id). Generate2DController 가 구독한다.
     // job_id 는 봉투 최상위 필드(payload 안이 아니다). 서버가 안 실어 보내면 "" 로 온다.
     // asset_id 는 3D 생성 요청의 입력(source asset)이라 반드시 함께 전달해야 한다.
-    public event Action<Image2DResult> OnImage2DGenerated;
+    public event Action<Image2DResult> OnImage2DResult;
 
     // 서버 3D 생성 완료(3D_GENERATED) 통보. (Generate3DController 가 구독)
     public event Action<Model3DResult> OnModel3DGenerated;
@@ -214,10 +222,15 @@ public class GraphSyncClient : MonoBehaviour
                 var evt = JsonUtility.FromJson<Image2DEvent>(raw);
                 string url = evt?.payload?.img_url;
                 if (!string.IsNullOrEmpty(url))
-                    OnImage2DGenerated?.Invoke(new Image2DResult(
+                {
+                    // 두 이벤트를 모두 발행한다. 호환 이벤트(img_url 만)는 개발자1의
+                    // MvpGenerated2DSync 가 구독하고, 전체 결과는 Generate2DController 가 쓴다.
+                    OnImage2DResult?.Invoke(new Image2DResult(
                         url,
                         evt.job_id ?? "",
                         evt.payload.asset_id ?? ""));
+                    OnImage2DGenerated?.Invoke(url);
+                }
                 else
                     Debug.LogWarning($"[GraphSyncClient] {eventType} 수신했으나 img_url 이 비어 있습니다.");
             }
