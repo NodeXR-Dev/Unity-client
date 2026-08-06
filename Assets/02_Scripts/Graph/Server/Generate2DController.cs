@@ -11,7 +11,8 @@ using UnityEngine.UI;
 //   RequestGenerateGraph():   POST /api/2d/generate/graph   { room_id, user_id, job_id, connections } — 그래프(PART↔속성) 기반 스케치.
 //   RequestColorChange():     POST /api/2d/color_change (multipart) { room_id, user_id, job_id, asset_id, file, metadata } — 색상 변경.
 //   결과 이미지는 HTTP 응답이 아니라 WS 2D_GENERATED{img_url} 로 온다.
-//     GraphSyncClient.OnImage2DGenerated 를 구독해 img_url 텍스처를 중앙 RawImage 에 표시한다.
+//     GraphSyncClient.OnImage2DResult 를 구독해 img_url 텍스처를 중앙 RawImage 에 표시한다.
+//     (OnImage2DGenerated 는 개발자1 MvpGenerated2DSync 용 호환 이벤트다.)
 //
 // [job_id] 요청마다 새로 발급해 보내고(_pendingJobId), 결과 수신 시 대조한다. 서버 스키마에서 필수라 비우면 422.
 //   서버가 broadcast_to_room 을 삭제하고 요청자에게만 보내도록 바뀌었으므로(aa81878),
@@ -53,7 +54,7 @@ public class Generate2DController : MonoBehaviour
     {
         ResolveReferences();
         if (_syncClient != null)
-            _syncClient.OnImage2DGenerated += HandleImageGenerated;
+            _syncClient.OnImage2DResult += HandleImageGenerated;
 
         // [2026-08-01] _generateButton 은 지금까지 interactable 제어에만 쓰였고 클릭 리스너가 없었다.
         //   그 결과 2D 생성 진입점이 MvpClassroomFlow 의 버튼 하나뿐이었다.
@@ -72,7 +73,7 @@ public class Generate2DController : MonoBehaviour
     private void OnDisable()
     {
         if (_syncClient != null)
-            _syncClient.OnImage2DGenerated -= HandleImageGenerated;
+            _syncClient.OnImage2DResult -= HandleImageGenerated;
         if (_generateButton != null)
             _generateButton.onClick.RemoveListener(RequestGenerateGraphAll);
         StopGenerationTimeout();
