@@ -62,12 +62,9 @@ public class UtteranceApiClient : MonoBehaviour
 
     private IEnumerator CoRequest(string serverParentId, string utterance, string placeholderNodeId)
     {
-        // 요청 값은 새로 만드는 노드(placeholder) 기준: node_type/position 은 placeholder 에서 읽는다.
-        // parent_node_id 는 "이미 서버에 존재하는" 부모다(placeholder 자신이 아님). 부모가 없으면(루트) parent 필드 없는 요청.
-        var placeholder = _graphManager != null ? _graphManager.GetNode(placeholderNodeId) : null;
-        string nodeType = !string.IsNullOrEmpty(placeholder?.type) ? placeholder.type : "PROPERTY";
-        Vector3 pos     = placeholder != null ? placeholder.Position : Vector3.zero;
-
+        // parent_node_id 는 "이미 서버에 존재하는" 부모다(placeholder 자신이 아님).
+        // parent_node_position 도 부모 노드의 위치다 — 서버가 새 서브그래프를 그 근처에 배치한다.
+        // 부모가 없으면(루트) parent 필드 없는 요청을 보낸다.
         string body;
         if (string.IsNullOrEmpty(serverParentId))
         {
@@ -75,25 +72,24 @@ public class UtteranceApiClient : MonoBehaviour
             {
                 room_id   = _syncClient.RoomId,
                 user_id   = _syncClient.UserId,
-                node_type = nodeType,
                 utterance = utterance,
-                position  = new[] { pos.x, pos.y, pos.z },
             });
         }
         else
         {
+            var parent = _graphManager != null ? _graphManager.GetNode(serverParentId) : null;
+            Vector3 parentPos = parent != null ? parent.Position : Vector3.zero;
             body = JsonUtility.ToJson(new UtteranceRequest
             {
-                room_id        = _syncClient.RoomId,
-                user_id        = _syncClient.UserId,
-                node_type      = nodeType,
-                parent_node_id = serverParentId,
-                utterance      = utterance,
-                position       = new[] { pos.x, pos.y, pos.z },
+                room_id              = _syncClient.RoomId,
+                user_id              = _syncClient.UserId,
+                parent_node_id       = serverParentId,
+                utterance            = utterance,
+                parent_node_position = new[] { parentPos.x, parentPos.y, parentPos.z },
             });
         }
 
-        string url = $"{ServerAddress.Http(_syncClient.Host)}/api/node/generate/utterance";
+        string url = $"{ServerAddress.Http(_syncClient.Host)}/api/utterances";
         using (var req = new UnityWebRequest(url, UnityWebRequest.kHttpVerbPOST))
         {
             req.uploadHandler   = new UploadHandlerRaw(Encoding.UTF8.GetBytes(body));
@@ -107,7 +103,7 @@ public class UtteranceApiClient : MonoBehaviour
             {
                 // 입력 텍스트는 이미 GraphManager.RequestNodeByUtterance에서 placeholder 에 로컬 반영됨.
                 // 서버 생성만 실패한 것이므로 rekey 없이 로그만(placeholder 는 로컬 유지).
-                Debug.LogWarning($"[UtteranceApiClient] node/generate/utterance 실패(로컬 placeholder 유지): {req.error} (code={req.responseCode})");
+                Debug.LogWarning($"[UtteranceApiClient] utterances 실패(로컬 placeholder 유지): {req.error} (code={req.responseCode})\n{req.downloadHandler.text}");
                 yield break;
             }
 
@@ -118,13 +114,55 @@ public class UtteranceApiClient : MonoBehaviour
             try { res = JsonUtility.FromJson<UtteranceResponse>(raw); }
             catch (Exception e) { Debug.LogWarning($"[UtteranceApiClient] 응답 파싱 실패: {e.Message}"); }
 
-            string serverNodeId = res?.result?.node_id;
-            if (!string.IsNullOrEmpty(serverNodeId))
-                // 로컬 placeholder 를 서버 node_id 로 rekey + node_text(LLM 키워드)로 라벨 갱신.
-                _graphManager.ApplyServerNodeId(placeholderNodeId, serverNodeId, res.result.node_text);
-            else
-                Debug.LogWarning("[UtteranceApiClient] 응답에 result.node_id 가 없습니다(로컬 placeholder 유지).");
+            // 서버는 발화 하나로 서브그래프(노드 여러 개)를 만든다.
+            // 로컬 placeholder 에 매핑할 것은 그 서브그래프의 root 다 —
+            // PROPERTY→PART 연결에 쓰는 node_id 가 root 여야 서버가 하위 체인을 찾을 수 있다.
+            UtteranceSubGraph subGraph = FindFirstSubGraph(res);
+            string rootNodeId = subGraph?.root_node_id;
+            if (string.IsNullOrEmpty(rootNodeId))
+            {
+                Debug.LogWarning("[UtteranceApiClient] 응답에 sub_graphs[].root_node_id 가 없습니다(로컬 placeholder 유지).");
+                yield break;
+            }
+
+            string rootText = FindNodeText(subGraph, rootNodeId);
+            _graphManager.ApplyServerNodeId(
+                placeholderNodeId,
+                rootNodeId,
+                string.IsNullOrEmpty(rootText) ? utterance : rootText);
+
+            int nodeCount = subGraph.nodes != null ? subGraph.nodes.Length : 0;
+            Debug.Log(
+                $"[UtteranceApiClient] 서브그래프 등록 완료: root={rootNodeId} " +
+                $"(서버가 만든 노드 {nodeCount}개). 하위 노드는 서버에만 있고 로컬엔 root 만 매핑된다.");
         }
+    }
+
+    // 응답에서 실제 노드가 담긴 첫 서브그래프를 고른다.
+    private static UtteranceSubGraph FindFirstSubGraph(UtteranceResponse res)
+    {
+        if (res?.result?.sub_graphs == null)
+            return null;
+
+        foreach (UtteranceSubGraph candidate in res.result.sub_graphs)
+        {
+            if (candidate != null && !string.IsNullOrEmpty(candidate.root_node_id))
+                return candidate;
+        }
+        return null;
+    }
+
+    private static string FindNodeText(UtteranceSubGraph subGraph, string nodeId)
+    {
+        if (subGraph?.nodes == null)
+            return null;
+
+        foreach (UtteranceNode node in subGraph.nodes)
+        {
+            if (node != null && node.node_id == nodeId)
+                return node.node_text;
+        }
+        return null;
     }
 
     [ContextMenu("테스트 안내")]
