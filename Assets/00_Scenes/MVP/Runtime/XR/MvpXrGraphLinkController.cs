@@ -369,6 +369,12 @@ public class MvpXrGraphLinkController : MonoBehaviour
             if (referenceButton != null && referenceButton.gameObject.activeSelf)
             referenceButton.gameObject.SetActive(false);
 
+            // 프리팹 원본의 한글 '연결' 버튼. onClick 리스너도 코드 참조도 없는 죽은 버튼인데
+            // MvpNodeLinkPort 와 같은 자리에 겹쳐 디자이너 스프라이트 뒤로 비쳐 보였다.
+            Transform legacyLinkButton = canvas.Find("LinkButton");
+            if (legacyLinkButton != null && legacyLinkButton.gameObject.activeSelf)
+            legacyLinkButton.gameObject.SetActive(false);
+
             Transform existing = canvas.Find("MvpNodeLinkPort");
             Image linkPoint = existing != null
             ? existing.GetComponent<Image>()
