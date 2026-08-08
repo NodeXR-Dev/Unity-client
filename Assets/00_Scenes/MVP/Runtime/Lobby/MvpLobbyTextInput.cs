@@ -21,24 +21,25 @@ using UnityEngine.UI;
 public class MvpLobbyTextInput : MonoBehaviour
 {
     [Header("요구사항 입력칸 문구")]
-    [SerializeField] private string _requirementTitle =
-        "어떤 걸 만들고 싶은지 알려 주세요";
-    [SerializeField] private string _requirementHint =
-        "눌러서 입력하세요 · 키보드의 '음성' 키로 말해도 됩니다";
+    // 제목/부제는 원본 패널 스프라이트("필요한 기능을 떠올려볼까요?")가 이미 갖고 있다.
     [SerializeField] private string _requirementPlaceholder =
-        "예) 물로켓이 더 멀리 날아가게 만들고 싶어요";
+        "눌러서 입력하거나 키보드의 '음성' 키로 말해 보세요";
 
     [Header("입력칸 재탐색 주기(초)")]
     [SerializeField] private float _rescanInterval = 0.5f;
 
-    private static readonly Color PanelBg =
-        new Color(0.09f, 0.11f, 0.16f, 0.96f);
-    // 배경이 비치면 글자가 읽히지 않는다. 입력칸은 확실히 어둡게 깐다.
-    private static readonly Color FieldBg =
-        new Color(0.04f, 0.05f, 0.08f, 0.98f);
+    // 로비 원본 입력칸과 같은 톤 — 투명한 유리 패널 위에 은은하게 얹힌다.
+    // 다만 뒤로 파빌리온이 비쳐 글자가 묻히므로 원본보다 살짝 진하게 깐다.
+    private static readonly Color FieldTint =
+        new Color(1f, 1f, 1f, 0.22f);
     private static readonly Color TextMain = Color.white;
     private static readonly Color TextDim =
-        new Color(1f, 1f, 1f, 0.55f);
+        new Color(1f, 1f, 1f, 0.45f);
+
+    // 원본 입력칸(PlayerNameInputField 60 / ROOMField 55)보다 작게 —
+    // 요구사항은 한 줄짜리 이름과 달리 문장이 들어와 줄바꿈이 잦다.
+    // 입력칸 폭이 672 라 이 크기여야 안내 문구가 한 줄에 들어간다.
+    private const float FieldFontSize = 36f;
 
     private LobbyCreateRequirementFlow _flow;
     private GameObject _requirementsPanel;
@@ -161,54 +162,50 @@ public class MvpLobbyTextInput : MonoBehaviour
 
         TMP_FontAsset font = FindPanelFont(parent);
 
-        var root = new GameObject("MvpRequirementInput",
-            typeof(RectTransform), typeof(Image));
+        // 원본 패널에는 이미 "필요한 기능을 떠올려볼까요?" 안내가 스프라이트로 박혀 있고,
+        // 제목/부제 아래와 '시작하기' 버튼(패널기준 y -260~-128) 사이가 비어 있다.
+        // 그 빈 자리에 입력칸만 얹는다 — 자체 배경이나 제목을 두면 디자인이 따로 논다.
+        var root = new GameObject("MvpRequirementInput", typeof(RectTransform));
         _ui = root.GetComponent<RectTransform>();
         _ui.SetParent(parent, false);
-        // 패널 아래쪽엔 원본 '시작' 버튼이 있다(패널기준 y -260~-128).
-        // 그 위 빈 공간을 전부 쓴다.
-        _ui.anchorMin = new Vector2(0.06f, 0.33f);
-        _ui.anchorMax = new Vector2(0.94f, 0.96f);
+        _ui.anchorMin = new Vector2(0.10f, 0.33f);
+        _ui.anchorMax = new Vector2(0.90f, 0.67f);
         _ui.offsetMin = Vector2.zero;
         _ui.offsetMax = Vector2.zero;
 
-        Image bg = root.GetComponent<Image>();
-        bg.color = PanelBg;
-        bg.raycastTarget = false;
-
-        CreateText(_ui, font, "Title", 44f,
-            new Vector2(0.03f, 0.80f), new Vector2(0.97f, 0.98f),
-            TextAlignmentOptions.Left, TextMain).text = _requirementTitle;
-
-        CreateText(_ui, font, "Hint", 30f,
-            new Vector2(0.03f, 0.02f), new Vector2(0.97f, 0.16f),
-            TextAlignmentOptions.Left, TextDim).text = _requirementHint;
-
-        // 입력칸 본체
+        // 입력칸 본체 — 로비의 다른 입력칸과 같은 스프라이트·글자 크기를 쓴다.
         var fieldGo = new GameObject("RequirementField",
             typeof(RectTransform), typeof(Image), typeof(TMP_InputField));
         var fieldRt = fieldGo.GetComponent<RectTransform>();
         fieldRt.SetParent(_ui, false);
-        fieldRt.anchorMin = new Vector2(0.03f, 0.20f);
-        fieldRt.anchorMax = new Vector2(0.97f, 0.76f);
+        fieldRt.anchorMin = Vector2.zero;
+        fieldRt.anchorMax = Vector2.one;
         fieldRt.offsetMin = Vector2.zero;
         fieldRt.offsetMax = Vector2.zero;
-        fieldGo.GetComponent<Image>().color = FieldBg;
+
+        Image fieldBg = fieldGo.GetComponent<Image>();
+        Sprite designerSprite = FindDesignerFieldSprite();
+        if (designerSprite != null)
+        {
+            fieldBg.sprite = designerSprite;
+            fieldBg.type = Image.Type.Sliced;
+        }
+        fieldBg.color = FieldTint;
 
         var viewport = new GameObject("TextArea", typeof(RectTransform), typeof(RectMask2D));
         var viewportRt = viewport.GetComponent<RectTransform>();
         viewportRt.SetParent(fieldRt, false);
-        viewportRt.anchorMin = new Vector2(0f, 0f);
-        viewportRt.anchorMax = new Vector2(1f, 1f);
-        viewportRt.offsetMin = new Vector2(18f, 8f);
-        viewportRt.offsetMax = new Vector2(-18f, -8f);
+        viewportRt.anchorMin = Vector2.zero;
+        viewportRt.anchorMax = Vector2.one;
+        viewportRt.offsetMin = new Vector2(28f, 14f);
+        viewportRt.offsetMax = new Vector2(-28f, -14f);
 
-        TextMeshProUGUI placeholder = CreateText(viewportRt, font, "Placeholder", 38f,
-            Vector2.zero, Vector2.one, TextAlignmentOptions.Left, TextDim);
+        TextMeshProUGUI placeholder = CreateText(viewportRt, font, "Placeholder", FieldFontSize,
+            Vector2.zero, Vector2.one, TextAlignmentOptions.TopLeft, TextDim);
         placeholder.text = _requirementPlaceholder;
 
-        TextMeshProUGUI text = CreateText(viewportRt, font, "Text", 38f,
-            Vector2.zero, Vector2.one, TextAlignmentOptions.Left, TextMain);
+        TextMeshProUGUI text = CreateText(viewportRt, font, "Text", FieldFontSize,
+            Vector2.zero, Vector2.one, TextAlignmentOptions.TopLeft, TextMain);
         text.text = string.Empty;
 
         _requirementField = fieldGo.GetComponent<TMP_InputField>();
@@ -216,7 +213,7 @@ public class MvpLobbyTextInput : MonoBehaviour
         _requirementField.textComponent = text;
         _requirementField.placeholder = placeholder;
         _requirementField.lineType = TMP_InputField.LineType.MultiLineNewline;
-        _requirementField.pointSize = 38f;
+        _requirementField.pointSize = FieldFontSize;
         _requirementField.onValueChanged.AddListener(HandleRequirementChanged);
         _requirementField.onEndEdit.AddListener(HandleRequirementChanged);
 
@@ -271,6 +268,24 @@ public class MvpLobbyTextInput : MonoBehaviour
         text.raycastTarget = false;
         text.enableWordWrapping = true;
         return text;
+    }
+
+    // 로비의 다른 입력칸이 쓰는 스프라이트를 그대로 빌려온다(디자인 일치).
+    private static Sprite FindDesignerFieldSprite()
+    {
+        TMP_InputField[] fields = FindObjectsByType<TMP_InputField>(
+            FindObjectsInactive.Include,
+            FindObjectsSortMode.None);
+
+        foreach (TMP_InputField field in fields)
+        {
+            Image image = field.GetComponent<Image>();
+            if (image != null &&
+                image.sprite != null &&
+                image.sprite.name == "InputFieldBackground")
+                return image.sprite;
+        }
+        return null;
     }
 
     // 패널에 이미 쓰인 폰트를 재사용한다(한글 글리프 보장 + 디자인 일치).
