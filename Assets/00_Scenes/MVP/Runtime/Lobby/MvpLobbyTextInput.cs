@@ -32,9 +32,10 @@ public class MvpLobbyTextInput : MonoBehaviour
     [SerializeField] private float _rescanInterval = 0.5f;
 
     private static readonly Color PanelBg =
-        new Color(0.09f, 0.11f, 0.16f, 0.90f);
+        new Color(0.09f, 0.11f, 0.16f, 0.96f);
+    // 배경이 비치면 글자가 읽히지 않는다. 입력칸은 확실히 어둡게 깐다.
     private static readonly Color FieldBg =
-        new Color(1f, 1f, 1f, 0.10f);
+        new Color(0.04f, 0.05f, 0.08f, 0.98f);
     private static readonly Color TextMain = Color.white;
     private static readonly Color TextDim =
         new Color(1f, 1f, 1f, 0.55f);
@@ -164,8 +165,10 @@ public class MvpLobbyTextInput : MonoBehaviour
             typeof(RectTransform), typeof(Image));
         _ui = root.GetComponent<RectTransform>();
         _ui.SetParent(parent, false);
-        _ui.anchorMin = new Vector2(0.06f, 0.06f);
-        _ui.anchorMax = new Vector2(0.94f, 0.30f);
+        // 패널 아래쪽엔 원본 '시작' 버튼이 있다(패널기준 y -260~-128).
+        // 그 위 빈 공간을 전부 쓴다.
+        _ui.anchorMin = new Vector2(0.06f, 0.33f);
+        _ui.anchorMax = new Vector2(0.94f, 0.96f);
         _ui.offsetMin = Vector2.zero;
         _ui.offsetMax = Vector2.zero;
 
@@ -173,12 +176,12 @@ public class MvpLobbyTextInput : MonoBehaviour
         bg.color = PanelBg;
         bg.raycastTarget = false;
 
-        CreateText(_ui, font, "Title", 34f,
-            new Vector2(0.02f, 0.72f), new Vector2(0.98f, 0.98f),
+        CreateText(_ui, font, "Title", 44f,
+            new Vector2(0.03f, 0.80f), new Vector2(0.97f, 0.98f),
             TextAlignmentOptions.Left, TextMain).text = _requirementTitle;
 
-        CreateText(_ui, font, "Hint", 26f,
-            new Vector2(0.02f, 0.02f), new Vector2(0.98f, 0.22f),
+        CreateText(_ui, font, "Hint", 30f,
+            new Vector2(0.03f, 0.02f), new Vector2(0.97f, 0.16f),
             TextAlignmentOptions.Left, TextDim).text = _requirementHint;
 
         // 입력칸 본체
@@ -186,8 +189,8 @@ public class MvpLobbyTextInput : MonoBehaviour
             typeof(RectTransform), typeof(Image), typeof(TMP_InputField));
         var fieldRt = fieldGo.GetComponent<RectTransform>();
         fieldRt.SetParent(_ui, false);
-        fieldRt.anchorMin = new Vector2(0.02f, 0.26f);
-        fieldRt.anchorMax = new Vector2(0.98f, 0.68f);
+        fieldRt.anchorMin = new Vector2(0.03f, 0.20f);
+        fieldRt.anchorMax = new Vector2(0.97f, 0.76f);
         fieldRt.offsetMin = Vector2.zero;
         fieldRt.offsetMax = Vector2.zero;
         fieldGo.GetComponent<Image>().color = FieldBg;
