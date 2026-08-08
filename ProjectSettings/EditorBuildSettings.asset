@@ -6,6 +6,9 @@ EditorBuildSettings:
   serializedVersion: 2
   m_Scenes:
   - enabled: 1
+    path: Assets/00_Scenes/MVP/MvpLobby.unity
+    guid: 367a4292f6a9dbf45be08fb3b517486d
+  - enabled: 1
     path: Assets/00_Scenes/MVP/MVP_SH.unity
     guid: 7a3c9e15d8b24f6ea0c14b73f5d9e28c
   m_configObjects:

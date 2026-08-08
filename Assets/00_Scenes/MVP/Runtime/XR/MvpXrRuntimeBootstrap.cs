@@ -42,18 +42,11 @@ public static class MvpXrRuntimeBootstrap
         if (app.GetComponent<MvpNodeInteractionController>() == null)
             app.AddComponent<MvpNodeInteractionController>();
 
-        // 화면 공유(발표자 시점)의 로컬 부품. 방 단위 상태(PresenterViewSession)는
-        // MvpNetworkSession 이 마스터에서 한 번 스폰하고, 여기 셋은 클라이언트마다 필요하다.
-        //   LocalCameraReference  = 내 카메라 기준(내가 시점을 움직였는지 판정)
-        //   PresenterViewRenderer = 발표자 시점을 실제로 그려 주는 쪽(자체 카메라 생성)
-        //   PresenterViewUIActions= 손목 메뉴가 부르는 시작/중지 진입점
-        // 셋 다 autoFind 로 서로를 찾으므로 인스펙터 배선이 필요 없다.
-        if (app.GetComponent<LocalCameraReference>() == null)
-            app.AddComponent<LocalCameraReference>();
-        if (app.GetComponent<PresenterViewRenderer>() == null)
-            app.AddComponent<PresenterViewRenderer>();
-        if (app.GetComponent<PresenterViewUIActions>() == null)
-            app.AddComponent<PresenterViewUIActions>();
+        // 화면 공유(발표자 시점) 부품은 여기서 붙이지 않는다.
+        // MVP_SH 등에는 이미 씬에 PresenterViewSystem 오브젝트가 있고
+        // (NetworkObject + Session + Renderer + UIActions + LocalCameraReference),
+        // 여기서 또 붙이면 렌더러가 둘이 되어 서로 시점을 덮어쓴다.
+        // 손목 메뉴는 FindFirstObjectByType 으로 씬의 UIActions 를 찾아 쓴다.
 
         MvpXrGraphLinkController graphLink =
             app.GetComponent<MvpXrGraphLinkController>();

@@ -175,37 +175,6 @@ public class MvpWorkspaceLayout : MonoBehaviour
     }
 
 
-    private static bool TryGetDeskTop(out Vector3 center, out float topY)
-    {
-        center = Vector3.zero;
-        topY = 0f;
-        Transform table = null;
-        foreach (Transform t in Resources.FindObjectsOfTypeAll<Transform>())
-            if (t != null && t.gameObject.scene.IsValid() &&
-                t.name == "Table_01")
-            {
-                table = t;
-                break;
-            }
-        if (table == null)
-            return false;
-
-        Bounds b = new Bounds(table.position, Vector3.zero);
-        bool has = false;
-        foreach (Renderer r in table.GetComponentsInChildren<Renderer>(true))
-        {
-            if (!has) { b = r.bounds; has = true; }
-            else b.Encapsulate(r.bounds);
-        }
-        if (!has)
-            return false;
-
-        center = new Vector3(b.center.x, 0f, b.center.z);
-        topY = b.max.y;
-        return true;
-    }
-
-
     [ContextMenu("Arrange MVP Workspace")]
     public void ArrangeWorkspace()
     {

@@ -24,6 +24,15 @@ public class MvpMeetingRoomPlayerController : MonoBehaviour
     [SerializeField] private float _seatedEyeHeight = 0.62f;
     [SerializeField] private int _seatStabilizeFrames = 12;
 
+    [Header("의자가 없을 때 (열린 공간) 서는 자리")]
+    [Tooltip("서는 자리의 중심. 파빌리온처럼 가구 없는 공간에서 쓴다.")]
+    [SerializeField] private Vector3 _openFloorCenter = new Vector3(0f, -2.1f, 0f);
+    [Tooltip("바라보는 방향(수평). 참가자 전원이 같은 쪽을 본다.")]
+    [SerializeField] private Vector3 _openFloorFacing = Vector3.forward;
+    [SerializeField] private float _openFloorSpacing = 1.2f;
+    [SerializeField] private int _openFloorSlots = 4;
+    [SerializeField] private float _standingEyeHeight = 1.55f;
+
     private OVRCameraRig _cameraRig;
     private Camera _headCamera;
     private Coroutine _respawnRoutine;
@@ -124,8 +133,8 @@ public class MvpMeetingRoomPlayerController : MonoBehaviour
         if (seatNumber > 0)
         {
             Debug.Log(
-                "[MVP XR] 회의실 의자 " + seatNumber +
-                "번에 로컬 사용자를 안정적으로 배치했습니다.");
+                "[MVP XR] 회의실 " + seatNumber +
+                "번 자리에 로컬 사용자를 안정적으로 배치했습니다.");
         }
     }
 
@@ -141,7 +150,7 @@ public class MvpMeetingRoomPlayerController : MonoBehaviour
                 out Transform table,
                 out Bounds tableBounds,
                 out List<Transform> chairs))
-            return false;
+            return PlaceAtOpenFloorSpot(out seatNumber);
 
         int seatIndex = ResolveParticipantIndex() % chairs.Count;
         if (seatIndex < 0)
@@ -179,6 +188,59 @@ public class MvpMeetingRoomPlayerController : MonoBehaviour
         float yaw = Vector3.SignedAngle(
             currentForward,
             inward,
+            Vector3.up);
+        _cameraRig.transform.RotateAround(
+            head.transform.position,
+            Vector3.up,
+            yaw);
+        _cameraRig.transform.position +=
+            targetEye - head.transform.position;
+        return true;
+    }
+
+    /// <summary>
+    /// 책상·의자가 없는 열린 공간(파빌리온)용 배치.
+    /// 참가자를 좌우로 나란히 세우고 전원이 같은 방향을 보게 한다.
+    /// 서로 마주 보게 하면 각자 앞에 뜨는 작업판이 상대 시야를 가린다.
+    /// </summary>
+    private bool PlaceAtOpenFloorSpot(out int seatNumber)
+    {
+        seatNumber = 0;
+        Camera head = ResolveHeadCamera();
+        if (_cameraRig == null || head == null)
+            return false;
+
+        int slots = Mathf.Max(1, _openFloorSlots);
+        int index = ResolveParticipantIndex() % slots;
+        if (index < 0)
+            index += slots;
+        seatNumber = index + 1;
+
+        Vector3 facing = Vector3.ProjectOnPlane(
+            _openFloorFacing,
+            Vector3.up);
+        if (facing.sqrMagnitude < 0.001f)
+            facing = Vector3.forward;
+        facing.Normalize();
+        Vector3 right = Vector3.Cross(Vector3.up, facing).normalized;
+
+        float offset =
+            (index - (slots - 1) * 0.5f) * _openFloorSpacing;
+        Vector3 targetEye =
+            _openFloorCenter +
+            right * offset +
+            Vector3.up * _standingEyeHeight;
+
+        Vector3 currentForward = Vector3.ProjectOnPlane(
+            head.transform.forward,
+            Vector3.up);
+        if (currentForward.sqrMagnitude < 0.001f)
+            currentForward = _cameraRig.transform.forward;
+        currentForward.Normalize();
+
+        float yaw = Vector3.SignedAngle(
+            currentForward,
+            facing,
             Vector3.up);
         _cameraRig.transform.RotateAround(
             head.transform.position,

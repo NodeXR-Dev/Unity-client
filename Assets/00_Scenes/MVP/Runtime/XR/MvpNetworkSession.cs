@@ -17,9 +17,6 @@ public class MvpNetworkSession : MonoBehaviour, INetworkRunnerCallbacks
     [SerializeField] private NetworkRunner _runner;
     [SerializeField] private GameObject _playerPrefab;          // NetworkObject 아바타(선택)
     [SerializeField] private GameObject _graphNetworkPrefab;    // NetworkObject + GraphNetworkManager
-    // NetworkObject + PresenterViewSession. 화면 공유(발표자 시점)의 방 단위 상태를 들고 있다.
-    // 렌더러·UI 같은 로컬 부품은 MvpXrRuntimeBootstrap 이 각 클라이언트에 따로 붙인다.
-    [SerializeField] private GameObject _presenterViewPrefab;
     [SerializeField] private Transform _spawnPoint;
     [SerializeField] private MvpGraphNetworkBridge _bridge;
     [SerializeField] private GraphManager _graphManager;
@@ -66,6 +63,26 @@ public class MvpNetworkSession : MonoBehaviour, INetworkRunnerCallbacks
             _runner.SessionInfo != null &&
             _runner.SessionInfo.Name == sessionName)
             return;
+
+        // 로비(MvpLobby)가 이미 같은 방으로 러너를 띄웠으면 새로 StartGame 하지 않는다.
+        // 그대로 두 번 시작하면 Fusion 세션이 둘이 되어 아바타·그래프가 갈린다.
+        if (_runner == null || !_runner.IsRunning)
+        {
+            foreach (NetworkRunner existing in
+                     FindObjectsByType<NetworkRunner>(
+                         FindObjectsInactive.Include, FindObjectsSortMode.None))
+            {
+                if (existing == null || !existing.IsRunning)
+                    continue;
+                _runner = existing;
+                _runner.AddCallbacks(this);
+                Debug.Log(
+                    "[MvpNetworkSession] 이미 실행 중인 러너에 붙습니다 — session=" +
+                    (existing.SessionInfo != null ? existing.SessionInfo.Name : "?"));
+                StartCoroutine(AfterStart());
+                return;
+            }
+        }
 
         _starting = true;
 
@@ -143,15 +160,6 @@ public class MvpNetworkSession : MonoBehaviour, INetworkRunnerCallbacks
         {
             _runner.Spawn(
                 _graphNetworkPrefab, Vector3.zero, Quaternion.identity, _runner.LocalPlayer);
-        }
-
-        // 2-1) 화면 공유 세션도 마스터가 한 번만 스폰한다(방에 하나뿐인 상태).
-        if (_presenterViewPrefab != null &&
-            _runner.IsSharedModeMasterClient &&
-            FindFirstObjectByType<PresenterViewSession>() == null)
-        {
-            _runner.Spawn(
-                _presenterViewPrefab, Vector3.zero, Quaternion.identity, _runner.LocalPlayer);
         }
 
         // 3) GNM(스폰/원격 복제) 준비되면 로컬→네트워크 브리지 바인딩·활성화
