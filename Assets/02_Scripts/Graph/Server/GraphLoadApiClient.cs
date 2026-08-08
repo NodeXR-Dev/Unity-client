@@ -48,7 +48,7 @@ public class GraphLoadApiClient : MonoBehaviour
 
     private IEnumerator CoLoad()
     {
-        string url = $"http://{_syncClient.Host}/api/graph?room_id={UnityWebRequest.EscapeURL(_syncClient.RoomId)}";
+        string url = $"{ServerAddress.Http(_syncClient.Host)}/api/graph?room_id={UnityWebRequest.EscapeURL(_syncClient.RoomId)}";
 
         using (var req = UnityWebRequest.Get(url))
         {

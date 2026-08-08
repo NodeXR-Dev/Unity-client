@@ -3825,6 +3825,7 @@ MonoBehaviour:
   _waterRocketGraph: {fileID: 1030815418}
   _graphSyncClient: {fileID: 1650281630}
   _generate2DController: {fileID: 1650281632}
+  _generate3DController: {fileID: 0}
   _mainSketchView: {fileID: 555310988}
   _workspaceLayout: {fileID: 381997463}
   _backendHost: 127.0.0.1:8000
@@ -4430,7 +4431,6 @@ MonoBehaviour:
   _runner: {fileID: 0}
   _playerPrefab: {fileID: 3937044470431379454, guid: 00683ffc6b00f5145a3d3e5ef4b4ba39, type: 3}
   _graphNetworkPrefab: {fileID: 1877971033540268496, guid: 05da9879e9b70224e88bc5b146bb6138, type: 3}
-  _presenterViewPrefab: {fileID: 7768892039960263627, guid: d84708431556fbb4a95a03dc3e7b2a7c, type: 3}
   _spawnPoint: {fileID: 0}
   _bridge: {fileID: 0}
   _graphManager: {fileID: 0}

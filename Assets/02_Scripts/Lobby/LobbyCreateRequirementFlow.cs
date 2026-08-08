@@ -348,7 +348,7 @@ public class LobbyCreateRequirementFlow : MonoBehaviour
             return $"{host}/api/{path}";
         }
 
-        return $"http://{host}/api/{path}";
+        return $"{ServerAddress.Http(host)}/api/{path}";
     }
 
     private IEnumerator WaitForSpeechRequirement(Action<bool> setPassed)

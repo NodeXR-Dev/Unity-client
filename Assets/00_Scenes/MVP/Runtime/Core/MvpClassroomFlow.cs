@@ -3,6 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Reflection;
 using System.Text;
+using Fusion;   // 로비가 띄운 Fusion 세션을 이어받기 위해
 using TMPro;
 using UnityEngine;
 using UnityEngine.EventSystems;
@@ -72,6 +73,9 @@ public class MvpClassroomFlow : MonoBehaviour
     private MvpSpatialNodeGestureController _spatialGesture;
     private TMP_InputField _customPartInput;
     private bool _recommendationsDismissed;
+    // 로비(MvpLobby)에서 넘어왔는가. 참여 안내 문구가 갈린다
+    // (로비 = 방 목록에서 찾기 / 단독 = 초대 코드).
+    private bool _adoptedFromLobby;
 
 
     private void Awake()
@@ -79,12 +83,78 @@ public class MvpClassroomFlow : MonoBehaviour
         ResolveReferences();
         PrepareExistingScene();
         BuildFlowCanvas();
-        ShowState(MvpFlowState.Welcome);
+
+        // 로비(MvpLobby)에서 넘어왔다면 방 생성·입장이 이미 끝났다.
+        // 그걸 모르고 Welcome 부터 시작하면 방을 한 번 더 만들고 Fusion 세션도 둘이 된다.
+        if (TryAdoptLobbySession())
+            ShowState(MvpFlowState.Briefing);
+        else
+            ShowState(MvpFlowState.Welcome);
 
         // 노드 X(캐스케이드 삭제)는 되돌릴 수 없으므로 MVP 에서는 확인을 거친다.
         NodeActionPanel.ConfirmDeleteHook = HandleConfirmNodeDelete;
+        // (아래 훅 등록은 이어받기 여부와 무관하다)
         // 노드 R 버튼 → 비슷한 느낌의 레퍼런스 디자인 이미지 검색(웹뷰).
         NodeActionPanel.ReferenceHook = HandleReferenceRequest;
+    }
+
+    // 로비(MvpLobby)가 만든 Fusion 세션을 그대로 이어받는다.
+    //   - 로비는 room_id 를 SessionName 으로 StartGame 하고, 같은 값을 PlayerPrefs 에 남긴다.
+    //   - 그래서 "실행 중인 러너가 있는가"만 보면 로비 경유인지 판별할 수 있다.
+    //   - 이어받으면 방 생성/입장 화면(Welcome~JoinRoom)을 건너뛰고 바로 Briefing 으로 간다.
+    // 러너가 없으면(MVP_SH 단독 실행) false 를 돌려 기존 흐름을 그대로 쓴다.
+    private bool TryAdoptLobbySession()
+    {
+        NetworkRunner runner = null;
+        foreach (NetworkRunner candidate in
+                 FindObjectsByType<NetworkRunner>(
+                     FindObjectsInactive.Include, FindObjectsSortMode.None))
+        {
+            if (candidate != null && candidate.IsRunning)
+            {
+                runner = candidate;
+                break;
+            }
+        }
+
+        if (runner == null)
+            return false;
+
+        string roomId = runner.SessionInfo != null ? runner.SessionInfo.Name : null;
+        if (string.IsNullOrEmpty(roomId))
+            roomId = PlayerPrefs.GetString("Lobby.LastSessionName", "");
+        if (string.IsNullOrEmpty(roomId))
+            return false;
+
+        _session.roomId = roomId;
+        _session.userId = PlayerPrefs.GetString("Lobby.LastSessionUserId", "");
+        _session.nickname = PlayerPrefs.GetString("Lobby.LastSessionNickname", "학생");
+        _session.roomName = ReadSessionProperty(runner, "DisplayTopic", "함께하는 수업");
+        _session.topic = _session.roomName;
+        _session.goal = "우리 팀만의 해결책 만들기";
+        _session.online = true;
+        _adoptedFromLobby = true;
+
+        // 그래프 WebSocket 은 MVP 가 직접 붙는다(로비는 Photon 만 담당).
+        // Fusion 러너는 이미 돌고 있으므로 MvpNetworkSession 은 재시작하지 않고 붙기만 한다.
+        ConfigureGraphSocket();
+
+        Debug.Log(
+            "[MVP Flow] 로비 세션 이어받음 — room_id=" + _session.roomId +
+            ", nickname=" + _session.nickname);
+        return true;
+    }
+
+    private static string ReadSessionProperty(
+        NetworkRunner runner, string key, string fallback)
+    {
+        if (runner == null || runner.SessionInfo == null ||
+            runner.SessionInfo.Properties == null)
+            return fallback;
+        if (runner.SessionInfo.Properties.TryGetValue(key, out SessionProperty value) &&
+            value.IsString)
+            return (string)value;
+        return fallback;
     }
 
     private void Start()
@@ -472,7 +542,8 @@ public class MvpClassroomFlow : MonoBehaviour
         RefreshVoiceButtonLabel();
     }
 
-    private void ToggleVoiceInput()
+    // 액션바 버튼과 손목 메뉴(마이크 아이콘) 양쪽에서 부른다.
+    public void ToggleVoiceInput()
     {
         if (_voiceController == null)
         {
@@ -637,37 +708,6 @@ public class MvpClassroomFlow : MonoBehaviour
         // 위치 변경은 설계 보드의 단일 작업판 버튼으로 제공한다.
     }
 
-
-    // 회의실 책상(Table_01) 윗면 중심 x/z 와 상단 y 를 구한다.
-    private static bool TryGetDeskTop(out Vector3 center, out float topY)
-    {
-        center = Vector3.zero;
-        topY = 0f;
-        Transform table = null;
-        foreach (Transform t in Resources.FindObjectsOfTypeAll<Transform>())
-            if (t != null && t.gameObject.scene.IsValid() &&
-                t.name == "Table_01")
-            {
-                table = t;
-                break;
-            }
-        if (table == null)
-            return false;
-
-        Bounds b = new Bounds(table.position, Vector3.zero);
-        bool has = false;
-        foreach (Renderer r in table.GetComponentsInChildren<Renderer>(true))
-        {
-            if (!has) { b = r.bounds; has = true; }
-            else b.Encapsulate(r.bounds);
-        }
-        if (!has)
-            return false;
-
-        center = new Vector3(b.center.x, 0f, b.center.z);
-        topY = b.max.y;
-        return true;
-    }
 
     private void ShowState(MvpFlowState state)
     {
@@ -1222,38 +1262,56 @@ public class MvpClassroomFlow : MonoBehaviour
                 : MvpStudentUiFactory.WarningInk,
             1);
 
-        // 온라인 방일 때만 초대 코드를 노출한다. 이 코드가 있어야 친구가
-        // '초대 코드로 참여하기'로 같은 방(같은 Fusion 세션)에 들어올 수 있다.
+        // 참여 방법 안내.
+        //   로비(MvpLobby) 경유 = 친구가 로비 방 목록에서 찾아 들어온다. 코드는 쓸 곳이 없다.
+        //   MVP_SH 단독 실행    = 로비가 없으므로 예전처럼 초대 코드로 들어온다.
         if (_session.online && !string.IsNullOrEmpty(_session.roomId))
         {
-            MvpStudentUiFactory.CreateText(
-                _contentRoot,
-                "InviteCode",
-                "초대 코드  " + ShortRoomCode(_session.roomId),
-                new Vector2(-95f, -232f),
-                new Vector2(830f, 42f),
-                19f,
-                TextAlignmentOptions.Center,
-                true,
-                MvpStudentUiFactory.Primary,
-                1);
-
-            Button copy = MvpStudentUiFactory.CreateButton(
-                _contentRoot,
-                "CopyInviteCode",
-                "코드 복사",
-                new Vector2(455f, -232f),
-                new Vector2(170f, 48f),
-                MvpStudentUiFactory.CyanDeep,
-                null,
-                18f);
-            copy.onClick.AddListener(() =>
+            if (_adoptedFromLobby)
             {
-                GUIUtility.systemCopyBuffer = ShortRoomCode(_session.roomId);
-                TMP_Text label = copy.GetComponentInChildren<TMP_Text>();
-                if (label != null)
-                    StartCoroutine(FlashButtonLabel(label, "복사됨!", "코드 복사"));
-            });
+                MvpStudentUiFactory.CreateText(
+                    _contentRoot,
+                    "JoinHint",
+                    "친구는 로비 방 목록에서 ‘" + _session.roomName + "’ 을 찾아 들어오면 돼요.",
+                    new Vector2(0f, -232f),
+                    new Vector2(1000f, 42f),
+                    19f,
+                    TextAlignmentOptions.Center,
+                    false,
+                    MvpStudentUiFactory.Primary,
+                    1);
+            }
+            else
+            {
+                MvpStudentUiFactory.CreateText(
+                    _contentRoot,
+                    "InviteCode",
+                    "초대 코드  " + ShortRoomCode(_session.roomId),
+                    new Vector2(-95f, -232f),
+                    new Vector2(830f, 42f),
+                    19f,
+                    TextAlignmentOptions.Center,
+                    true,
+                    MvpStudentUiFactory.Primary,
+                    1);
+
+                Button copy = MvpStudentUiFactory.CreateButton(
+                    _contentRoot,
+                    "CopyInviteCode",
+                    "코드 복사",
+                    new Vector2(455f, -232f),
+                    new Vector2(170f, 48f),
+                    MvpStudentUiFactory.CyanDeep,
+                    null,
+                    18f);
+                copy.onClick.AddListener(() =>
+                {
+                    GUIUtility.systemCopyBuffer = ShortRoomCode(_session.roomId);
+                    TMP_Text label = copy.GetComponentInChildren<TMP_Text>();
+                    if (label != null)
+                        StartCoroutine(FlashButtonLabel(label, "복사됨!", "코드 복사"));
+                });
+            }
         }
 
         MvpStudentUiFactory.CreateButton(
@@ -3028,7 +3086,7 @@ public class MvpClassroomFlow : MonoBehaviour
                 };
 
             using (UnityWebRequest request = CreateJsonRequest(
-                       "http://" + _backendHost +
+                       ServerAddress.Http(_backendHost) +
                        "/api/rooms/generate",
                        JsonUtility.ToJson(payload)))
             {
@@ -3167,7 +3225,7 @@ public class MvpClassroomFlow : MonoBehaviour
             yield break;
         }
 
-        string url = "http://" + _backendHost + "/api/rooms/list";
+        string url = ServerAddress.Http(_backendHost) + "/api/rooms/list";
         using (UnityWebRequest request = UnityWebRequest.Get(url))
         {
             request.timeout = 5;
@@ -3315,7 +3373,7 @@ public class MvpClassroomFlow : MonoBehaviour
             };
 
         using (UnityWebRequest request = CreateJsonRequest(
-                   "http://" + _backendHost + "/api/rooms/enter",
+                   ServerAddress.Http(_backendHost) + "/api/rooms/enter",
                    JsonUtility.ToJson(payload)))
         {
             request.timeout = 5;
@@ -3572,7 +3630,8 @@ public class MvpClassroomFlow : MonoBehaviour
                 _waterRocketGraph.AppliedConnectionCount > 0;
     }
 
-    private void SetWorkspaceMessage(string text, Color color)
+    // 손목 메뉴처럼 라벨이 없는 UI 가 안내 문구를 대신 띄울 때도 쓴다.
+    public void SetWorkspaceMessage(string text, Color color)
     {
         if (_workspaceStatus != null)
         {

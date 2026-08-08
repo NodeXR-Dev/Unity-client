@@ -56,7 +56,7 @@ public class ReferenceApiClient : MonoBehaviour
             room_id = _syncClient.RoomId,
             node_id = nodeId,
         });
-        string url = $"http://{_syncClient.Host}/api/references/keyword";
+        string url = $"{ServerAddress.Http(_syncClient.Host)}/api/references/keyword";
 
         using (var req = new UnityWebRequest(url, UnityWebRequest.kHttpVerbPOST))
         {
@@ -104,7 +104,7 @@ public class ReferenceApiClient : MonoBehaviour
                 string.IsNullOrEmpty(mime) ? "image/png" : mime),
         };
 
-        string url = $"http://{_syncClient.Host}/api/references/generate";
+        string url = $"{ServerAddress.Http(_syncClient.Host)}/api/references/generate";
 
         using (var req = UnityWebRequest.Post(url, form))
         {
