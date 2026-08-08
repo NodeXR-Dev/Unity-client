@@ -29,8 +29,15 @@ public class PresenterViewSession : NetworkBehaviour
     private PresenterViewState lastNotifiedState;
     private bool hasNotifiedState;
 
-    public FocusMode CurrentMode => (FocusMode)NetworkMode;
-    public bool IsPresenterViewActive => CurrentMode == FocusMode.PresenterView && Presenter != PlayerRef.None;
+    // [Networked] 프로퍼티는 Spawned() 이후에만 읽을 수 있다. 이 컴포넌트는 씬에 미리
+    // 놓여 있어서(MVP_SH 등) 오프라인이면 영영 Spawn 되지 않는데, 그 상태로 값을 읽으면
+    // Update() 에서 매 프레임 InvalidOperationException 이 난다. → 읽기 전에 항상 확인한다.
+    private bool IsNetworkReady => Object != null && Object.IsValid;
+
+    public FocusMode CurrentMode =>
+        IsNetworkReady ? (FocusMode)NetworkMode : FocusMode.Personal;
+    public bool IsPresenterViewActive =>
+        IsNetworkReady && CurrentMode == FocusMode.PresenterView && Presenter != PlayerRef.None;
     private bool IsReadyForRpc => Runner != null && Runner.IsRunning && Object != null;
 
     public override void Spawned()
@@ -64,11 +71,19 @@ public class PresenterViewSession : NetworkBehaviour
 
     private void Update()
     {
+        // Spawn 전(오프라인·세션 시작 전)에는 알릴 상태 자체가 없다.
+        if (!IsNetworkReady)
+            return;
+
         NotifyStateChangedIfNeeded(false);
     }
 
     public PresenterViewState GetState()
     {
+        // Spawn 전에는 Presenter/Revision 도 읽을 수 없으므로 기본(개인 모드) 상태로 답한다.
+        if (!IsNetworkReady)
+            return new PresenterViewState(FocusMode.Personal, PlayerRef.None, 0);
+
         return new PresenterViewState(CurrentMode, Presenter, Revision);
     }
 
