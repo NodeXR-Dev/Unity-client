@@ -1,6 +1,29 @@
 # NodeXR TODO — 개발자 3 (노드그래프 / GraphData / 서버 반영)
 
-마지막 업데이트: 2026-08-01
+마지막 업데이트: 2026-08-08
+
+---
+
+## 2026-08-08 XRMeetingWorld 도입 (로비·회의실 배경 교체 + Quest 최적화)
+
+- [x] **FBX 임포트**: `Assets/04_Models/XRMeetingWorld/XRMeetingWorld.fbx` (Scale Factor 1 / Convert Units 해제 / 카메라·라이트 미임포트 / 머티리얼 External). 420×64×420m, 렌더러 1,678개, 삼각형 222,766, **고유 메시 20개**(같은 메시가 수백 번 반복되는 구조).
+- [x] **투명 머티리얼 3종 수동 설정**(FBX가 알파를 안 옮김): `M_Glass_Curtainwall` 0.10/0.95 Q3010, `M_Glass_Skylight` 0.20→**0.35**/0.96 Q3000, `M_Water` 0.85/0.97 Q3020. Skylight 는 Blender 프레넬 알파가 URP 에 안 넘어와 지붕이 판으로 분해돼 보이던 것 → 알파 0.35 로 상향해 해소.
+- [x] **작업용 프리팹** `Assets/01_Prefabs/World/XRMeetingWorld.prefab` — 자연물을 `WorldNature`(레이어 8) / `WorldGrass`(레이어 9)로 분리, 프로브 조회 Off, 모션벡터 Off, 지형 외 자연물 그림자 캐스팅 Off, 지붕·천창·유리벽 그림자 Off(내부가 새까매지고 60k 삼각형이 그림자 패스에 두 번 그려지던 문제), FBX 기본 콜라이더 제거. **Static Batching 은 일부러 끔**(메시 복제로 메모리가 늘고 인스턴싱이 무효화됨).
+- [x] **회의실(MVP_SH)**: 월드를 y=**-2.32** 에 배치해 파빌리온 바닥(y=0.22)이 기존 회의실 바닥(y=-2.1)과 정확히 일치. `Meeting_Room` 껍데기 12개(벽/천장/바닥/파노라마/문/책장/조명기구 등) 비활성화. 옛 `Floor` 콜라이더 대체용 `MvpWorldFloor` BoxCollider(46×34m) 추가.
+- [x] **책상·의자 제거**(`Table_01`/`Chairs` 삭제): 참조하던 4곳을 조사한 결과 —
+  - `MvpWorkspaceLayout.PositionMainSketchPanel` / `MvpXrCanvasAnchor.TryPlaceInMeetingRoom` → **이미 카메라 기준 폴백이 있어** 책상이 없으면 유저 앞에 배치됨. 수정 불필요.
+  - `MvpWorkspaceLayout.TryGetDeskTop` / `MvpClassroomFlow.TryGetDeskTop` → **호출자 0 인 죽은 코드**(구 '책상에 붙이기'의 잔재). 삭제.
+  - `MvpMeetingRoomPlayerController.PlaceAtAssignedSeat` → 유일하게 폴백이 없어 배치가 통째로 실패했음. **`PlaceAtOpenFloorSpot()` 신규**: 의자가 없으면 참가자를 좌우로 나란히 세우고(중심 0,-2.1,0 / +z / 간격 1.2m / 4자리 / 눈높이 1.55m) 전원이 같은 방향을 보게 함. 마주 보게 하면 각자 앞에 뜨는 작업판이 상대 시야를 가림.
+  - 카메라 리그 기본 위치를 방 밖 (38.9, 0, 34.3) → **(0, -2.1, -1.2)** 로(배치 코드 실행 전 1프레임 방어). 데스크톱 폴백 카메라도 서 있는 눈높이 (0, -0.55, -1.2).
+  - 검증: 플레이 모드 에러 0, 카메라 바닥높이 1.55m, Welcome 패널이 파빌리온 안 눈높이에 정상 렌더.
+- [x] **로비(MvpLobby)**: 파빌리온 **동쪽 55m 평지**(지형 높이차 0.00m, 파빌리온이 시야 38도)에서 바라보는 구도. 월드 회전 Y=90도, 위치 (-1.4, 0.125, 55) — y 는 텔레포트 발판 윗면과 지면을 맞춘 값. 야외와 안 어울리는 파란 콘크리트 발판은 렌더러만 끄고 콜라이더는 유지(텔레포트 정상).
+- [x] **패스스루 → 스카이박스**(MvpLobby): `OVRManager.isInsightPassthroughEnabled` 가 켜져 있어 `CenterEyeAnchor` 가 투명 검정으로 클리어 → 하늘이 검게 나왔음. 완전한 가상 월드가 배경이 됐으므로 패스스루 Off + Skybox 클리어로 전환. (MVP_SH 는 이미 Off 상태였음)
+- [x] **조명 통일**: 앰비언트 Trilight(하늘 0.62/0.70/0.82, 수평 0.48, 지면 0.26), 태양 세기 1.25 / 그림자 강도 0.55 / 각도 (46, 330).
+- [x] **거리 컬링** 신규 `Assets/00_Scenes/MVP/Runtime/World/MvpWorldCulling.cs` — `Camera.layerCullDistances` 로 풀 55m / 나무·바위 220m, far plane 400m, 경계를 가리는 선형 포그(90~260m). 두 씬 모두 배치.
+  - 주의: `Camera.layerCullSpherical` 은 **빌트인 렌더러 전용**이라 URP 에서 에러 → 사용하지 않음.
+- [x] **실측 검증**(플레이 모드, 로비): 드로우콜 **1,118 → 401**(-64%), SetPass 27(SRP Batcher 정상), 삼각형 318k. 렌더러 기준 1,678 → 약 200개. 콘솔 에러 0.
+- [ ] **Quest 실기기 확인**: 눈높이 대비 지면 높이, 파빌리온 내부 밝기, 풀 컬링 경계(55m) 팝인, 실제 프레임.
+- [ ] (선택) 드로우콜을 더 줄이려면 `Mobile_RPAsset` 의 **GPU Resident Drawer**(현재 Disabled)를 Instanced Drawing 으로. 고유 메시가 20개뿐이라 효과가 크지만 렌더링 경로(Forward+) 요구사항이 있어 팀 공용 에셋 변경 필요 — 별도 판단.
 
 ---
 
