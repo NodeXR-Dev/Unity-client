@@ -93,7 +93,7 @@ public class UtteranceApiClient : MonoBehaviour
             });
         }
 
-        string url = $"http://{_syncClient.Host}/api/node/generate/utterance";
+        string url = $"{ServerAddress.Http(_syncClient.Host)}/api/node/generate/utterance";
         using (var req = new UnityWebRequest(url, UnityWebRequest.kHttpVerbPOST))
         {
             req.uploadHandler   = new UploadHandlerRaw(Encoding.UTF8.GetBytes(body));

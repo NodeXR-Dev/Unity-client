@@ -59,7 +59,7 @@ public class HistoryApiClient : MonoBehaviour
 
     private IEnumerator CoGetHistory(Action<List<GraphSnapshotDto>> onDone)
     {
-        string url = $"http://{_syncClient.Host}/api/history/{UnityWebRequest.EscapeURL(_syncClient.RoomId)}";
+        string url = $"{ServerAddress.Http(_syncClient.Host)}/api/history/{UnityWebRequest.EscapeURL(_syncClient.RoomId)}";
 
         using (var req = UnityWebRequest.Get(url))
         {

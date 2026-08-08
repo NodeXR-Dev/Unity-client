@@ -37,6 +37,14 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
     [SerializeField] private string gameplaySceneName;
     [SerializeField] private string lobbySceneName;
 
+    // 서버 주소. 기존에는 5곳에 "http://localhost:8000" 이 하드코딩돼 있어서
+    // 다른 PC/터널 서버로는 붙을 수 없었다. 기본값은 그대로 두어 기존 씬 동작은 유지하고,
+    // 필요한 씬(MvpLobby 등)에서만 인스펙터로 바꾼다.
+    //   "192.168.0.36:8000" 처럼 스킴 없이 쓰거나 "https://xxx.trycloudflare.com" 도 된다.
+    [SerializeField] private string backendHost = "localhost:8000";
+
+    private string ApiBase => ServerAddress.Http(backendHost) + "/api";
+
     public GameObject playerPrefab;
 
     [Header("Create Session UI")]
@@ -192,7 +200,7 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
             : nicknameInput.text.Trim();
 
         // 2. 서버 API 호출
-        string serverUrl = "http://localhost:8000/api/rooms/generate";
+        string serverUrl = ApiBase + "/rooms/generate";
         string jsonPayload = JsonUtility.ToJson(new CreateRoomRequestBody
         {
             room_topic = topic,
@@ -360,7 +368,7 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
         string password,
         Action<string> onComplete)
     {
-        string url = "http://localhost:8000/api/rooms/enter";
+        string url = ApiBase + "/rooms/enter";
         string jsonPayload = JsonUtility.ToJson(new RoomEnterRequestBody
         {
             room_id = roomId,
@@ -483,7 +491,7 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
         var runner = NetworkManager.runnerInsatance;
 
         // 1. 서버 API 호출 (방 입장 등록)
-        string url = "http://localhost:8000/api/rooms/enter";
+        string url = ApiBase + "/rooms/enter";
         string myNickname = PlayerPrefs.GetString("PlayerNickname", "Unknown");
         
         string jsonPayload = JsonUtility.ToJson(new RoomEnterRequestBody
@@ -615,7 +623,7 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
         foreach (var entry in sessionListUiDictionary.Values) Destroy(entry);
         sessionListUiDictionary.Clear();
 
-        string url = "http://localhost:8000/api/rooms/list"; 
+        string url = ApiBase + "/rooms/list"; 
         using (UnityWebRequest request = UnityWebRequest.Get(url)) 
         {
             yield return request.SendWebRequest();
@@ -994,7 +1002,7 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
     private IEnumerator GetRoomInfoRoutine(string roomId, Action<RoomInfoResult> callback)
     {
         string escapedRoomId = UnityWebRequest.EscapeURL(roomId);
-        string url = $"http://localhost:8000/api/rooms/{escapedRoomId}/info";
+        string url = $"{ApiBase}/rooms/{escapedRoomId}/info";
         using (UnityWebRequest request = UnityWebRequest.Get(url))
         {
             yield return request.SendWebRequest();

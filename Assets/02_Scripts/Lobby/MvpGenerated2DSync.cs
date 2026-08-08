@@ -497,8 +497,7 @@ public class MvpGenerated2DSync : MonoBehaviour
         if (graphSyncClient == null || string.IsNullOrWhiteSpace(graphSyncClient.Host))
             return imgUrl;
 
-        return "http://" +
-               graphSyncClient.Host +
+        return ServerAddress.Http(graphSyncClient.Host) +
                (imgUrl.StartsWith("/") ? "" : "/") +
                imgUrl;
     }

@@ -258,7 +258,7 @@ public class PartNodeApiClient : MonoBehaviour
         string path, string method, string body,
         Action<bool, PartNodeResponse> onResult)
     {
-        string url = $"http://{_syncClient.Host}/api/{path}";
+        string url = $"{ServerAddress.Http(_syncClient.Host)}/api/{path}";
 
         using (var req = new UnityWebRequest(url, method))
         {

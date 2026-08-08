@@ -64,7 +64,7 @@ public class SubGraphApiClient : MonoBehaviour
     private IEnumerator CoGenerate(string rootNodeId)
     {
         string body = JsonUtility.ToJson(new SubGraphGenerateRequest { room_id = _syncClient.RoomId });
-        string url  = $"http://{_syncClient.Host}/api/sub_graph/generate";
+        string url  = $"{ServerAddress.Http(_syncClient.Host)}/api/sub_graph/generate";
 
         using (var req = new UnityWebRequest(url, UnityWebRequest.kHttpVerbPOST))
         {

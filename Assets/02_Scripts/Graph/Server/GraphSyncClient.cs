@@ -154,7 +154,7 @@ public class GraphSyncClient : MonoBehaviour
         }
 
         // 서버는 room_id/user_id 를 URL이 아닌 메시지 본문(WSEvent)에서 읽는다.
-        string url = $"ws://{_host}/ws/rooms/event";
+        string url = $"{ServerAddress.Ws(_host)}/ws/rooms/event";
 
         if (string.IsNullOrEmpty(_userId))
             Debug.LogWarning("[GraphSyncClient] user_id 가 비어 있습니다. 서버가 user_id 를 필수로 요구하므로 송신이 WS400으로 거부됩니다. (seed 예: 11111111-1111-1111-1111-111111111111)");

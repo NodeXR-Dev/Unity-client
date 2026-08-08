@@ -216,7 +216,7 @@ public class Generate3DController : MonoBehaviour
 
     private IEnumerator PostJson(string path, string body)
     {
-        string url = $"http://{_syncClient.Host}/api/{path}";
+        string url = $"{ServerAddress.Http(_syncClient.Host)}/api/{path}";
         using (var req = new UnityWebRequest(url, UnityWebRequest.kHttpVerbPOST))
         {
             req.timeout = 20;
@@ -279,7 +279,7 @@ public class Generate3DController : MonoBehaviour
     {
         string url = modelUrl.StartsWith("http")
             ? modelUrl
-            : $"http://{_syncClient?.Host}{(modelUrl.StartsWith("/") ? "" : "/")}{modelUrl}";
+            : $"{ServerAddress.Http(_syncClient?.Host)}{(modelUrl.StartsWith("/") ? "" : "/")}{modelUrl}";
 
         byte[] data = null;
         using (var req = UnityWebRequest.Get(url))

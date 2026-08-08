@@ -210,7 +210,7 @@ public class Generate2DController : MonoBehaviour
     // JSON POST 공통(2xx만 확인, 결과 이미지는 WS 2D_GENERATED).
     private IEnumerator PostJson(string path, string body)
     {
-        string url = $"http://{_syncClient.Host}/api/{path}";
+        string url = $"{ServerAddress.Http(_syncClient.Host)}/api/{path}";
         using (var req = new UnityWebRequest(url, UnityWebRequest.kHttpVerbPOST))
         {
             req.timeout = 20;
@@ -256,7 +256,7 @@ public class Generate2DController : MonoBehaviour
                 string.IsNullOrEmpty(fileName) ? "sketch.png" : fileName,
                 mimeType),
         };
-        string url = $"http://{_syncClient.Host}/api/2d/color_change";
+        string url = $"{ServerAddress.Http(_syncClient.Host)}/api/2d/color_change";
 
         using (var req = UnityWebRequest.Post(url, form))
         {
@@ -327,7 +327,7 @@ public class Generate2DController : MonoBehaviour
         // 상대 경로면 host 를 붙여 절대 URL 로 만든다.
         string url = imgUrl.StartsWith("http")
             ? imgUrl
-            : $"http://{_syncClient?.Host}{(imgUrl.StartsWith("/") ? "" : "/")}{imgUrl}";
+            : $"{ServerAddress.Http(_syncClient?.Host)}{(imgUrl.StartsWith("/") ? "" : "/")}{imgUrl}";
 
         using (var req = UnityWebRequestTexture.GetTexture(url))
         {
