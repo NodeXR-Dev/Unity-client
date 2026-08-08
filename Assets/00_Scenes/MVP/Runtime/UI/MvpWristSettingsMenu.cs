@@ -23,7 +23,7 @@ public class MvpWristSettingsMenu : MonoBehaviour
     private GameObject _settingsPanel;
     private GameObject _historyPanel;
     private Button _shareButton;
-    private TMP_Text _shareButtonLabel;
+    private bool _shareHighlighted;   // 공유 중이면 hover 없이도 아이콘을 밝게 유지
     private PresenterViewUIActions _shareActions;
     private RawImage _historyImage;
     private TMP_Text _historyTitle;
@@ -42,6 +42,7 @@ public class MvpWristSettingsMenu : MonoBehaviour
     private void Awake()
     {
         BuildVisuals();
+        BuildPalmHint();
     }
 
     private void OnEnable()
@@ -53,6 +54,8 @@ public class MvpWristSettingsMenu : MonoBehaviour
     {
         if (_canvas != null)
             Destroy(_canvas.gameObject);
+        if (_palmHintCanvas != null)
+            Destroy(_palmHintCanvas.gameObject);
     }
 
 
@@ -69,10 +72,10 @@ public class MvpWristSettingsMenu : MonoBehaviour
 
         Camera camera = Camera.main;
         if (camera == null ||
-            !TryGetWristAndPalmPose(out Pose wrist, out Pose palm) ||
-            !IsPalmFacingUp(palm))
+            !TryGetWristAndPalmPose(out Pose wrist, out Pose palm))
         {
             SetVisible(false);
+            SetPalmHint(false, Vector3.zero, null);
             return;
         }
 
@@ -83,6 +86,17 @@ public class MvpWristSettingsMenu : MonoBehaviour
             distance <= MaxWristDistance &&
             Vector3.Dot(camera.transform.forward, toWrist.normalized) >=
                 WristGazeDot;
+
+        // 손목은 보고 있는데 손바닥이 아직 위를 향하지 않았다면, 메뉴가 왜 안 열리는지
+        // 알 길이 없다(예전엔 그냥 아무것도 안 떴다). 이때만 안내를 띄운다.
+        if (!IsPalmFacingUp(palm))
+        {
+            SetVisible(false);
+            SetPalmHint(lookingAtRaisedWrist, wrist.position, camera);
+            return;
+        }
+        SetPalmHint(false, Vector3.zero, null);
+
         if (lookingAtRaisedWrist)
             _lastLookTime = Time.unscaledTime;
 
@@ -102,6 +116,124 @@ public class MvpWristSettingsMenu : MonoBehaviour
             _canvas.transform.rotation = Quaternion.LookRotation(
                 panelForward.normalized,
                 Vector3.up);
+    }
+
+    // ── 손바닥 안내 알약 ──────────────────────────────────────
+    // 손목은 쳐다보는데 손바닥이 아래를 향하면 메뉴가 안 열린다. 그 순간에만 뜬다.
+    // 배경은 발화 상태 바와 같은 디자이너 셰이더(둥근 알약 + 그라디언트)를 재사용한다.
+    private Canvas _palmHintCanvas;
+    private RectTransform _palmHintRect;
+    private Image _palmHintIcon;
+
+    private void BuildPalmHint()
+    {
+        GameObject root = new GameObject(
+            "MvpPalmHintCanvas", typeof(RectTransform));
+        _palmHintCanvas = root.AddComponent<Canvas>();
+        _palmHintCanvas.renderMode = RenderMode.WorldSpace;
+        _palmHintCanvas.sortingOrder = 815;
+        root.AddComponent<CanvasScaler>().uiScaleMode =
+            CanvasScaler.ScaleMode.ConstantPixelSize;
+        root.AddComponent<GraphicRaycaster>();
+
+        _palmHintRect = root.GetComponent<RectTransform>();
+        _palmHintRect.sizeDelta = new Vector2(520f, 108f);
+        _palmHintRect.localScale = Vector3.one * WristWorldScale;
+
+        Image pill = MvpStudentUiFactory.CreatePanel(
+            root.transform,
+            "PalmHintPill",
+            Vector2.zero,
+            new Vector2(520f, 108f),
+            new Color(0.30f, 0.29f, 0.25f, 0.96f),
+            true);
+        pill.raycastTarget = false;
+
+        Shader border = Shader.Find("UI/RotatingGradientBorder");
+        if (border != null)
+        {
+            RotatingGradientBorderUI gradient =
+                pill.gameObject.AddComponent<RotatingGradientBorderUI>();
+            gradient.shader = border;
+            gradient.rotationSpeed = 0.08f;   // 거의 정지 — 시안엔 회전이 없다
+            gradient.borderWidth = 2f;
+            gradient.cornerRadius = 54f;      // 높이의 절반 = 완전한 알약
+            gradient.bgAngle = 270f;          // 위(올리브) → 아래(금빛)
+            gradient.gradientResolution = 200;
+            gradient.borderGradient = MakeHintGradient(
+                new Color(0.72f, 0.70f, 0.62f, 1f),
+                new Color(0.86f, 0.78f, 0.58f, 1f), 0.55f, 0.55f);
+            gradient.bgGradient = MakeHintGradient(
+                new Color(0.49f, 0.48f, 0.42f, 1f),
+                new Color(0.62f, 0.55f, 0.36f, 1f), 1f, 1f);
+        }
+
+        // 손 아이콘 자리. 폰트에 손 글리프(✋)가 없어 스프라이트를 받으면 넣는다.
+        _palmHintIcon = MvpStudentUiFactory.CreatePanel(
+            pill.transform,
+            "HandIcon",
+            new Vector2(-196f, 0f),
+            new Vector2(76f, 76f),
+            Color.white,
+            false);
+        _palmHintIcon.raycastTarget = false;
+        _palmHintIcon.preserveAspect = true;
+        Sprite hand = Resources.Load<Sprite>("HandPanel/hand_open");
+        if (hand != null)
+            _palmHintIcon.sprite = hand;
+        else
+            _palmHintIcon.color = new Color(1f, 1f, 1f, 0f);   // 아직 없으면 숨긴다
+
+        MvpStudentUiFactory.CreateText(
+            pill.transform,
+            "PalmHintLabel",
+            "손바닥을 위로 펼쳐 주세요",
+            new Vector2(28f, 0f),
+            new Vector2(400f, 56f),
+            30f,
+            TextAlignmentOptions.Center,
+            true,
+            Color.white,
+            1);
+
+        root.SetActive(false);
+    }
+
+    // 안내를 손목 옆에 띄우거나 감춘다.
+    private void SetPalmHint(bool visible, Vector3 wristPosition, Camera camera)
+    {
+        if (_palmHintCanvas == null)
+            return;
+
+        if (!visible || camera == null)
+        {
+            if (_palmHintCanvas.gameObject.activeSelf)
+                _palmHintCanvas.gameObject.SetActive(false);
+            return;
+        }
+
+        if (!_palmHintCanvas.gameObject.activeSelf)
+            _palmHintCanvas.gameObject.SetActive(true);
+
+        Vector3 towardCamera =
+            (camera.transform.position - wristPosition).normalized;
+        _palmHintCanvas.transform.position =
+            wristPosition + towardCamera * 0.040f + Vector3.up * 0.030f;
+        Vector3 forward =
+            _palmHintCanvas.transform.position - camera.transform.position;
+        if (forward.sqrMagnitude > 0.0001f)
+            _palmHintCanvas.transform.rotation =
+                Quaternion.LookRotation(forward.normalized, Vector3.up);
+    }
+
+    private static Gradient MakeHintGradient(
+        Color a, Color b, float alphaA, float alphaB)
+    {
+        Gradient g = new Gradient();
+        g.SetKeys(
+            new[] { new GradientColorKey(a, 0f), new GradientColorKey(b, 1f) },
+            new[] { new GradientAlphaKey(alphaA, 0f), new GradientAlphaKey(alphaB, 1f) });
+        return g;
     }
 
     private void BuildVisuals()
@@ -172,7 +304,7 @@ public class MvpWristSettingsMenu : MonoBehaviour
         _historyPanel.SetActive(false);
         _settingsPanel.SetActive(_menuOpen);
         _rootRect.sizeDelta = _menuOpen
-            ? new Vector2(560f, 390f)
+            ? new Vector2(PanelWidth, PanelHeight)
             : new Vector2(110f, 110f);
         if (_menuOpen)
             RefreshShareButton();   // 열 때마다 공유 상태를 다시 읽는다
@@ -193,12 +325,14 @@ public class MvpWristSettingsMenu : MonoBehaviour
 
         RectTransform buttonRect =
             _wristToggleButton.transform as RectTransform;
+        // 손 패널은 6개 아이콘이 판을 꽉 채우므로, 닫기 버튼은 판 바깥(아래)에 둔다.
+        // 예전 좌표(242,116)는 옛 가로형 패널 기준이라 지금은 판 한가운데를 덮었다.
         if (buttonRect != null)
             buttonRect.anchoredPosition = !_menuOpen
                 ? Vector2.zero
                 : historyOpen
                     ? new Vector2(282f, 190f)
-                    : new Vector2(242f, 116f);
+                    : new Vector2(0f, -(PanelHeight * 0.5f + 52f));
 
         if (_wristToggleLabel != null)
             _wristToggleLabel.text = _menuOpen ? "×" : "≡";
@@ -215,86 +349,151 @@ public class MvpWristSettingsMenu : MonoBehaviour
             _rootRect.sizeDelta = new Vector2(110f, 110f);
         SyncMenuVisuals();
     }
+    // 디자이너 손 패널(319x439)을 그대로 쓴다. 6개 버튼이 배경 이미지에 이미 그려져 있어서,
+    // 우리는 그 위에 투명한 히트 영역만 얹고 hover 시 배경 스프라이트를 해당 강조본으로 바꾼다.
+    // 원 중심 좌표는 강조본과 기본본의 픽셀 차이로 실측했다(아래 표는 패널 스케일 반영값).
+    private const float PanelWidth  = 400f;
+    private const float PanelHeight = 550f;
+    private const float PanelScale  = PanelWidth / 319f;   // 소스 스프라이트 → 패널 크기 비율
+    private const float HitDiameter = 105f * PanelScale;   // 원 지름 실측 105px
+
+    private Image _panelImage;
+    private Sprite _panelDefault;
+    private Sprite _panelNodeArray;
+    private Sprite _panelRespawn;
+    private Sprite _panelShare;
+    private Sprite _panelHistory;
+    private Sprite _panelMic;
+
     private void BuildSettingsPanel(Transform parent)
     {
-        Image panel = MvpStudentUiFactory.CreatePanel(
-            parent,
-            "WristSettingsPanel",
-            Vector2.zero,
-            new Vector2(560f, 390f),   // 화면 공유 버튼 한 줄만큼 키웠다
-            new Color(0.022f, 0.08f, 0.18f, 0.97f),
-            true);
-        _settingsPanel = panel.gameObject;
-        AddPanelRim(panel);
+        LoadPanelSprites();
 
-        MvpStudentUiFactory.CreateText(
-            panel.transform,
-            "Title",
-            "내 손목 메뉴",
-            new Vector2(0f, 150f),
-            new Vector2(500f, 44f),
-            25f,
-            TextAlignmentOptions.Center,
-            true,
-            Color.white,
-            1);
+        GameObject go = new GameObject(
+            "WristSettingsPanel", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+        go.transform.SetParent(parent, false);
+        RectTransform rect = go.GetComponent<RectTransform>();
+        rect.anchorMin = rect.anchorMax = rect.pivot = new Vector2(0.5f, 0.5f);
+        rect.anchoredPosition = Vector2.zero;
+        rect.sizeDelta = new Vector2(PanelWidth, PanelHeight);
 
-        MvpStudentUiFactory.CreateButton(
-            panel.transform,
-            "ReturnToSeat",
-            "의자로 돌아가기",
-            new Vector2(-130f, 78f),
-            new Vector2(240f, 66f),
-            MvpStudentUiFactory.ElectricBlue,
-            ReturnToSeat,
-            18f);
-        MvpStudentUiFactory.CreateButton(
-            panel.transform,
-            "RecenterWorkspace",
-            "작업판 맞추기",
-            new Vector2(130f, 78f),
-            new Vector2(240f, 66f),
-            MvpStudentUiFactory.GlassBlue,
-            RecenterWorkspace,
-            18f);
-        MvpStudentUiFactory.CreateButton(
-            panel.transform,
-            "OpenHistory",
-            "내 그림 기록",
-            new Vector2(0f, -6f),
-            new Vector2(500f, 68f),
-            MvpStudentUiFactory.Cyan,
-            ShowHistory,
-            19f);
+        _panelImage = go.GetComponent<Image>();
+        _panelImage.sprite = _panelDefault;
+        _panelImage.type = Image.Type.Simple;
+        _panelImage.preserveAspect = true;
+        _panelImage.raycastTarget = true;   // 판 자체가 포크 표면이 된다
+        _settingsPanel = go;
 
-        // 화면 공유는 "내 시점을 남에게 보여 주는" 개인 행동이라 공용 보드가 아니라
-        // 손목 메뉴에 둔다(내 그림 기록과 같은 성격).
-        _shareButton = MvpStudentUiFactory.CreateButton(
-            panel.transform,
-            "ShareView",
-            "내 화면 공유하기",
-            new Vector2(0f, -88f),
-            new Vector2(500f, 68f),
-            MvpStudentUiFactory.ElectricBlue,
-            ToggleShareView,
-            19f);
-        _shareButtonLabel = _shareButton.GetComponentInChildren<TMP_Text>();
+        // (라벨, 위치, hover 스프라이트, 동작)
+        CreatePanelHit("NodeArray", new Vector2(-82f, 166f), _panelNodeArray, RecenterWorkspace);
+        CreatePanelHit("Respawn",   new Vector2( 81f, 166f), _panelRespawn,   ReturnToSeat);
+        _shareButton =
+        CreatePanelHit("Share",     new Vector2(-83f,   4f), _panelShare,     ToggleShareView);
+        CreatePanelHit("History",   new Vector2( 81f,   3f), _panelHistory,   ShowHistory);
+        CreatePanelHit("Mic",       new Vector2(-83f,-161f), _panelMic,       ToggleVoice);
+        CreatePanelHit("LeaveRoom", new Vector2( 81f,-161f), null,            LeaveRoomFromWrist);
+    }
+
+    private void LoadPanelSprites()
+    {
+        if (_panelDefault != null)
+            return;
+        _panelDefault   = Resources.Load<Sprite>("HandPanel/pannel_default");
+        _panelNodeArray = Resources.Load<Sprite>("HandPanel/pannel_nodearray");
+        _panelRespawn   = Resources.Load<Sprite>("HandPanel/pannel_respawn");
+        _panelShare     = Resources.Load<Sprite>("HandPanel/pannel_share");
+        _panelHistory   = Resources.Load<Sprite>("HandPanel/pannel_history");
+        _panelMic       = Resources.Load<Sprite>("HandPanel/pannel_mic");
+    }
+
+    // 배경 그림 위의 투명 버튼. 눌리는 영역은 원 그림과 같은 크기다.
+    private Button CreatePanelHit(
+        string name, Vector2 position, Sprite hoverSprite, UnityEngine.Events.UnityAction action)
+    {
+        GameObject go = new GameObject(
+            "Hit_" + name, typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(Button));
+        go.transform.SetParent(_settingsPanel.transform, false);
+
+        RectTransform rect = go.GetComponent<RectTransform>();
+        rect.anchorMin = rect.anchorMax = rect.pivot = new Vector2(0.5f, 0.5f);
+        rect.anchoredPosition = position;
+        rect.sizeDelta = new Vector2(HitDiameter, HitDiameter);
+
+        Image image = go.GetComponent<Image>();
+        image.color = new Color(1f, 1f, 1f, 0f);   // 보이지 않지만 포크/레이는 받는다
+        image.raycastTarget = true;
+
+        Button button = go.GetComponent<Button>();
+        button.transition = Selectable.Transition.None;   // 강조는 배경 스프라이트 교체로 한다
+        button.targetGraphic = image;
+        button.onClick.AddListener(() =>
+        {
+            if (MvpAudioCue.Instance != null)
+                MvpAudioCue.Instance.Play(MvpAudioCue.Cue.KeyClick, 0.7f);
+            action?.Invoke();
+        });
+
+        MvpWristPanelHover hover = go.AddComponent<MvpWristPanelHover>();
+        hover.Configure(this, hoverSprite);
+        return button;
+    }
+
+    // 히트 영역이 hover/exit 될 때 배경 스프라이트를 갈아 끼운다.
+    internal void SetPanelHighlight(Sprite sprite)
+    {
+        if (_panelImage == null)
+            return;
+
+        // 손을 뗐는데(sprite=null) 공유가 켜져 있으면 공유 아이콘 강조를 유지한다.
+        if (sprite == null && _shareHighlighted)
+        {
+            _panelImage.sprite = _panelShare;
+            return;
+        }
+        _panelImage.sprite = sprite != null ? sprite : _panelDefault;
+    }
+
+    private void ToggleVoice()
+    {
+        MvpClassroomFlow flow = FindFirstObjectByType<MvpClassroomFlow>();
+        if (flow != null)
+            flow.ToggleVoiceInput();
+    }
+
+    private void LeaveRoomFromWrist()
+    {
+        MvpClassroomFlow flow = FindFirstObjectByType<MvpClassroomFlow>();
+        if (flow != null)
+            flow.RequestLeaveRoom();
     }
 
     // ── 화면 공유 ─────────────────────────────────────────────
     // 실제 동작은 PresenterViewUIActions 가 맡는다(발표자 지정·시점 동기화·렌더).
-    // 여기서는 진입점만 제공하고 라벨로 현재 상태를 보여 준다.
+    // 손 패널은 아이콘만 있어서 안내 문구는 작업판 메시지로 대신 띄운다.
     private void ToggleShareView()
     {
         PresenterViewUIActions actions = ResolveShareActions();
         if (actions == null)
         {
-            SetShareLabel("공유를 쓸 수 없어요", MvpStudentUiFactory.Amber);
+            FindFirstObjectByType<MvpClassroomFlow>()?.SetWorkspaceMessage(
+                "화면 공유를 아직 쓸 수 없어요.",
+                MvpStudentUiFactory.Amber);
             return;
         }
 
         actions.ToggleSharingMyView();
         RefreshShareButton();
+    }
+
+    // Fusion 세션이 실제로 Spawn 되어 네트워크 상태를 읽을 수 있는 상태인지.
+    private static bool IsPresenterSessionReady()
+    {
+        PresenterViewSession session = PresenterViewSession.Instance;
+        return session != null &&
+               session.Object != null &&
+               session.Object.IsValid &&
+               session.Runner != null &&
+               session.Runner.IsRunning;
     }
 
     private PresenterViewUIActions ResolveShareActions()
@@ -304,38 +503,29 @@ public class MvpWristSettingsMenu : MonoBehaviour
         return _shareActions;
     }
 
+    // 손 패널은 라벨이 없는 아이콘 판이라, 상태는 "누를 수 있는지 + 공유 중 강조"로만 보여 준다.
     private void RefreshShareButton()
     {
         if (_shareButton == null)
             return;
 
         PresenterViewUIActions actions = ResolveShareActions();
-        // 혼자(오프라인)일 땐 공유할 상대가 없다 — 눌러도 아무 일도 안 일어나므로 미리 알린다.
-        bool online = PresenterViewSession.Instance != null;
+        // 씬에 PresenterViewSession 오브젝트가 있어도 Fusion 이 Spawn 하기 전엔
+        // [Networked] 프로퍼티를 읽을 수 없다(InvalidOperationException). Instance 존재만으로
+        // 판단하면 오프라인에서 IsSharingMyView() 가 그대로 터진다 → Spawn 여부까지 확인한다.
+        bool online = IsPresenterSessionReady();
         if (actions == null || !online)
         {
             _shareButton.interactable = false;
-            SetShareLabel("혼자일 땐 공유할 수 없어요", MvpStudentUiFactory.GlassBlue);
+            _shareHighlighted = false;
+            SetPanelHighlight(null);
             return;
         }
 
         _shareButton.interactable = true;
-        bool sharing = actions.IsSharingMyView();
-        SetShareLabel(
-            sharing ? "공유 멈추기" : "내 화면 공유하기",
-            sharing ? MvpStudentUiFactory.Coral : MvpStudentUiFactory.ElectricBlue);
-    }
-
-    private void SetShareLabel(string text, Color color)
-    {
-        if (_shareButtonLabel != null)
-            _shareButtonLabel.text = text;
-        if (_shareButton != null)
-        {
-            Image image = _shareButton.GetComponent<Image>();
-            if (image != null)
-                image.color = color;
-        }
+        // 공유 중이면 hover 가 아니어도 공유 아이콘을 계속 밝게 둔다(지금 켜져 있다는 표시).
+        _shareHighlighted = actions.IsSharingMyView();
+        SetPanelHighlight(_shareHighlighted ? _panelShare : null);
     }
 
     private void BuildHistoryPanel(Transform parent)
@@ -672,5 +862,39 @@ public class MvpWristSettingsMenu : MonoBehaviour
             _wristCircleSprite.name = "MvpWristCircleSprite";
             return _wristCircleSprite;
         }
+    }
+}
+// 손 패널의 원형 히트 영역 하나. 손끝/레이가 올라오면 배경 스프라이트를 자기 강조본으로 바꾼다.
+// 아이콘이 배경 그림에 통째로 그려져 있어서, 개별 버튼 색을 바꾸는 대신 판 전체를 교체한다.
+[DisallowMultipleComponent]
+public class MvpWristPanelHover : MonoBehaviour,
+    UnityEngine.EventSystems.IPointerEnterHandler,
+    UnityEngine.EventSystems.IPointerExitHandler
+{
+    private MvpWristSettingsMenu _menu;
+    private Sprite _hoverSprite;
+
+    public void Configure(MvpWristSettingsMenu menu, Sprite hoverSprite)
+    {
+        _menu = menu;
+        _hoverSprite = hoverSprite;
+    }
+
+    public void OnPointerEnter(UnityEngine.EventSystems.PointerEventData eventData)
+    {
+        if (_menu != null)
+            _menu.SetPanelHighlight(_hoverSprite);
+    }
+
+    public void OnPointerExit(UnityEngine.EventSystems.PointerEventData eventData)
+    {
+        if (_menu != null)
+            _menu.SetPanelHighlight(null);
+    }
+
+    private void OnDisable()
+    {
+        if (_menu != null)
+            _menu.SetPanelHighlight(null);
     }
 }

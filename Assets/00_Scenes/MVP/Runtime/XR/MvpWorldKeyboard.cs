@@ -120,6 +120,15 @@ public class MvpWorldKeyboard : MonoBehaviour
             _finalIndex[Finals[i]] = i;
     }
 
+    // ── 디자인 시안 색상 ──────────────────────────────────────
+    // 어두운 회색 판 + 파란 테두리, 키캡은 판보다 한 톤 밝은 회색, Enter 만 파랑.
+    private static readonly Color PanelBg     = new Color(0.169f, 0.169f, 0.169f, 0.995f);
+    private static readonly Color KeyCap      = new Color(0.290f, 0.290f, 0.290f, 1f);
+    private static readonly Color KeyCapAlt   = new Color(0.235f, 0.235f, 0.235f, 1f);
+    private static readonly Color FieldBg     = new Color(0.118f, 0.118f, 0.118f, 1f);
+    private static readonly Color AccentBlue  = new Color(0.176f, 0.588f, 0.898f, 1f);
+    private static readonly Color KeyInk      = new Color(0.94f, 0.95f, 0.96f, 1f);
+
     private void BuildVisuals()
     {
         _canvas = gameObject.AddComponent<Canvas>();
@@ -131,132 +140,238 @@ public class MvpWorldKeyboard : MonoBehaviour
         gameObject.AddComponent<GraphicRaycaster>();
 
         RectTransform root = GetComponent<RectTransform>();
-        root.sizeDelta = new Vector2(920f, 570f);
+        root.sizeDelta = new Vector2(920f, 640f);   // 발화 상태 바가 위에 얹힌다
         root.localScale = Vector3.one * KeyboardWorldScale;
+
+        BuildVoiceStatusBar(transform);
 
         Image background = MvpStudentUiFactory.CreatePanel(
             transform,
             "KeyboardPanel",
-            Vector2.zero,
-            root.sizeDelta,
-            new Color(0.035f, 0.10f, 0.22f, 0.985f),
+            new Vector2(0f, -36f),
+            new Vector2(920f, 560f),
+            PanelBg,
             true);
         _panel = background.rectTransform;
 
-        MvpStudentUiFactory.CreateText(
-            _panel,
-            "Title",
-            "이름 입력",
-            new Vector2(-255f, 244f),
-            new Vector2(350f, 52f),
-            30f,
-            TextAlignmentOptions.MidlineLeft,
-            true,
-            Color.white,
-            1);
+        Outline rim = background.GetComponent<Outline>();
+        if (rim == null)
+            rim = background.gameObject.AddComponent<Outline>();
+        rim.effectColor = new Color(0.176f, 0.588f, 0.898f, 0.95f);
+        rim.effectDistance = new Vector2(3f, -3f);
 
-        _modeLabel = MvpStudentUiFactory.CreateText(
-            _panel,
-            "Mode",
-            "한글 입력",
-            new Vector2(252f, 244f),
-            new Vector2(180f, 42f),
-            20f,
-            TextAlignmentOptions.Center,
-            true,
-            MvpStudentUiFactory.HoloCyan,
-            1);
+        // ── 윗줄: 마이크 / 입력칸 / 지우기 / 전체삭제 ──────────
+        // 아이콘 글리프(🎤 ⌫ ⌨ 등)는 이 프로젝트 한글 폰트에 없어 두부(□)로 나온다.
+        // 스프라이트가 준비될 때까지는 폰트에 있는 글자로 대체한다.
+        _voiceKey = CreateIconKey(
+            "Voice", "음성", new Vector2(-386f, 208f), new Vector2(76f, 76f),
+            KeyCap, ToggleVoiceKey, 22f, true);
+        _voiceKeyLabel = _voiceKey.GetComponentInChildren<TMP_Text>();
+        _voiceIndicator = MvpVoiceIndicator.Attach(
+            _voiceKey.transform, new Vector2(26f, 26f), 11f);
 
         Image previewPanel = MvpStudentUiFactory.CreatePanel(
             _panel,
             "PreviewPanel",
-            new Vector2(0f, 184f),
-            new Vector2(830f, 66f),
-            new Color(0.96f, 0.985f, 1f, 1f),
-            false);
+            new Vector2(-24f, 208f),
+            new Vector2(620f, 68f),
+            FieldBg,
+            true);
         _preview = MvpStudentUiFactory.CreateText(
             previewPanel.transform,
             "Preview",
             "",
             Vector2.zero,
-            new Vector2(790f, 54f),
+            new Vector2(580f, 56f),
             28f,
             TextAlignmentOptions.MidlineLeft,
             true,
-            MvpStudentUiFactory.Ink,
+            KeyInk,
             1);
 
-        // 키가 놓이는 어두운 베드는 실제 키보드처럼 키캡을 한 덩어리로 읽게 한다.
-        Image keyBed = MvpStudentUiFactory.CreatePanel(
+        CreateIconKey(
+            "Backspace", "지움", new Vector2(322f, 208f), new Vector2(76f, 76f),
+            KeyCap, Backspace, 22f, true);
+
+        CreateIconKey(
+            "Clear", "Clear", new Vector2(408f, 208f), new Vector2(84f, 76f),
+            KeyCap, ClearAll, 22f, true);
+
+        // 모드 표시는 입력칸 위 작은 라벨로만 남긴다(시안엔 큰 제목이 없다).
+        _modeLabel = MvpStudentUiFactory.CreateText(
             _panel,
-            "KeyBed",
-            new Vector2(0f, -35f),
-            new Vector2(874f, 358f),
-            new Color(0.012f, 0.035f, 0.090f, 0.94f),
-            false);
-        keyBed.raycastTarget = false;
+            "Mode",
+            "한글 입력",
+            new Vector2(-24f, 256f),
+            new Vector2(620f, 30f),
+            18f,
+            TextAlignmentOptions.MidlineLeft,
+            true,
+            new Color(0.62f, 0.66f, 0.70f, 1f),
+            1);
 
         _keyRoot = MvpStudentUiFactory.CreateRect(
             _panel,
             "Keys",
-            new Vector2(0f, -35f),
-            new Vector2(860f, 350f));
-
-        MvpStudentUiFactory.CreateButton(
-            _panel,
-            "Cancel",
-            "×",
-            new Vector2(-372f, -246f),
-            new Vector2(76f, 54f),
-            new Color(0.23f, 0.31f, 0.46f, 1f),
-            CloseWithoutApply,
-            22f);
-
-        MvpStudentUiFactory.CreateButton(
-            _panel,
-            "ModeToggle",
-            "한/영",
-            new Vector2(-278f, -246f),
-            new Vector2(104f, 54f),
-            MvpStudentUiFactory.Amber,
-            ToggleMode,
-            22f);
-
-        MvpStudentUiFactory.CreateButton(
-            _panel,
-            "Space",
-            "space",
-            new Vector2(-78f, -246f),
-            new Vector2(270f, 54f),
-            new Color(0.16f, 0.31f, 0.54f, 1f),
-            AddSpace,
-            22f);
-
-        _voiceKey = MvpStudentUiFactory.CreateButton(
-            _panel,
-            "Voice",
-            "말하기",
-            new Vector2(128f, -246f),
-            new Vector2(130f, 54f),
-            VoiceKeyIdleColor,
-            ToggleVoiceKey,
-            21f);
-        _voiceKeyLabel = _voiceKey.GetComponentInChildren<TMP_Text>();
-        _voiceIndicator = MvpVoiceIndicator.Attach(
-            _voiceKey.transform, new Vector2(-48f, 0f), 13f);
-
-        MvpStudentUiFactory.CreateButton(
-            _panel,
-            "Done",
-            "enter",
-            new Vector2(318f, -246f),
-            new Vector2(170f, 54f),
-            MvpStudentUiFactory.Mint,
-            ApplyAndClose,
-            23f);
+            new Vector2(0f, -32f),
+            new Vector2(880f, 420f));
 
         EnsureKeyboardGrabHandle(root);
         RebuildKeys();
+    }
+
+    // ── 발화 상태 바 ─────────────────────────────────────────
+    // 시안: 키보드 위에 키보드 가로폭만큼의 알약 바. 테두리가 도는 그라디언트(디자이너 셰이더)
+    // 안에 상태 문구가 들어간다. 왼쪽 캐릭터 자리는 이미지가 아직 없어 비워 둔다.
+    private RectTransform _voiceBar;
+    private TMP_Text _voiceBarLabel;
+    private Image _voiceBarCharacter;
+    private Sprite _bearListening;
+    private Sprite _bearConverting;
+    private Sprite _bearDone;
+
+    // 상태 바가 보여 줄 3단계.
+    internal enum VoicePhase { Listening, Converting, Done }
+
+    private void BuildVoiceStatusBar(Transform parent)
+    {
+        Image bar = MvpStudentUiFactory.CreatePanel(
+            parent,
+            "VoiceStatusBar",
+            new Vector2(0f, 280f),
+            new Vector2(920f, 64f),
+            new Color(0.22f, 0.19f, 0.13f, 0.92f),
+            true);
+        _voiceBar = bar.rectTransform;
+
+        // 디자이너의 회전 그라디언트 테두리. 셰이더가 없으면 컴포넌트를 붙이지 않는다.
+        Shader border = Shader.Find("UI/RotatingGradientBorder");
+        if (border != null)
+        {
+            RotatingGradientBorderUI gradient =
+                bar.gameObject.AddComponent<RotatingGradientBorderUI>();
+            gradient.shader = border;
+            gradient.rotationSpeed = 0.619f;
+            gradient.borderWidth = 3f;
+            gradient.cornerRadius = 32f;   // 알약 모양(높이 64의 절반)
+            gradient.bgAngle = 49f;
+            gradient.gradientResolution = 250;
+            gradient.borderGradient = MakeGradient(
+                new Color(0.925f, 0.684f, 0.109f, 1f), Color.white, 1f, 1f);
+            gradient.bgGradient = MakeGradient(
+                new Color(1f, 0.740f, 0f, 1f), Color.white, 0.329f, 0.102f);
+        }
+
+        // 왼쪽 캐릭터. 원본이 정사각(762x762)이라 바 높이보다 크게 잡아 살짝 넘치게 둔다.
+        _bearListening  = Resources.Load<Sprite>("VoiceBear/bear_listening");
+        _bearConverting = Resources.Load<Sprite>("VoiceBear/bear_converting");
+        _bearDone       = Resources.Load<Sprite>("VoiceBear/bear_done");
+
+        _voiceBarCharacter = MvpStudentUiFactory.CreatePanel(
+            bar.transform,
+            "Character",
+            new Vector2(-410f, 10f),
+            new Vector2(132f, 132f),   // 바(64)보다 크게 — 시안처럼 위아래로 걸친다
+            Color.white,
+            false);
+        _voiceBarCharacter.raycastTarget = false;
+        _voiceBarCharacter.preserveAspect = true;
+        _voiceBarCharacter.sprite = _bearListening;
+        _voiceBarCharacter.type = Image.Type.Simple;
+
+        _voiceBarLabel = MvpStudentUiFactory.CreateText(
+            bar.transform,
+            "VoiceStatusLabel",
+            "발화를 듣고 있어요",
+            new Vector2(30f, 0f),   // 왼쪽 곰과 겹치지 않게 살짝 오른쪽
+            new Vector2(700f, 44f),
+            24f,
+            TextAlignmentOptions.Center,
+            true,
+            // 배경이 밝은 금빛 그라디언트라 흰 글씨는 안 보인다. 어두운 톤으로.
+            new Color(0.20f, 0.16f, 0.08f, 1f),
+            1);
+
+        _voiceBar.gameObject.SetActive(false);   // 말할 때만 나타난다
+    }
+
+    private static Gradient MakeGradient(Color a, Color b, float alphaA, float alphaB)
+    {
+        Gradient g = new Gradient();
+        g.SetKeys(
+            new[] { new GradientColorKey(a, 0f), new GradientColorKey(b, 1f) },
+            new[] { new GradientAlphaKey(alphaA, 0f), new GradientAlphaKey(alphaB, 1f) });
+        return g;
+    }
+
+    // 음성 상태에 따라 바를 보이고 문구를 바꾼다.
+    //   듣는 중 → 변환 중 → 완료(잠깐 보였다 사라짐)
+    internal void SetVoiceStatus(string message, bool visible)
+    {
+        SetVoiceStatus(message, visible, VoicePhase.Listening);
+    }
+
+    internal void SetVoiceStatus(string message, bool visible, VoicePhase phase)
+    {
+        if (_voiceBar == null)
+            return;
+
+        _voiceBar.gameObject.SetActive(visible);
+        if (!visible)
+            return;
+
+        if (_voiceBarLabel != null)
+            _voiceBarLabel.text = message;
+
+        if (_voiceBarCharacter != null)
+        {
+            Sprite bear =
+                phase == VoicePhase.Done ? _bearDone :
+                phase == VoicePhase.Converting ? _bearConverting :
+                _bearListening;
+            if (bear != null)
+                _voiceBarCharacter.sprite = bear;
+        }
+    }
+
+    // 시안의 원형/사각 보조 키. 라벨을 그대로 쓰되 글꼴 크기와 색을 따로 준다.
+    private Button CreateIconKey(
+        string name, string label, Vector2 position, Vector2 size,
+        Color color, Action action, float fontSize, bool onPanel)
+    {
+        Button key = MvpStudentUiFactory.CreateButton(
+            onPanel ? _panel : _keyRoot,
+            name,
+            label,
+            position,
+            size,
+            color,
+            () =>
+            {
+                if (MvpAudioCue.Instance != null)
+                    MvpAudioCue.Instance.Play(MvpAudioCue.Cue.KeyClick, 0.7f);
+                action?.Invoke();
+            },
+            fontSize);
+
+        TMP_Text text = key.GetComponentInChildren<TMP_Text>();
+        if (text != null)
+            text.color = KeyInk;
+        Outline outline = key.GetComponent<Outline>();
+        if (outline != null)
+            outline.effectColor = new Color(1f, 1f, 1f, 0.10f);
+        return key;
+    }
+
+    // 입력칸을 통째로 비운다(시안의 Clear).
+    private void ClearAll()
+    {
+        _committed = "";
+        _initial = -1;
+        _medial = -1;
+        _final = 0;
+        _voicePartial = "";
+        RefreshPreview();
     }
 
     private void OpenInternal(TMP_InputField target)
@@ -423,81 +538,122 @@ public class MvpWorldKeyboard : MonoBehaviour
     }
 
 
+    // 시안 기준 행 y 좌표. 숫자줄이 항상 맨 위에 있고 그 아래 문자 3줄, 맨 아래 기능줄.
+    private const float RowNumber = 156f;
+    private const float RowTop    =  84f;
+    private const float RowMid    =  12f;
+    private const float RowBottom = -60f;
+    private const float RowAction = -140f;
+
     private void BuildKoreanKeys()
     {
+        BuildNumberRow();
         // 두벌식 그대로: Shift 를 누르면 윗줄이 쌍자음(ㅃㅉㄸㄲㅆ)과 ㅒ/ㅖ 로 바뀐다.
         CreateRow(
             _shift
             ? new[] { "ㅃ", "ㅉ", "ㄸ", "ㄲ", "ㅆ", "ㅛ", "ㅕ", "ㅑ", "ㅒ", "ㅖ" }
             : new[] { "ㅂ", "ㅈ", "ㄷ", "ㄱ", "ㅅ", "ㅛ", "ㅕ", "ㅑ", "ㅐ", "ㅔ" },
-            118f,
-            68f);
+            RowTop, 76f);
         CreateRow(
             new[] { "ㅁ", "ㄴ", "ㅇ", "ㄹ", "ㅎ", "ㅗ", "ㅓ", "ㅏ", "ㅣ" },
-            46f,
-            68f);
-        CreateRow(
-            new[] { "ㅋ", "ㅌ", "ㅊ", "ㅍ", "ㅠ", "ㅜ", "ㅡ" },
-            -26f,
-            74f);
-
-        BuildUtilityRow();
+            RowMid, 76f);
+        BuildShiftRow(new[] { "ㅋ", "ㅌ", "ㅊ", "ㅍ", "ㅠ", "ㅜ", "ㅡ" });
+        BuildActionRow();
     }
 
     private void BuildEnglishKeys()
     {
-        // 기본은 소문자, Shift 를 누르면 대문자. 키캡 글자도 실제 입력될 글자와 같게 보여 준다.
+        BuildNumberRow();
+        // 기본은 소문자, Shift 를 누르면 대문자. 키캡 글자가 곧 입력될 글자다.
         CreateRow(ShiftCase(
-            new[] { "q", "w", "e", "r", "t", "y", "u", "i", "o", "p" }),
-            118f,
-            68f);
+            new[] { "q", "w", "e", "r", "t", "y", "u", "i", "o", "p" }), RowTop, 76f);
         CreateRow(ShiftCase(
-            new[] { "a", "s", "d", "f", "g", "h", "j", "k", "l" }),
-            46f,
-            68f);
-        CreateRow(ShiftCase(
-            new[] { "z", "x", "c", "v", "b", "n", "m" }),
-            -26f,
-            74f);
-
-        BuildUtilityRow();
+            new[] { "a", "s", "d", "f", "g", "h", "j", "k", "l" }), RowMid, 76f);
+        BuildShiftRow(ShiftCase(new[] { "z", "x", "c", "v", "b", "n", "m" }));
+        BuildActionRow();
     }
 
     private void BuildNumericKeys()
     {
+        BuildNumberRow();
         CreateRow(
-            new[] { "1", "2", "3", "4", "5", "6", "7", "8", "9", "0" },
-            118f,
-            68f);
+            new[] { "-", "/", ":", ";", "(", ")", "₩", "&", "@", "\"" }, RowTop, 76f);
         CreateRow(
-            new[] { "-", "/", ":", ";", "(", ")", "₩", "&", "@" },
-            46f,
-            68f);
-        CreateRow(
-            new[] { "?", "!", "'", "\"", "+", "=", "_", "%" },
-            -26f,
-            68f);
-
-        BuildUtilityRow();
+            new[] { ".", ",", "?", "!", "'", "+", "=", "_", "%" }, RowMid, 76f);
+        BuildShiftRow(new[] { "<", ">", "[", "]", "{", "}", "~" });
+        BuildActionRow();
     }
 
-    // 세 레이아웃이 공유하는 아랫줄. 숫자 모드에서는 Shift 대신 언어 복귀 키가 온다.
-    private void BuildUtilityRow()
+    // 시안의 맨 윗줄 숫자 — 모드와 무관하게 항상 보인다.
+    private void BuildNumberRow()
     {
-        if (_numeric)
+        CreateRow(
+            new[] { "1", "2", "3", "4", "5", "6", "7", "8", "9", "0" },
+            RowNumber, 76f);
+    }
+
+    // 시안의 셋째 줄: 왼쪽 ⇧, 가운데 글자들, 오른쪽 키보드 내리기.
+    private void BuildShiftRow(string[] middle)
+    {
+        CreateFunctionKey(
+            "⇧", -366f, RowBottom, 96f,
+            _numeric ? (Action)null : ToggleShift,
+            _shift ? AccentBlue : KeyCapAlt, 30f);
+
+        float width = 76f, gap = 9f;
+        float total = middle.Length * width + (middle.Length - 1) * gap;
+        float start = -total * 0.5f + width * 0.5f;
+        for (int i = 0; i < middle.Length; i++)
         {
-            // 숫자 모드에서는 "123" 이 필요 없다(문자로 돌아가는 키 하나면 충분).
-            CreateKey(_korean ? "가나다" : "ABC", -330f, -105f, 156f, ToggleNumeric);
-        }
-        else
-        {
-            CreateKey(_shift ? "⇧ 켜짐" : "⇧ Shift", -330f, -105f, 156f, ToggleShift);
-            CreateKey("123", -172f, -105f, 130f, ToggleNumeric);
+            string key = middle[i];
+            CreateKey(key, start + i * (width + gap), RowBottom, width,
+                () => PressCharacter(key));
         }
 
-        CreateKey("쉼표", -34f, -105f, 118f, () => AddLiteral(","));
-        CreateKey("마침표", 96f, -105f, 118f, () => AddLiteral("."));
-        CreateKey("← 지우기", 272f, -105f, 190f, Backspace);
+        CreateFunctionKey("닫기", 366f, RowBottom, 96f, CloseWithoutApply, KeyCapAlt, 20f);
+    }
+
+    // 시안의 맨 아랫줄: 한/영(시안의 이모지 자리) · #+= · Space · Enter.
+    private void BuildActionRow()
+    {
+        CreateFunctionKey(
+            _korean ? "한" : "A", -378f, RowAction, 76f,
+            _numeric ? (Action)null : ToggleMode, KeyCapAlt, 26f);
+
+        CreateFunctionKey(
+            _numeric ? (_korean ? "가나다" : "ABC") : "#+=",
+            -282f, RowAction, 108f, ToggleNumeric, KeyCapAlt, 22f);
+
+        CreateFunctionKey("Space", 34f, RowAction, 500f, AddSpace, KeyCapAlt, 22f);
+        CreateFunctionKey("Enter", 366f, RowAction, 150f, ApplyAndClose, AccentBlue, 24f);
+    }
+
+    // 기능 키(문자 입력이 아닌 것). action 이 null 이면 눌리지 않는다.
+    private void CreateFunctionKey(
+        string label, float x, float y, float width, Action action, Color color, float fontSize)
+    {
+        Button key = MvpStudentUiFactory.CreateButton(
+            _keyRoot,
+            "Key_" + label,
+            label,
+            new Vector2(x, y),
+            new Vector2(width, 62f),
+            color,
+            () =>
+            {
+                if (MvpAudioCue.Instance != null)
+                    MvpAudioCue.Instance.Play(MvpAudioCue.Cue.KeyClick, 0.7f);
+                action?.Invoke();
+            },
+            fontSize);
+        key.interactable = action != null;
+
+        TMP_Text text = key.GetComponentInChildren<TMP_Text>();
+        if (text != null)
+            text.color = KeyInk;
+        Outline outline = key.GetComponent<Outline>();
+        if (outline != null)
+            outline.effectColor = new Color(1f, 1f, 1f, 0.10f);
     }
 
     private string[] ShiftCase(string[] lower)
@@ -534,31 +690,30 @@ public class MvpWorldKeyboard : MonoBehaviour
         float width,
         Action action)
     {
-        // 숫자 모드의 "-" 는 기능키가 아니라 문자키다.
-        bool utilityKey = label.Length > 2 || (label == "-" && !_numeric);
-        Color keyColor = utilityKey
-            ? new Color(0.13f, 0.31f, 0.52f, 1f)
-            : new Color(0.10f, 0.20f, 0.36f, 1f);
         Button key = MvpStudentUiFactory.CreateButton(
             _keyRoot,
             "Key_" + label,
             label,
             new Vector2(x, y),
-            new Vector2(width, 60f),
-            keyColor,
+            new Vector2(width, 62f),
+            KeyCap,
             () =>
             {
                 if (MvpAudioCue.Instance != null)
                     MvpAudioCue.Instance.Play(MvpAudioCue.Cue.KeyClick, 0.7f);
                 action?.Invoke();
             },
-            utilityKey ? 20f : 24f);
+            26f);
+
+        TMP_Text text = key.GetComponentInChildren<TMP_Text>();
+        if (text != null)
+            text.color = KeyInk;
 
         // 살짝 튀어나온 키캡 테두리. 포킹 목표도 각 키의 실제 사각형과 일치한다.
         Outline outline = key.GetComponent<Outline>();
         if (outline != null)
         {
-            outline.effectColor = new Color(0.70f, 0.90f, 1f, 0.30f);
+            outline.effectColor = new Color(1f, 1f, 1f, 0.10f);
             outline.effectDistance = new Vector2(1f, -2f);
         }
     }
@@ -890,10 +1045,10 @@ public class MvpWorldKeyboard : MonoBehaviour
         }
     }
 
+    // 마이크는 아이콘 버튼이라 라벨을 글자로 바꾸지 않는다.
+    // 상태는 색·인디케이터와 위쪽 발화 상태 바로 보여 준다.
     private void SetVoiceKeyState(string label, Color color)
     {
-        if (_voiceKeyLabel != null)
-            _voiceKeyLabel.text = label;
         if (_voiceKey != null)
             MvpStudentUiFactory.SetButtonColor(_voiceKey, color);
 
@@ -905,11 +1060,20 @@ public class MvpWorldKeyboard : MonoBehaviour
                         ? MvpVoiceIndicator.State.Preparing
                         : MvpVoiceIndicator.State.Idle,
                 _dictation);
+
+        if (label == "듣는 중")
+            SetVoiceStatus("발화를 듣고 있어요", true, VoicePhase.Listening);
+        else if (label == "준비 중…")
+            SetVoiceStatus("음성 인식을 준비하고 있어요", true, VoicePhase.Listening);
+        else
+            SetVoiceStatus("", false);
     }
 
     private void HandleVoicePartial(string text)
     {
         _voicePartial = text;
+        // 말이 들어오기 시작하면 "변환 중"으로 넘어간다(시안 2단계).
+        SetVoiceStatus("발화를 텍스트로 변환하고 있어요", true, VoicePhase.Converting);
         RefreshPreview();
     }
 
@@ -921,8 +1085,23 @@ public class MvpWorldKeyboard : MonoBehaviour
             _committed += " ";
         _committed += text;
         _voicePartial = "";
-        SetVoiceKeyState("말하기", VoiceKeyIdleColor);
+
+        if (_voiceKey != null)
+            MvpStudentUiFactory.SetButtonColor(_voiceKey, VoiceKeyIdleColor);
+        if (_voiceIndicator != null)
+            _voiceIndicator.SetState(MvpVoiceIndicator.State.Idle, _dictation);
+
+        // 시안 3단계: 완료 문구를 잠깐 보여 준 뒤 바를 접는다.
+        SetVoiceStatus("인식이 완료되었어요", true, VoicePhase.Done);
+        CancelInvoke(nameof(HideVoiceStatus));
+        Invoke(nameof(HideVoiceStatus), 1.4f);
+
         RefreshPreview();
+    }
+
+    private void HideVoiceStatus()
+    {
+        SetVoiceStatus("", false);
     }
 
     private string CurrentComposition()
