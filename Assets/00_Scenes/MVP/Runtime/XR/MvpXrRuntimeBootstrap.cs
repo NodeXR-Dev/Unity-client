@@ -29,9 +29,17 @@ public static class MvpXrRuntimeBootstrap
                 MvpSceneFolder, StringComparison.OrdinalIgnoreCase))
             return;
 
-        GameObject app = GameObject.Find("MvpApp");
-        if (app == null)
-            app = new GameObject("MvpApp");
+        // 폴더만 보면 같은 폴더의 로비 씬(MvpLobby)에도 회의실용 부품이 붙는다.
+        // 손목 메뉴('회의실 나가기')·노드 조작·좌석 배치는 로비에서 의미가 없고,
+        // 특히 좌석 배치는 로비 플레이어를 회의실 바닥 높이로 순간이동시킨다.
+        // 실제 수업 씬인지는 MvpClassroomFlow 존재 여부로 판별한다.
+        MvpClassroomFlow classroom =
+            UnityEngine.Object.FindFirstObjectByType<MvpClassroomFlow>(
+                FindObjectsInactive.Include);
+        if (classroom == null)
+            return;
+
+        GameObject app = classroom.gameObject;
 
         if (app.GetComponent<MvpWristSettingsMenu>() == null)
             app.AddComponent<MvpWristSettingsMenu>();

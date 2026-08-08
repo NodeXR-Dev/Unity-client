@@ -246,8 +246,20 @@ public class MvpMeetingRoomPlayerController : MonoBehaviour
             head.transform.position,
             Vector3.up,
             yaw);
-        _cameraRig.transform.position +=
-            targetEye - head.transform.position;
+
+        // 헤드 앵커는 리그의 자식이라 보통 이 보정이 한 번에 수렴한다.
+        // 다만 트래킹이 아직 안 붙은 프레임에는 헤드 위치가 튀어서
+        // 12프레임 반복 보정이 누적 발산할 수 있다(로비에서 y=-743 관측).
+        // 비정상적으로 큰 보정이면 오프셋을 믿지 않고 리그를 목표에 직접 둔다.
+        Vector3 delta = targetEye - head.transform.position;
+        const float MaxCorrection = 50f;
+        if (delta.sqrMagnitude > MaxCorrection * MaxCorrection)
+        {
+            _cameraRig.transform.position = targetEye;
+            return true;
+        }
+
+        _cameraRig.transform.position += delta;
         return true;
     }
 
