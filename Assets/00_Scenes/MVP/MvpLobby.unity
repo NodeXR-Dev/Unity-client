@@ -33951,6 +33951,55 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1 &1765093093
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1765093095}
+  - component: {fileID: 1765093094}
+  m_Layer: 0
+  m_Name: MvpLobbyVoice
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &1765093094
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1765093093}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 7476d8d42665caf4eb37ba2cf0890c55, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  _autoListenOnOpen: 1
+  _idleText: "\uB9C8\uC774\uD06C\uB97C \uB20C\uB7EC \uB9CC\uB4E4\uACE0 \uC2F6\uC740
+    \uAC83\uC744 \uB9D0\uD574 \uC8FC\uC138\uC694"
+  _listeningText: "\uB4E3\uACE0 \uC788\uC5B4\uC694\u2026"
+  _preparingText: "\uC74C\uC131 \uC778\uC2DD \uC900\uBE44 \uC911\u2026"
+--- !u!4 &1765093095
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1765093093}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &1771859069
 GameObject:
   m_ObjectHideFlags: 0
@@ -39570,7 +39619,7 @@ MonoBehaviour:
   - {fileID: 21300000, guid: cd866881e27b47946af503f033310cc3, type: 3}
   - {fileID: 21300000, guid: abf9ec1a34ab7404f91bbf256f2e9cfe, type: 3}
   - {fileID: 21300000, guid: 9b61c1f1374ecf94885a6ca43e617164, type: 3}
-  requireSpeechBeforeCreation: 1
+  requireSpeechBeforeCreation: 0
   voiceRecorder: {fileID: 61142789}
   autoFindVoiceRecorder: 1
   requiredSpeechSeconds: 2
@@ -39587,7 +39636,7 @@ MonoBehaviour:
   autoFindNetworkManager: 1
   creationTimeoutSeconds: 30
   sendFeatureTextToServer: 1
-  apiHost: localhost:8000
+  apiHost: https://scores-texts-pierre-origin.trycloudflare.com
   featureRequestTimeoutSeconds: 60
   featureTextInput: {fileID: 0}
   testFeatureText: 
@@ -39747,3 +39796,4 @@ SceneRoots:
   - {fileID: 780609207}
   - {fileID: 1757809265}
   - {fileID: 882682762}
+  - {fileID: 1765093095}

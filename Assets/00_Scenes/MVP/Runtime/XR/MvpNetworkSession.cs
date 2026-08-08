@@ -129,6 +129,60 @@ public class MvpNetworkSession : MonoBehaviour, INetworkRunnerCallbacks
     }
 
 
+    /// <summary>
+    /// 로비에서 씬을 갈아탄 직후에는 프리팹 에셋 로드가 끝나지 않아 동기 Spawn 이
+    /// NetworkObjectSpawnException 을 던진다. 그러면 아바타가 안 생겨
+    /// 다른 참가자에게 보이지 않는다.
+    ///
+    /// Prefabs.Load(동기) 를 먼저 불러도 로드가 완료되기 전이면 Spawn 이 여전히
+    /// 실패하므로(실측), 성공할 때까지 프레임을 넘기며 재시도한다.
+    /// EnqueueIncompleteSynchronousSpawns 를 켜는 방법도 있지만 그 경우 Spawn 이
+    /// null 을 돌려줘 SetPlayerObject 를 못 한다.
+    /// </summary>
+    private IEnumerator SpawnWhenPrefabReady(
+        GameObject prefab,
+        Vector3 position,
+        Quaternion rotation,
+        System.Action<NetworkObject> onSpawned)
+    {
+        const int MaxAttempts = 120;   // 넉넉히 2초(60fps 기준)
+
+        for (int attempt = 0; attempt < MaxAttempts; attempt++)
+        {
+            if (_runner == null || !_runner.IsRunning)
+                yield break;
+
+            NetworkObject spawned = null;
+            bool notReady = false;
+
+            NetworkObject source = prefab.GetComponent<NetworkObject>();
+            if (source != null && source.NetworkTypeId.IsPrefab)
+                _runner.Prefabs.Load(source.NetworkTypeId.AsPrefabId, true);
+
+            try
+            {
+                spawned = _runner.Spawn(
+                    prefab, position, rotation, _runner.LocalPlayer);
+            }
+            catch (NetworkObjectSpawnException)
+            {
+                notReady = true;   // 아직 로드 중 — 다음 프레임에 다시 시도
+            }
+
+            if (!notReady && spawned != null)
+            {
+                onSpawned?.Invoke(spawned);
+                yield break;
+            }
+
+            yield return null;
+        }
+
+        Debug.LogWarning(
+            "[MvpNetworkSession] 프리팹 로드를 기다렸지만 스폰하지 못했습니다: " +
+            prefab.name);
+    }
+
     private IEnumerator AfterStart()
     {
         float t = 0f;
@@ -147,10 +201,14 @@ public class MvpNetworkSession : MonoBehaviour, INetworkRunnerCallbacks
         {
             Vector3 pos = _spawnPoint != null ? _spawnPoint.position : Vector3.zero;
             Quaternion rot = _spawnPoint != null ? _spawnPoint.rotation : Quaternion.identity;
-            NetworkObject avatar =
-                _runner.Spawn(_playerPrefab, pos, rot, _runner.LocalPlayer);
+            NetworkObject avatar = null;
+            yield return SpawnWhenPrefabReady(
+                _playerPrefab, pos, rot, spawned => avatar = spawned);
             if (avatar != null)
                 _runner.SetPlayerObject(_runner.LocalPlayer, avatar);
+            else
+                Debug.LogWarning(
+                    "[MvpNetworkSession] 로컬 아바타를 스폰하지 못했습니다.");
         }
 
         // 2) 그래프 네트워크 오브젝트는 마스터가 한 번만 스폰(다른 참가자는 복제로 수신)
@@ -158,8 +216,8 @@ public class MvpNetworkSession : MonoBehaviour, INetworkRunnerCallbacks
             _runner.IsSharedModeMasterClient &&
             FindFirstObjectByType<GraphNetworkManager>() == null)
         {
-            _runner.Spawn(
-                _graphNetworkPrefab, Vector3.zero, Quaternion.identity, _runner.LocalPlayer);
+            yield return SpawnWhenPrefabReady(
+                _graphNetworkPrefab, Vector3.zero, Quaternion.identity, null);
         }
 
         // 3) GNM(스폰/원격 복제) 준비되면 로컬→네트워크 브리지 바인딩·활성화

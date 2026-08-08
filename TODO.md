@@ -4,6 +4,51 @@
 
 ---
 
+## 2026-08-08 로비 STT 연결 + 유저플로우 완주 (로비 → MVP_SH)
+
+- [x] **로비 STT 신규** `Assets/00_Scenes/MVP/Runtime/Lobby/MvpLobbyDictation.cs`
+  - `LobbyCreateRequirementFlow.StartRequirementSpeechToText()` 가 빈 스텁이고 `featureTextInput` 도 미연결이라 요구사항 텍스트가 **항상 비어 세션 시작이 차단**돼 있었다. 인식 문장을 공개 API `SetRequirementFeatureText()` 로 넣어 해소.
+  - 요구사항 패널이 열리면 자동으로 듣기 시작 → 부분 자막(흐리게) → 확정(진하게) → Flow 로 전달. 마이크 버튼으로 재녹음, 입력 레벨 바 제공. 폰트는 패널의 TMP 폰트를 재사용.
+  - 원본 게이트(`requireSpeechBeforeCreation`, 소리 크기 2초)는 `Microphone` 을 직접 열어 STT 와 장치를 다투므로 **MvpLobby 에서 끄고 STT 가 대체**한다. 잡음이 아니라 실제 문장을 확인하므로 더 정확하다. 남의 파일(`02_Scripts/Lobby`)은 수정하지 않았다.
+- [x] **로비에 회의실 부품이 붙던 회귀 수정**(오늘 만든 것): XR 부트스트랩 게이트를 MVP 폴더로 넓히면서 `MvpLobby` 도 걸려 `MvpMeetingRoomPlayerController` 가 로비에서 좌석 배치를 시도했다. 실측 결과 리그가 **y=-743 으로 발산**. → `MvpClassroomFlow` 가 있는 씬에서만 실행하도록 게이트 추가. 발산 방지 클램프(보정 50m 초과 시 목표 지점 직접 설정)도 넣었다.
+- [x] **아바타·GraphNetworkManager 가 스폰되지 않던 문제**: 로비에서 씬을 갈아탄 직후 프리팹 로드가 끝나지 않아 `NetworkObjectSpawnException` 으로 조용히 실패했다(= 멀티플레이에서 서로 안 보임). `Prefabs.Load(동기)` 만으로는 부족해 로드 완료까지 프레임을 넘기며 재시도하는 `SpawnWhenPrefabReady()` 추가.
+- [x] **발화 API 경로 불일치 수정**: 클라가 초안 명세로 선구현한 `POST /api/node/generate/utterance` 는 서버에 없어 **항상 404** 였다. 그러면 속성 노드가 서버에 등록되지 않아 스냅샷에서 누락되고, 2D 생성이 `Input Snapshot에서 생성 Connection의 Node를 찾을 수 없습니다` 로 실패한다.
+  - 경로 → `POST /api/utterances`, 요청 → `{room_id, user_id, parent_node_id?, parent_node_position?, utterance}` (`node_type` 제거, `position` → `parent_node_position` = **부모** 위치)
+  - 응답이 단건 `{node_id, node_text}` 가 아니라 **서브그래프 전체**(`sub_graphs[].root_node_id/nodes/edges`)다. root 를 로컬 placeholder 에 매핑한다 — PROPERTY→PART 연결에 쓰는 node_id 가 root 여야 서버가 하위 체인을 탐색할 수 있다(CLAUDE.md 규약).
+  - 검증: 404 → 500 으로 바뀜(경로·스키마 통과, OpenAI 단계에서만 실패)
+- [x] **서버 `password` optional**(별도 repo, 사용자 결정): 스키마만 바꾸면 공개 방에 아무도 못 들어오므로 4곳을 함께 고쳤다 — 요청 스키마(Create/Enter), 생성 시 해시 NULL 저장, **입장 시 해시가 NULL 이면 통과**, 응답 nullable. `room_password_hash` 가 이미 nullable 이라 마이그레이션 불필요. 비번 방의 오답/생략 거부는 그대로 유지됨을 실서버로 확인.
+
+### 완주 검증 (플레이 모드 실측)
+
+로비 → 요구사항 음성 → 방 생성(비밀번호 없이) → MVP_SH 진입까지 통과.
+
+| 항목 | 결과 |
+|---|---|
+| 로비 STT | `[MVP 로비 STT] 요구사항 인식: …` |
+| 요구사항 서버 전송 | `FEATURE200` |
+| 세션 인계 | `로비 세션 이어받음 — room_id=…` |
+| 회의실 상태 | `Briefing` (Welcome 재시작 안 함) |
+| Fusion 러너 | 1개 (중복 방 없음) |
+| 로컬 아바타 / GNM | 스폰됨 + 브리지 활성화 |
+| WebSocket | `wss://…/ws/rooms/event` 연결 |
+| 파트 노드 서버 등록 | `PART_NODE200` |
+
+### 남은 블로커 — 코드가 아니라 서버 환경 설정
+
+서버 `.env` 의 키 3개가 플레이스홀더(`REPLACE_..._KEY`)라 AI 생성 체인 전체가 막혀 있다.
+
+- [ ] `OPENAI_API_KEY` — 발화 → 속성 서브그래프 추출. 없으면 `BTUTT500`, 속성 노드가 서버에 안 생겨 **2D 생성 불가**
+- [ ] `GEMINI_API_KEY` — 2D 이미지 생성
+- [ ] `MESHY_API_KEY` — 3D 모델 생성
+
+### 무해한 에러 (제 변경과 무관, 참고)
+
+- `카메라 리그를 찾을 수 없습니다` — `XRPlayerBinder` 가 `GameObject.Find` 를 쓰는데 에디터엔 HMD 가 없어 리그가 비활성. 실기기에선 정상
+- 스크립트 누락 2건 — `Assets/01_Prefabs/Lobby/Player 4.prefab` 의 기존 손상(`VOICE LEVEL`, `Text (TMP)`)
+- Photon Voice `opus_egpv` DllNotFound + AppId 미설정 — 음성 **채팅** 쪽. STT 와 무관
+
+---
+
 ## 2026-08-08 XRMeetingWorld 도입 (로비·회의실 배경 교체 + Quest 최적화)
 
 - [x] **FBX 임포트**: `Assets/04_Models/XRMeetingWorld/XRMeetingWorld.fbx` (Scale Factor 1 / Convert Units 해제 / 카메라·라이트 미임포트 / 머티리얼 External). 420×64×420m, 렌더러 1,678개, 삼각형 222,766, **고유 메시 20개**(같은 메시가 수백 번 반복되는 구조).
