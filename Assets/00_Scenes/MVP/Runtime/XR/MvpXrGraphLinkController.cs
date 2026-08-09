@@ -369,6 +369,12 @@ public class MvpXrGraphLinkController : MonoBehaviour
             if (referenceButton != null && referenceButton.gameObject.activeSelf)
             referenceButton.gameObject.SetActive(false);
 
+            // 프리팹 원본의 한글 '연결' 버튼. onClick 리스너도 코드 참조도 없는 죽은 버튼인데
+            // MvpNodeLinkPort 와 같은 자리에 겹쳐 디자이너 스프라이트 뒤로 비쳐 보였다.
+            Transform legacyLinkButton = canvas.Find("LinkButton");
+            if (legacyLinkButton != null && legacyLinkButton.gameObject.activeSelf)
+            legacyLinkButton.gameObject.SetActive(false);
+
             Transform existing = canvas.Find("MvpNodeLinkPort");
             Image linkPoint = existing != null
             ? existing.GetComponent<Image>()
@@ -379,26 +385,13 @@ public class MvpXrGraphLinkController : MonoBehaviour
                 canvas,
                 "MvpNodeLinkPort",
                 new Vector2(0f, -1.65f),
-                new Vector2(170f, 48f),
-                // 노드 본체가 반투명 유리 재질(ShaderGraph Transparent)로 바뀌어,
-                // 불투명 진청록 패널이 노드 앞에 떠 보였다. 노드와 같은 밝은 반투명
-                // 톤으로 맞춰 한 덩어리로 읽히게 한다.
-                new Color(0.72f, 0.80f, 0.92f, 0.42f),
+                // 디자이너 스프라이트가 2.26:1 이라 그 비율로 맞춘다(늘어나면 알약이 찌그러진다).
+                new Vector2(190f, 84f),
+                Color.white,
                 true);
                 linkPoint.raycastTarget = true;
 
-                MvpStudentUiFactory.CreateText(
-                linkPoint.transform,
-                "MvpLinkPortLabel",
-                "연결",
-                Vector2.zero,
-                new Vector2(150f, 38f),
-                16f,
-                TextAlignmentOptions.Center,
-                false,
-                // 배경이 밝아졌으므로 흰 글씨는 읽히지 않는다. 노드 라벨과 같은 어두운 톤.
-                new Color(0.13f, 0.17f, 0.24f, 1f),
-                1);
+                // 라벨은 만들지 않는다 — 스프라이트에 글자가 들어 있다.
             }
 
             linkPoint.raycastTarget = true;
@@ -833,6 +826,9 @@ public class MvpIdeaCardDragHandle : MonoBehaviour, IPointerClickHandler
     private bool _visualsReady;
     private bool _isChild;   // true면 이 버튼은 '연결'이 아니라 자식 '활성화' 토글
 
+    private static readonly System.Collections.Generic.Dictionary<string, Sprite>
+        _spriteCache = new System.Collections.Generic.Dictionary<string, Sprite>();
+
     public void Configure(
         MvpXrGraphLinkController controller,
         NodeView node,
@@ -859,7 +855,41 @@ public class MvpIdeaCardDragHandle : MonoBehaviour, IPointerClickHandler
         _label = GetComponentInChildren<TMP_Text>(true);
         if (_background != null)
         _baseColor = _background.color;
+
+        // 라벨 글자는 스프라이트에 이미 들어 있다. 남아 있으면 겹쳐 보인다.
+        if (_label != null)
+        _label.gameObject.SetActive(false);
+
         _visualsReady = true;
+    }
+
+    // 디자이너 스프라이트(Assets/05_Design/JW/UI/Sprites/Buttons/*)를
+    // Resources/GraphLink 로 복사해 둔 것을 이름으로 읽는다.
+    private static Sprite LoadState(string key)
+    {
+        if (_spriteCache.TryGetValue(key, out Sprite cached))
+        return cached;
+
+        Sprite sprite = Resources.Load<Sprite>("GraphLink/" + key);
+        _spriteCache[key] = sprite;
+        if (sprite == null)
+        Debug.LogWarning("[MVP 연결UI] 스프라이트를 찾지 못했습니다: GraphLink/" + key);
+        return sprite;
+    }
+
+    private void ApplySprite(string key)
+    {
+        if (_background == null)
+        return;
+
+        Sprite sprite = LoadState(key);
+        if (sprite == null)
+        return;
+
+        _background.sprite = sprite;
+        _background.type = Image.Type.Simple;
+        _background.preserveAspect = true;
+        _background.color = Color.white;
     }
 
     public void SetConnectionSelected(bool selected)
@@ -867,19 +897,29 @@ public class MvpIdeaCardDragHandle : MonoBehaviour, IPointerClickHandler
         if (!_visualsReady)
         Configure(_controller, _node, _panel);
 
-        if (_background != null)
-        _background.color = selected
-            ? MvpStudentUiFactory.Mint
-            : _baseColor;
-        if (_label != null)
+        // 선택 중이면 Disconnect(다시 누르면 취소), 평소엔 Connect.
+        // 어디를 눌러야 하는지는 맥동하는 부품 포트가 안내한다.
+        ApplySprite(selected ? "disconnect_default" : "connect_default");
+    }
+
+    /// <summary>서버 왕복을 기다리는 동안 Loading 스프라이트를 보여준다.</summary>
+    public void SetBusy(bool busy, bool selected)
+    {
+        if (!_visualsReady)
+        Configure(_controller, _node, _panel);
+
+        if (busy)
         {
-            _label.fontSize = 16f;
-            _label.alignment = TextAlignmentOptions.Center;
-            _label.textWrappingMode = TextWrappingModes.NoWrap;
-            // 선택 중이면 "취소"(다시 누르면 취소), 평소엔 "연결". 어디를 눌러야 하는지는
-            // 맥동하는 부품 포트가 안내한다.
-            _label.text = selected ? "취소" : "연결";
+            ApplySprite(_isChild
+                ? "activate_loading"
+                : (selected ? "disconnect_loading" : "connect_loading"));
+            return;
         }
+
+        if (_isChild)
+        RefreshChildLabel(selected);
+        else
+        SetConnectionSelected(selected);
     }
 
     // 이 버튼이 자식 '활성화' 토글인지 지정.
@@ -894,15 +934,8 @@ public class MvpIdeaCardDragHandle : MonoBehaviour, IPointerClickHandler
         if (!_visualsReady)
         Configure(_controller, _node, _panel);
 
-        if (_background != null)
-        _background.color = active ? MvpStudentUiFactory.Mint : _baseColor;
-        if (_label != null)
-        {
-            _label.fontSize = 16f;
-            _label.alignment = TextAlignmentOptions.Center;
-            _label.textWrappingMode = TextWrappingModes.NoWrap;
-            _label.text = active ? "끄기" : "활성화";
-        }
+        // 활성 상태면 Deactivate(다시 누르면 끔), 아니면 Activate.
+        ApplySprite(active ? "deactivate_default" : "activate_default");
     }
 
     public void OnPointerClick(PointerEventData eventData)
