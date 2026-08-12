@@ -49,6 +49,10 @@ public class MvpRayDebugHud : MonoBehaviour
 
     private void Update()
     {
+        // 화면 갱신은 느리게, 표본 수집은 매 프레임.
+        // 한 프레임 단위로 껐다 켜지는 것을 0.2초 간격으로 재면 놓친다.
+        TrackFlicker();
+
         if (Time.unscaledTime < _next)
             return;
         _next = Time.unscaledTime + Interval;
@@ -63,6 +67,110 @@ public class MvpRayDebugHud : MonoBehaviour
         TrackToggles();
         FollowCamera();
         _text.text = Compose();
+    }
+
+    // ------------------------------------------------------------------
+    // 패널 깜빡임 추적: 레이가 아니라 UI 쪽이 껐다 켜지는 경우를 잡는다.
+    // ------------------------------------------------------------------
+
+    private readonly Dictionary<string, float> _alphaLast = new Dictionary<string, float>();
+    private readonly Dictionary<string, List<float>> _alphaFlips =
+        new Dictionary<string, List<float>>();
+    private readonly List<float> _stepFlips = new List<float>();
+    private string _lastStep = null;
+    private Component _guide;
+    private FieldInfo _stepField;
+
+    private void TrackFlicker()
+    {
+        float now = Time.unscaledTime;
+
+        if (_guide == null)
+        {
+            foreach (MonoBehaviour mb in FindObjectsByType<MonoBehaviour>(
+                         FindObjectsInactive.Include, FindObjectsSortMode.None))
+            {
+                if (mb != null && mb.GetType().Name == "MvpLobbyFlowGuide")
+                {
+                    _guide = mb;
+                    _stepField = mb.GetType().GetField("_current",
+                        BindingFlags.NonPublic | BindingFlags.Instance);
+                    break;
+                }
+            }
+        }
+
+        if (_guide != null && _stepField != null)
+        {
+            string step = "" + _stepField.GetValue(_guide);
+            if (_lastStep != null && step != _lastStep)
+                _stepFlips.Add(now);
+            _lastStep = step;
+            _stepFlips.RemoveAll(t => now - t > Window);
+        }
+
+        foreach (Canvas cv in FindObjectsByType<Canvas>(
+                     FindObjectsInactive.Include, FindObjectsSortMode.None))
+        {
+            if (cv == null || cv.transform.root != cv.transform ||
+                !cv.name.StartsWith("Lobby"))
+                continue;
+
+            CanvasGroup cg = cv.GetComponent<CanvasGroup>();
+            float a = cg != null ? cg.alpha : (cv.gameObject.activeInHierarchy ? 1f : 0f);
+
+            if (!_alphaFlips.ContainsKey(cv.name))
+            {
+                _alphaFlips[cv.name] = new List<float>();
+                _alphaLast[cv.name] = a;
+            }
+
+            // 보임/안보임이 뒤집힌 횟수만 센다(미세한 값 변화는 무시).
+            // 알파뿐 아니라 오브젝트가 꺼지는 경우도 같이 본다.
+            bool wasOn = _alphaLast[cv.name] > 0.5f;
+            bool isOn = a > 0.5f && cv.gameObject.activeInHierarchy;
+            if (wasOn != isOn)
+                _alphaFlips[cv.name].Add(now);
+            _alphaLast[cv.name] = isOn ? Mathf.Max(a, 0.51f) : 0f;
+            _alphaFlips[cv.name].RemoveAll(t => now - t > Window);
+        }
+
+        // 인터랙터는 계속 켜져 있는데 "무엇을 잡고 있는지"만 흔들리는 경우.
+        // 그러면 버튼 하이라이트가 켜졌다 꺼졌다 하며 UI 가 깜빡이는 것처럼 보인다.
+        foreach (Component ray in _rays)
+        {
+            if (ray == null || _stateProp == null)
+                continue;
+
+            object s = SafeGet(_stateProp, ray);
+            string cur = s != null ? s.ToString() : "-";
+            if (!_stateFlips.ContainsKey(ray))
+            {
+                _stateFlips[ray] = new List<float>();
+                _stateLast[ray] = cur;
+            }
+            if (_stateLast[ray] != cur)
+                _stateFlips[ray].Add(now);
+            _stateLast[ray] = cur;
+            _stateFlips[ray].RemoveAll(t => now - t > Window);
+        }
+    }
+
+    private readonly Dictionary<Component, List<float>> _stateFlips =
+        new Dictionary<Component, List<float>>();
+    private readonly Dictionary<Component, string> _stateLast =
+        new Dictionary<Component, string>();
+
+    /// <summary>진단 결과를 코드에서 읽기 위한 것(에디터 확인용).</summary>
+    public string Report()
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine("단계 = " + _lastStep + "  / 최근 " + Window + "초 단계 바뀜 " +
+                      _stepFlips.Count + "회");
+        foreach (var kv in _alphaFlips)
+            sb.AppendLine("  " + kv.Key + " 보임 뒤집힘 " + kv.Value.Count + "회  (현재 alpha " +
+                          _alphaLast[kv.Key].ToString("F2") + ")");
+        return sb.ToString();
     }
 
     // ------------------------------------------------------------------
@@ -116,6 +224,18 @@ public class MvpRayDebugHud : MonoBehaviour
                       "    " + ActiveStateLine("ControllerActiveState", "컨트롤러"));
 
         sb.AppendLine();
+        sb.AppendLine("<b>패널</b>  단계 " + _lastStep +
+                      "  바뀜 " + Warn(_stepFlips.Count));
+        foreach (var kv in _alphaFlips)
+        {
+            if (kv.Value.Count == 0 && _alphaLast[kv.Key] < 0.5f)
+                continue;   // 계속 꺼져 있는 것은 굳이 보여주지 않는다
+            sb.AppendLine("   " + kv.Key.Replace("LobbyCanvas", "LC") +
+                          "  alpha " + _alphaLast[kv.Key].ToString("F1") +
+                          "  깜빡임 " + Warn(kv.Value.Count));
+        }
+
+        sb.AppendLine();
         sb.AppendLine("<b>레이 (최근 " + Window + "초 깜빡임)</b>");
 
         foreach (Component ray in _rays)
@@ -139,11 +259,13 @@ public class MvpRayDebugHud : MonoBehaviour
                     holding = b ? "잡음" : "없음";
             }
 
+            int stateFlips = _stateFlips.ContainsKey(ray) ? _stateFlips[ray].Count : 0;
+
             sb.AppendLine(
                 (on ? "<color=#7CFF7C>ON </color>" : "<color=#FF7C7C>OFF</color>") +
                 "  " + Side(ray) + " " + Short(ray.name) +
                 "   " + state + " / " + holding +
-                "   깜빡임 " + (blinks > 0 ? "<color=#FFD24A>" + blinks + "</color>" : "0"));
+                "   껐켰 " + Warn(blinks) + "  잡았다놨다 " + Warn(stateFlips));
         }
 
         return sb.ToString();
@@ -189,6 +311,9 @@ public class MvpRayDebugHud : MonoBehaviour
 
     private static string Short(string name) =>
         name.Replace("Interactor", string.Empty);
+
+    private static string Warn(int n) =>
+        n > 0 ? "<color=#FFD24A>" + n + "</color>" : "0";
 
     // ------------------------------------------------------------------
 
