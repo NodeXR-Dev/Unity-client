@@ -38,6 +38,14 @@ public class MvpOnDeviceDictation : MonoBehaviour
         Path.Combine(Application.streamingAssetsPath, "SherpaOnnx/ko-zipformer");
 #endif
 
+    // ModelDir 는 Application.persistentDataPath 를 부르는데 이건 메인 스레드 전용이다.
+    // 인식기 생성을 워커 스레드로 옮겼으므로(아래 PrepareRoutine 참고) 경로는
+    // 메인 스레드에서 미리 확정해 둔다.
+    private static string _modelDirCache;
+
+    private static string ModelDirCached =>
+        _modelDirCache ?? (_modelDirCache = ModelDir);
+
     // 인식기(≈수백 MB 모델 로드)는 프로세스에 하나만 — 액션바용/키보드용 컴포넌트가
     // 각자 만들면 메모리가 두 배가 된다(Quest 치명적). 스트림/마이크는 인스턴스별.
     private static OnlineRecognizer _sharedRecognizer;
@@ -87,7 +95,7 @@ public class MvpOnDeviceDictation : MonoBehaviour
     {
 #if UNITY_EDITOR || UNITY_STANDALONE_WIN
         return !_unavailable &&
-               File.Exists(Path.Combine(ModelDir, "tokens.txt"));
+               File.Exists(Path.Combine(ModelDirCached, "tokens.txt"));
 #elif UNITY_ANDROID
         return !_unavailable;
 #else
@@ -139,7 +147,7 @@ public class MvpOnDeviceDictation : MonoBehaviour
         Directory.CreateDirectory(ModelDir);
         foreach (string file in ModelFiles)
         {
-            string dst = Path.Combine(ModelDir, file);
+            string dst = Path.Combine(ModelDirCached, file);
             if (File.Exists(dst) && new FileInfo(dst).Length > 0)
                 continue;
 
@@ -162,10 +170,31 @@ public class MvpOnDeviceDictation : MonoBehaviour
         }
 #endif
 
-        // 3) 인식기 초기화 (Quest 에서 수 초 걸릴 수 있음)
+        // 3) 인식기 초기화
+        //
+        // 130MB 모델을 올리는 작업이라 메인 스레드에서 하면 Quest 에서 몇 초간
+        // 화면이 멈추고 시스템 모래시계가 뜬다. 워커 스레드로 넘기고 기다린다.
+        // 경로(Application.persistentDataPath)는 메인 스레드 전용이라 먼저 확정한다.
         onStatus?.Invoke("음성 인식 준비 중…");
+        _ = ModelDirCached;
         yield return null;   // 상태 문구가 먼저 그려지도록 한 프레임 양보
-        bool ok = EnsureRecognizer();
+
+        bool finished = false;
+        bool ok = false;
+        var initThread = new Thread(() =>
+        {
+            ok = EnsureRecognizer();
+            finished = true;
+        })
+        {
+            IsBackground = true,
+            Name = "MvpSttInit"
+        };
+        initThread.Start();
+
+        while (!finished)
+            yield return null;
+
         onDone?.Invoke(ok, ok ? null : "음성 인식기를 초기화하지 못했어요.");
     }
 
@@ -380,13 +409,13 @@ public class MvpOnDeviceDictation : MonoBehaviour
             config.FeatConfig.SampleRate = SampleRate;
             config.FeatConfig.FeatureDim = 80;
             config.ModelConfig.Transducer.Encoder =
-                Path.Combine(ModelDir, "encoder-epoch-99-avg-1.int8.onnx");
+                Path.Combine(ModelDirCached, "encoder-epoch-99-avg-1.int8.onnx");
             config.ModelConfig.Transducer.Decoder =
-                Path.Combine(ModelDir, "decoder-epoch-99-avg-1.int8.onnx");
+                Path.Combine(ModelDirCached, "decoder-epoch-99-avg-1.int8.onnx");
             config.ModelConfig.Transducer.Joiner =
-                Path.Combine(ModelDir, "joiner-epoch-99-avg-1.int8.onnx");
+                Path.Combine(ModelDirCached, "joiner-epoch-99-avg-1.int8.onnx");
             config.ModelConfig.Tokens =
-                Path.Combine(ModelDir, "tokens.txt");
+                Path.Combine(ModelDirCached, "tokens.txt");
             config.ModelConfig.NumThreads = 2;
             config.ModelConfig.Provider = "cpu";
             config.DecodingMethod = "greedy_search";

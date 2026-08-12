@@ -226,10 +226,21 @@ public class MvpMeetingRoomPlayerController : MonoBehaviour
 
         float offset =
             (index - (slots - 1) * 0.5f) * _openFloorSpacing;
-        Vector3 targetEye =
-            _openFloorCenter +
-            right * offset +
-            Vector3.up * _standingEyeHeight;
+        // 서는 자리는 '바닥'이다. 헤드셋은 바닥 기준 트래킹이라 머리 높이는 HMD 가 준다.
+        // 그러므로 리그 루트(= 발 위치)를 바닥에 놓아야 시야와 아바타가 같이 맞는다.
+        //
+        // 예전에는 머리를 _standingEyeHeight 로 끌어올렸다. 그러면 리그 루트가
+        //     바닥 − (실제 키 − 1.55m)
+        // 만큼 내려앉는다. 시야는 맞는데 아바타(XRPlayerBinder 가 리그 루트를 따라간다)만
+        // 바닥 아래로 파묻혀 카메라와 캐릭터 위치가 어긋났다. 키가 클수록 더 벌어진다.
+        Vector3 targetFloor = _openFloorCenter + right * offset;
+
+        // 에디터에는 HMD 가 없어 머리가 리그와 같은 높이다. 그대로 두면 화면이
+        // 바닥에 붙으므로 이때만 눈높이만큼 올려 준다.
+        bool hasHeadHeight =
+            head.transform.position.y - _cameraRig.transform.position.y > 0.2f;
+        if (!hasHeadHeight)
+            targetFloor += Vector3.up * _standingEyeHeight;
 
         Vector3 currentForward = Vector3.ProjectOnPlane(
             head.transform.forward,
@@ -247,19 +258,10 @@ public class MvpMeetingRoomPlayerController : MonoBehaviour
             Vector3.up,
             yaw);
 
-        // 헤드 앵커는 리그의 자식이라 보통 이 보정이 한 번에 수렴한다.
-        // 다만 트래킹이 아직 안 붙은 프레임에는 헤드 위치가 튀어서
-        // 12프레임 반복 보정이 누적 발산할 수 있다(로비에서 y=-743 관측).
-        // 비정상적으로 큰 보정이면 오프셋을 믿지 않고 리그를 목표에 직접 둔다.
-        Vector3 delta = targetEye - head.transform.position;
-        const float MaxCorrection = 50f;
-        if (delta.sqrMagnitude > MaxCorrection * MaxCorrection)
-        {
-            _cameraRig.transform.position = targetEye;
-            return true;
-        }
-
-        _cameraRig.transform.position += delta;
+        // 리그 루트를 목표 바닥에 직접 둔다. 머리 위치를 기준으로 상대 보정하면
+        // 트래킹이 아직 안 붙은 프레임에 머리가 튀어 보정이 누적 발산한다
+        // (로비에서 y=-743 까지 내려간 적이 있다). 직접 대입은 그 위험이 없다.
+        _cameraRig.transform.position = targetFloor;
         return true;
     }
 
