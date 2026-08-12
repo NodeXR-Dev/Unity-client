@@ -9540,6 +9540,7 @@ GameObject:
   - component: {fileID: 1030815424}
   - component: {fileID: 1650281640}
   - component: {fileID: 1650281641}
+  - component: {fileID: 1650281642}
   m_Layer: 0
   m_Name: MvpApp
   m_TagString: Untagged
@@ -12562,6 +12563,23 @@ MonoBehaviour:
   _fogStart: 90
   _fogEnd: 260
   _fogColor: {r: 0.66, g: 0.74, b: 0.84, a: 1}
+--- !u!114 &1650281642
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1030815416}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 438823e9e5e0ca646930ed07fe0775d8, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  _boardOffset: {x: 0, y: -430}
+  _size: {x: 1180, y: 150}
+  _stampSize: 46
+  _selectedSize: 62
+  _emptyText: "\uC544\uC9C1 \uB418\uB3CC\uC544\uAC08 \uAE30\uB85D\uC774 \uC5C6\uC5B4\uC694"
 --- !u!1 &1662339465
 GameObject:
   m_ObjectHideFlags: 0
