@@ -221,6 +221,56 @@ public class MvpLobbyFlowGuide : MonoBehaviour
             go.SetActive(on);
     }
 
+    // 배경 FBX 안의 로케이터. 디자이너가 "여기 UI를 붙이라"고 심어 둔 자리다.
+    // 있으면 그쪽을 우선하고, 없으면 플레이어 기준으로 계산한다.
+    private Transform _uiAnchor;
+    private Transform _userSpawn;
+
+    private bool _spawnApplied;
+
+    private void ResolveLocators()
+    {
+        if (_uiAnchor == null || _userSpawn == null)
+        {
+            GameObject world = GameObject.Find("XRMeetingWorld");
+            if (world == null)
+                return;
+
+            foreach (Transform t in world.transform)
+            {
+                if (t.name == "ANCHOR_StartUI") _uiAnchor = t;
+                else if (t.name == "SPAWN_User") _userSpawn = t;
+            }
+        }
+
+        ApplySpawnOnce();
+    }
+
+    /// <summary>
+    /// 사용자를 SPAWN_User 로케이터에 세우고 UI(=노을) 쪽을 보게 한다.
+    /// 씬에 저장해 둔 리그 회전은 런타임에 (0,0,0) 으로 초기화돼 버려서
+    /// 여기서 한 번 잡아 준다. 이후에는 건드리지 않아 자유롭게 둘러볼 수 있다.
+    /// </summary>
+    private void ApplySpawnOnce()
+    {
+        if (_spawnApplied || _uiAnchor == null || _userSpawn == null || _player == null)
+            return;
+
+        Vector3 forward = _uiAnchor.position - _userSpawn.position;
+        forward.y = 0f;
+        if (forward.sqrMagnitude < 0.001f)
+            return;
+        forward.Normalize();
+
+        _player.SetPositionAndRotation(
+            _userSpawn.position,
+            Quaternion.LookRotation(forward, Vector3.up));
+        _spawnApplied = true;
+
+        Debug.Log("[MVP 로비] SPAWN_User 로케이터에 배치했습니다 — " +
+                  _userSpawn.position.ToString("F2"));
+    }
+
     // 지금 단계의 캔버스를 눈앞 정해진 거리에 세운다.
     private void PlaceActiveCanvas(Step step)
     {
@@ -233,14 +283,33 @@ public class MvpLobbyFlowGuide : MonoBehaviour
         if (target == null)
             return;
 
-        Vector3 forward = Vector3.ProjectOnPlane(_player.forward, Vector3.up);
-        if (forward.sqrMagnitude < 0.001f)
-            forward = Vector3.forward;
-        forward.Normalize();
+        ResolveLocators();
 
-        Vector3 basePos = new Vector3(_player.position.x, 0f, _player.position.z);
-        Vector3 pos = basePos + forward * _distance;
-        pos.y = _eyeHeight;
+        Vector3 forward;
+        Vector3 pos;
+
+        if (_uiAnchor != null && _userSpawn != null)
+        {
+            // 로케이터 기준: 사용자는 SPAWN_User 에 서고 UI 는 ANCHOR_StartUI 에 뜬다.
+            // 둘 사이 거리가 곧 디자이너가 정한 시야 거리(1.8m)다.
+            forward = _uiAnchor.position - _userSpawn.position;
+            forward.y = 0f;
+            if (forward.sqrMagnitude < 0.001f)
+                forward = Vector3.forward;
+            forward.Normalize();
+            pos = _uiAnchor.position;
+        }
+        else
+        {
+            forward = Vector3.ProjectOnPlane(_player.forward, Vector3.up);
+            if (forward.sqrMagnitude < 0.001f)
+                forward = Vector3.forward;
+            forward.Normalize();
+
+            Vector3 basePos = new Vector3(_player.position.x, 0f, _player.position.z);
+            pos = basePos + forward * _distance;
+            pos.y = _eyeHeight;
+        }
 
         RectTransform content = ContentOf(step);
 
@@ -381,14 +450,33 @@ public class MvpLobbyFlowGuide : MonoBehaviour
         if (target == null)
             return;
 
-        Vector3 forward = Vector3.ProjectOnPlane(_player.forward, Vector3.up);
-        if (forward.sqrMagnitude < 0.001f)
-            forward = Vector3.forward;
-        forward.Normalize();
+        ResolveLocators();
 
-        Vector3 basePos = new Vector3(_player.position.x, 0f, _player.position.z);
-        Vector3 pos = basePos + forward * (_distance - 0.02f);
-        pos.y = _eyeHeight + 0.72f;
+        Vector3 forward;
+        Vector3 pos;
+
+        if (_uiAnchor != null && _userSpawn != null)
+        {
+            forward = _uiAnchor.position - _userSpawn.position;
+            forward.y = 0f;
+            if (forward.sqrMagnitude < 0.001f)
+                forward = Vector3.forward;
+            forward.Normalize();
+            // 패널보다 살짝 앞·위에 띄워 겹치지 않게 한다.
+            pos = _uiAnchor.position - forward * 0.02f;
+            pos.y = _uiAnchor.position.y + 0.72f;
+        }
+        else
+        {
+            forward = Vector3.ProjectOnPlane(_player.forward, Vector3.up);
+            if (forward.sqrMagnitude < 0.001f)
+                forward = Vector3.forward;
+            forward.Normalize();
+
+            Vector3 basePos = new Vector3(_player.position.x, 0f, _player.position.z);
+            pos = basePos + forward * (_distance - 0.02f);
+            pos.y = _eyeHeight + 0.72f;
+        }
 
         _stepLabel.transform.parent.SetPositionAndRotation(
             pos,
