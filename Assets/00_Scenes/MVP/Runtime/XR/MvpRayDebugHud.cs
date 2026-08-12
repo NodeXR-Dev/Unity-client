@@ -52,6 +52,7 @@ public class MvpRayDebugHud : MonoBehaviour
         // 화면 갱신은 느리게, 표본 수집은 매 프레임.
         // 한 프레임 단위로 껐다 켜지는 것을 0.2초 간격으로 재면 놓친다.
         TrackFlicker();
+        TrackLine();
 
         if (Time.unscaledTime < _next)
             return;
@@ -161,6 +162,90 @@ public class MvpRayDebugHud : MonoBehaviour
     private readonly Dictionary<Component, string> _stateLast =
         new Dictionary<Component, string>();
 
+    // ------------------------------------------------------------------
+    // 선이 실제로 꺼지는 순간을 잰다.
+    //
+    // RayInteractorRayVisual.UpdateVisual():
+    //     if (State == Disabled || (_hideWhenNoInteractable && Interactable == null))
+    //         _renderer.enabled = false;
+    //
+    // 즉 선이 껌뻑이는 원인은 둘 중 하나뿐이다.
+    //   (A) 인터랙터가 Disabled 로 꺼진다        -> 게이트/ActiveState 문제
+    //   (B) 잡고 있던 대상(Interactable)이 사라진다 -> 히트 판정 문제
+    // 어느 쪽인지 세어서 구분한다.
+    // ------------------------------------------------------------------
+
+    private readonly List<Component> _visuals = new List<Component>();
+    private readonly Dictionary<Component, bool> _lineLast = new Dictionary<Component, bool>();
+    private readonly Dictionary<Component, List<float>> _lineFlips =
+        new Dictionary<Component, List<float>>();
+    private int _causeDisabled;
+    private int _causeNoTarget;
+
+    private void TrackLine()
+    {
+        float now = Time.unscaledTime;
+
+        if (_visuals.Count == 0)
+        {
+            foreach (MonoBehaviour mb in FindObjectsByType<MonoBehaviour>(
+                         FindObjectsInactive.Include, FindObjectsSortMode.None))
+            {
+                if (mb != null && mb.GetType().Name == "RayInteractorRayVisual")
+                {
+                    _visuals.Add(mb);
+                    _lineFlips[mb] = new List<float>();
+                    _lineLast[mb] = true;
+                }
+            }
+        }
+
+        foreach (Component v in _visuals)
+        {
+            if (v == null)
+                continue;
+
+            FieldInfo rf = v.GetType().GetField("_renderer",
+                BindingFlags.NonPublic | BindingFlags.Instance);
+            var rend = rf != null ? rf.GetValue(v) as Renderer : null;
+            if (rend == null)
+                continue;
+
+            bool on = rend.enabled;
+            if (_lineLast[v] != on)
+            {
+                _lineFlips[v].Add(now);
+
+                // 꺼진 순간에만 원인을 기록한다.
+                if (!on)
+                {
+                    FieldInfo inf = v.GetType().GetField("_rayInteractor",
+                        BindingFlags.NonPublic | BindingFlags.Instance);
+                    Component ray = inf != null ? inf.GetValue(v) as Component : null;
+                    if (ray != null)
+                    {
+                        object st = SafeGet(ray.GetType().GetProperty("State"), ray);
+                        object it = SafeGet(ray.GetType().GetProperty("Interactable"), ray);
+                        if (st != null && st.ToString() == "Disabled")
+                            _causeDisabled++;
+                        else if (it == null)
+                            _causeNoTarget++;
+                    }
+                }
+            }
+            _lineLast[v] = on;
+            _lineFlips[v].RemoveAll(t => now - t > Window);
+        }
+    }
+
+    private int LineFlips()
+    {
+        int n = 0;
+        foreach (var kv in _lineFlips)
+            n += kv.Value.Count;
+        return n;
+    }
+
     /// <summary>진단 결과를 코드에서 읽기 위한 것(에디터 확인용).</summary>
     public string Report()
     {
@@ -234,6 +319,11 @@ public class MvpRayDebugHud : MonoBehaviour
                           "  alpha " + _alphaLast[kv.Key].ToString("F1") +
                           "  깜빡임 " + Warn(kv.Value.Count));
         }
+
+        sb.AppendLine();
+        sb.AppendLine("<b>선이 꺼진 횟수 " + Warn(LineFlips()) + "</b>" +
+                      "   원인: 인터랙터꺼짐 " + Warn(_causeDisabled) +
+                      " / 대상놓침 " + Warn(_causeNoTarget));
 
         sb.AppendLine();
         sb.AppendLine("<b>레이 (최근 " + Window + "초 깜빡임)</b>");
