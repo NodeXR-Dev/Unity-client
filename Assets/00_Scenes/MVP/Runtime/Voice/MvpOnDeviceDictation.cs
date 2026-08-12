@@ -38,6 +38,14 @@ public class MvpOnDeviceDictation : MonoBehaviour
         Path.Combine(Application.streamingAssetsPath, "SherpaOnnx/ko-zipformer");
 #endif
 
+    // ModelDir 는 Application.persistentDataPath 를 부르는데 이건 메인 스레드 전용이다.
+    // 인식기 생성을 워커 스레드로 옮겼으므로(아래 PrepareRoutine 참고) 경로는
+    // 메인 스레드에서 미리 확정해 둔다.
+    private static string _modelDirCache;
+
+    private static string ModelDirCached =>
+        _modelDirCache ?? (_modelDirCache = ModelDir);
+
     // 인식기(≈수백 MB 모델 로드)는 프로세스에 하나만 — 액션바용/키보드용 컴포넌트가
     // 각자 만들면 메모리가 두 배가 된다(Quest 치명적). 스트림/마이크는 인스턴스별.
     private static OnlineRecognizer _sharedRecognizer;
@@ -69,6 +77,12 @@ public class MvpOnDeviceDictation : MonoBehaviour
     private volatile string _workerFinal;
     private volatile bool _workerEndpoint;   // 문장 끝 무음 감지
 
+    // 듣기를 멈춘 뒤 워커의 마무리를 기다리는 중인지. 메인 스레드는 여기서
+    // 블록하지 않고 Update 에서 폴링한다(Join 은 Quest 에서 모래시계를 부른다).
+    private const float FlushTimeoutSeconds = 2f;
+    private bool _awaitingFinal;
+    private float _flushStartedAt;
+
     private static OnlineRecognizer Recognizer => _sharedRecognizer;
 
     public event Action<string> OnPartial;   // 듣는 중 부분 자막
@@ -87,7 +101,7 @@ public class MvpOnDeviceDictation : MonoBehaviour
     {
 #if UNITY_EDITOR || UNITY_STANDALONE_WIN
         return !_unavailable &&
-               File.Exists(Path.Combine(ModelDir, "tokens.txt"));
+               File.Exists(Path.Combine(ModelDirCached, "tokens.txt"));
 #elif UNITY_ANDROID
         return !_unavailable;
 #else
@@ -139,7 +153,7 @@ public class MvpOnDeviceDictation : MonoBehaviour
         Directory.CreateDirectory(ModelDir);
         foreach (string file in ModelFiles)
         {
-            string dst = Path.Combine(ModelDir, file);
+            string dst = Path.Combine(ModelDirCached, file);
             if (File.Exists(dst) && new FileInfo(dst).Length > 0)
                 continue;
 
@@ -162,10 +176,31 @@ public class MvpOnDeviceDictation : MonoBehaviour
         }
 #endif
 
-        // 3) 인식기 초기화 (Quest 에서 수 초 걸릴 수 있음)
+        // 3) 인식기 초기화
+        //
+        // 130MB 모델을 올리는 작업이라 메인 스레드에서 하면 Quest 에서 몇 초간
+        // 화면이 멈추고 시스템 모래시계가 뜬다. 워커 스레드로 넘기고 기다린다.
+        // 경로(Application.persistentDataPath)는 메인 스레드 전용이라 먼저 확정한다.
         onStatus?.Invoke("음성 인식 준비 중…");
+        _ = ModelDirCached;
         yield return null;   // 상태 문구가 먼저 그려지도록 한 프레임 양보
-        bool ok = EnsureRecognizer();
+
+        bool finished = false;
+        bool ok = false;
+        var initThread = new Thread(() =>
+        {
+            ok = EnsureRecognizer();
+            finished = true;
+        })
+        {
+            IsBackground = true,
+            Name = "MvpSttInit"
+        };
+        initThread.Start();
+
+        while (!finished)
+            yield return null;
+
         onDone?.Invoke(ok, ok ? null : "음성 인식기를 초기화하지 못했어요.");
     }
 
@@ -175,6 +210,11 @@ public class MvpOnDeviceDictation : MonoBehaviour
             return true;
         if (!IsSupported() || !EnsureRecognizer())
             return false;
+
+        // 앞 세션의 마무리 결과가 아직 안 나왔으면 먼저 거둬들인다.
+        // (안 그러면 새 워커가 참조를 덮어써 그 문장이 사라진다)
+        if (_awaitingFinal)
+            PumpFinalResult();
 
         // 다른 소비자(예: 키보드 ↔ 액션바)가 듣는 중이면 그쪽을 먼저 확정·정리한다.
         if (_activeListener != null && _activeListener != this)
@@ -286,29 +326,57 @@ public class MvpOnDeviceDictation : MonoBehaviour
         _micClip = null;
         Level = 0f;
 
-        // 마무리 디코딩은 워커가 한다(무음 패딩 포함). 여기서는 결과만 기다린다.
-        string text = "";
+        // 마무리 디코딩(무음 패딩 포함)은 워커가 이어서 한다.
+        //
+        // 예전에는 여기서 Join(1500) 으로 기다렸는데, 그러면 말이 끝날 때마다
+        // 메인 스레드가 최대 1.5초 멈춘다. Quest 에서 그때마다 모래시계가 떴다.
+        // 신호만 주고 즉시 빠져나오고, 결과는 Update 가 받아 OnFinal 로 넘긴다.
         if (_worker != null)
         {
             _flushRequested = true;
-            if (!_worker.Join(1500))
-                Debug.LogWarning(
-                    "[MVP STT] 인식 스레드 마무리가 늦어 부분 결과를 사용합니다.");
-            text = _workerFinished
-                ? (_workerFinal ?? "")
-                : (_workerPartial ?? "");
-            _worker = null;
+            _awaitingFinal = true;
+            _flushStartedAt = Time.unscaledTime;
         }
-        // 스트림 정리는 워커의 finally 가 책임진다(대기 시간 초과로 아직 쓰는 중일 수 있다).
+
+        return _workerPartial ?? "";
+    }
+
+    // 워커가 마무리 디코딩을 끝냈는지 확인하고, 끝났으면 확정 문장을 넘긴다.
+    private void PumpFinalResult()
+    {
+        if (_worker == null)
+        {
+            _awaitingFinal = false;
+            return;
+        }
+
+        bool timedOut = Time.unscaledTime - _flushStartedAt > FlushTimeoutSeconds;
+        if (!_workerFinished && !timedOut)
+            return;
+
+        if (timedOut && !_workerFinished)
+            Debug.LogWarning(
+                "[MVP STT] 인식 스레드 마무리가 늦어 부분 결과를 사용합니다.");
+
+        string text = _workerFinished
+            ? (_workerFinal ?? "")
+            : (_workerPartial ?? "");
+
+        _worker = null;
+        // 스트림 정리는 워커의 finally 가 책임진다(아직 쓰는 중일 수 있다).
         _stream = null;
+        _awaitingFinal = false;
 
         if (text.Length > 0)
             OnFinal?.Invoke(text);
-        return text;
     }
 
     private void Update()
     {
+        // 듣기를 멈춘 뒤 워커의 마무리 결과를 받아 가는 단계.
+        if (_awaitingFinal)
+            PumpFinalResult();
+
         if (!_listening)
             return;
 
@@ -380,13 +448,13 @@ public class MvpOnDeviceDictation : MonoBehaviour
             config.FeatConfig.SampleRate = SampleRate;
             config.FeatConfig.FeatureDim = 80;
             config.ModelConfig.Transducer.Encoder =
-                Path.Combine(ModelDir, "encoder-epoch-99-avg-1.int8.onnx");
+                Path.Combine(ModelDirCached, "encoder-epoch-99-avg-1.int8.onnx");
             config.ModelConfig.Transducer.Decoder =
-                Path.Combine(ModelDir, "decoder-epoch-99-avg-1.int8.onnx");
+                Path.Combine(ModelDirCached, "decoder-epoch-99-avg-1.int8.onnx");
             config.ModelConfig.Transducer.Joiner =
-                Path.Combine(ModelDir, "joiner-epoch-99-avg-1.int8.onnx");
+                Path.Combine(ModelDirCached, "joiner-epoch-99-avg-1.int8.onnx");
             config.ModelConfig.Tokens =
-                Path.Combine(ModelDir, "tokens.txt");
+                Path.Combine(ModelDirCached, "tokens.txt");
             config.ModelConfig.NumThreads = 2;
             config.ModelConfig.Provider = "cpu";
             config.DecodingMethod = "greedy_search";

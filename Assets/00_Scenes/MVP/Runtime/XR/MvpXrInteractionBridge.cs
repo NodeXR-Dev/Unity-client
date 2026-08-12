@@ -51,7 +51,8 @@ public class MvpXrInteractionBridge : MonoBehaviour
             if (!IsSceneCanvas(canvas) ||
                 canvas.renderMode != RenderMode.WorldSpace ||
                 !canvas.isActiveAndEnabled ||
-                !HasInteractiveContent(canvas))
+                !HasInteractiveContent(canvas) ||
+                AlreadyWiredByDesigner(canvas))
                 continue;
 
             if (WireCanvas(canvas))
@@ -88,6 +89,29 @@ public class MvpXrInteractionBridge : MonoBehaviour
                 "[MVP XR] 손 레이·핀치 입력 준비: Canvas " +
                 canvasCount + "개, 입력칸 " + inputCount + "개");
         }
+    }
+
+    /// <summary>
+    /// 디자이너 캔버스처럼 자식에 ISDK 리그(PointableCanvas)가 이미 붙어 있으면 건너뛴다.
+    ///
+    /// 여기서 또 PointableCanvas / RayInteractable 을 붙이면 같은 캔버스가 두 번
+    /// 등록되어 포인터 이벤트가 중복되고, 호버가 매 프레임 뒤집혀 레이가 깜빡인다.
+    /// 로비 캔버스 3개가 그 경우다(ISDK_RayCanvasInteraction 을 이미 갖고 있다).
+    /// </summary>
+    private static bool AlreadyWiredByDesigner(Canvas canvas)
+    {
+        PointableCanvas[] existing =
+            canvas.GetComponentsInChildren<PointableCanvas>(true);
+
+        foreach (PointableCanvas pointable in existing)
+        {
+            // 이 다리가 붙인 것은 캔버스 자신에 올라간다.
+            // 자식에 있는 것은 원본 리그가 담당하고 있다는 뜻이다.
+            if (pointable != null && pointable.gameObject != canvas.gameObject)
+                return true;
+        }
+
+        return false;
     }
 
     private bool WireCanvas(Canvas canvas)
