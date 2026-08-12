@@ -1,6 +1,40 @@
 # NodeXR TODO — 개발자 3 (노드그래프 / GraphData / 서버 반영)
 
-마지막 업데이트: 2026-08-08
+마지막 업데이트: 2026-08-12
+
+---
+
+## 2026-08-12 팀원 원격 접속용 서버 주소 확보 (씬 3곳 교체)
+
+팀원들이 각자 집에서 Quest 로 붙어야 하는데, 씬에 박혀 있던 서버 주소
+(`scores-texts-pierre-origin.trycloudflare.com`)가 죽어 있었다. 임시 터널이라
+껐다 켜면 주소가 바뀌는 종류였다. **Unity 는 서버 주소를 앱에 구워서 빌드하므로
+주소가 바뀌면 팀원 헤드셋마다 재설치가 필요하다** — 고정 주소가 요구사항의 핵심.
+
+- [x] **씬 3곳 주소 교체** → `https://yippee-connector-ritzy.ngrok-free.dev`
+  - `MvpLobby` : `NetworkManager.backendHost`, `LobbyCreateRequirementFlow.apiHost`
+  - `MVP_SH` : `MvpClassroomFlow._backendHost`
+  - 유니티가 켜져 있어 파일 직접 편집 대신 에디터(MCP)로 수정 후 저장. diff 는 주소 3줄뿐
+- [x] **터널 구성**(서버 repo `docker-compose.tunnel.yml`) — 로컬 서버를 고정 주소로 노출.
+  개발용 `docker-compose.yml` 은 안 건드려서 백엔드만 로컬로 돌리는 팀원에겐 영향 없음
+  ```
+  docker compose -f docker-compose.yml -f docker-compose.tunnel.yml up -d
+  ```
+- [x] **서버 이미지 8.89GB → 3.2GB**(서버 repo `Dockerfile`) — torch 를 기본 PyPI 에서 받아
+  CUDA 빌드가 딸려오고 있었다(nvidia 2.7G + triton 691M). GPU 를 쓰지 않으므로 CPU 전용
+  휠로 교체. 임베딩 모델도 이미지에 미리 받아 둬서, 기동 때마다 HuggingFace 를 타지 않는다
+  (다운로드 실패 시 lifespan 에서 서버가 아예 안 뜨던 경로 제거)
+- [x] **검증**(터널 경유 실측): 방 목록 200 / 방 생성 `ROOM200` / 타 사용자 입장 `ROOM203`.
+  Unity 와 같은 User-Agent 로도 ngrok 경고 페이지 없이 JSON 정상 수신
+
+### 조건 / 남은 것
+
+- 이 방식은 **형님 PC 가 켜져 있을 때만** 팀원이 접속 가능하다. 2달 임시 용도로 선택한 절충.
+  상시 가동이 필요해지면 서버 repo `chore/cloud-deploy` 브랜치의 배포 구성(`DEPLOY.md`)을 쓰면 된다
+- [ ] **`OPENAI_API_KEY` 재발급 필요** — 작업 중 명령 출력에 키가 노출됐다. 폐기 후 교체
+- [ ] MinIO(생성된 2D 이미지)는 아직 터널 밖으로 안 열려 있다. 아래 키가 들어와 2D 단계까지
+  도달할 때 같이 뚫는다
+- [ ] 팀원 배포용 APK 재빌드 — 씬 주소가 바뀌었으므로 기존 설치본은 옛 주소를 본다
 
 ---
 

@@ -9567,7 +9567,7 @@ MonoBehaviour:
   _generate3DController: {fileID: 0}
   _mainSketchView: {fileID: 555310988}
   _workspaceLayout: {fileID: 381997463}
-  _backendHost: https://scores-texts-pierre-origin.trycloudflare.com
+  _backendHost: https://yippee-connector-ritzy.ngrok-free.dev
   _tryBackendFirst: 1
   _imageWaitSeconds: 9
   _networkSession: {fileID: 1137757600}

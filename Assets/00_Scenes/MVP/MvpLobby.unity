@@ -999,7 +999,7 @@ MonoBehaviour:
   lobbySceneAsset: {fileID: 102900000, guid: 367a4292f6a9dbf45be08fb3b517486d, type: 3}
   gameplaySceneName: MVP_SH
   lobbySceneName: MvpLobby
-  backendHost: https://scores-texts-pierre-origin.trycloudflare.com
+  backendHost: https://yippee-connector-ritzy.ngrok-free.dev
   playerPrefab: {fileID: 3937044470431379454, guid: 00683ffc6b00f5145a3d3e5ef4b4ba39, type: 3}
   roomNameInput: {fileID: 363992408}
   passwordInput: {fileID: 351589245}
@@ -11192,7 +11192,7 @@ MonoBehaviour:
   m_HandleRect: {fileID: 1106776035}
   m_Direction: 0
   m_Value: 0
-  m_Size: 0.99999905
+  m_Size: 1
   m_NumberOfSteps: 0
   m_OnValueChanged:
     m_PersistentCalls:
@@ -39742,7 +39742,7 @@ MonoBehaviour:
   autoFindNetworkManager: 1
   creationTimeoutSeconds: 30
   sendFeatureTextToServer: 1
-  apiHost: https://scores-texts-pierre-origin.trycloudflare.com
+  apiHost: https://yippee-connector-ritzy.ngrok-free.dev
   featureRequestTimeoutSeconds: 60
   featureTextInput: {fileID: 0}
   testFeatureText: 
