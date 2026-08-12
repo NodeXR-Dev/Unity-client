@@ -1,5 +1,6 @@
 using TMPro;
 using UnityEngine;
+using UnityEngine.UI;
 
 /// <summary>
 /// 로비를 "한 번에 한 단계"로 보여준다.
@@ -84,11 +85,18 @@ public class MvpLobbyFlowGuide : MonoBehaviour
 
     private void ResolveReferences()
     {
-        if (_player == null)
+        if (_player == null || _head == null)
         {
             OVRCameraRig rig = FindFirstObjectByType<OVRCameraRig>();
             if (rig != null)
+            {
                 _player = rig.transform;
+                // 머리는 리그 위에 얹혀 돈다. 시작 방향을 맞출 때 이걸 빼줘야
+                // 헤드셋을 비스듬히 쓴 채로 들어와도 UI 가 정면에 온다.
+                _head = rig.centerEyeAnchor != null
+                    ? rig.centerEyeAnchor
+                    : (Camera.main != null ? Camera.main.transform : null);
+            }
         }
 
         if (_left == null)
@@ -104,6 +112,14 @@ public class MvpLobbyFlowGuide : MonoBehaviour
 
         if (_namePanel == null && _left != null)
             _namePanel = FindChild(_left, "NamePanel");
+
+        // 이름 확인 버튼(원본에서 SetPlayerNickname 을 부르는 그 버튼)에 한 번만 붙는다.
+        if (_nameButton == null && _namePanel != null)
+        {
+            _nameButton = _namePanel.GetComponentInChildren<Button>(true);
+            if (_nameButton != null)
+                _nameButton.onClick.AddListener(HandleNameConfirmed);
+        }
         if (_right == null)
             return;
         if (_createPanel == null)
@@ -163,8 +179,22 @@ public class MvpLobbyFlowGuide : MonoBehaviour
     private static bool IsOn(GameObject go) =>
         go != null && go.activeInHierarchy;
 
+    /// <summary>
+    /// 1단계(이름)를 끝냈는지.
+    ///
+    /// "입력칸에 글자가 있으면 끝난 것"으로 보면 안 된다. NetworkManager.Start() 가
+    /// 저장된 닉네임을(없으면 기본값 "Actor_1") 입력칸에 미리 써넣기 때문에
+    /// 칸은 항상 채워진 채로 시작하고, 그러면 1단계가 통째로 건너뛰어진다.
+    /// 실제로 실기기에서 2단계가 먼저 떴다.
+    ///
+    /// 그래서 사용자가 확인 버튼을 눌렀는지로 판단한다.
+    /// 버튼을 못 찾은 경우에만 예전 방식(칸에 글자가 있는지)으로 물러선다.
+    /// </summary>
     private bool HasNickname()
     {
+        if (_nameButton != null)
+            return _nameConfirmed;
+
         if (_namePanel == null)
             return false;
 
@@ -205,6 +235,7 @@ public class MvpLobbyFlowGuide : MonoBehaviour
         UpdateStepLabel(step);
     }
 
+
     private static void SetVisible(CanvasGroup group, bool visible)
     {
         if (group == null)
@@ -212,6 +243,32 @@ public class MvpLobbyFlowGuide : MonoBehaviour
         group.alpha = visible ? 1f : 0f;
         group.interactable = visible;
         group.blocksRaycasts = visible;
+
+        // CanvasGroup 은 Unity UI 의 레이캐스트만 막는다.
+        // Meta 의 RayInteractable / PokeInteractable 은 전혀 영향을 받지 않아,
+        // 투명해진 캔버스가 그대로 레이를 가로챈다.
+        //
+        // 실측(2단계): 1단계 캔버스가 alpha 0 인 채로 2단계보다 4cm 앞에 남아 있었다.
+        // 레이는 그 투명한 면에 붙어 선은 그려지는데(그래서 "레이는 간다"),
+        // 클릭은 blocksRaycasts=false 인 캔버스로 가서 아무 일도 일어나지 않았다.
+        SetMetaInteractables(group.transform, visible);
+    }
+
+    private static void SetMetaInteractables(Transform root, bool on)
+    {
+        if (root == null)
+            return;
+
+        foreach (MonoBehaviour behaviour in
+                 root.GetComponentsInChildren<MonoBehaviour>(true))
+        {
+            if (behaviour == null)
+                continue;
+
+            string name = behaviour.GetType().Name;
+            if (name == "RayInteractable" || name == "PokeInteractable")
+                behaviour.enabled = on;
+        }
     }
 
     // 이미 원하는 상태면 건드리지 않는다(원본 흐름의 SetActive 와 싸우지 않도록).
@@ -219,6 +276,107 @@ public class MvpLobbyFlowGuide : MonoBehaviour
     {
         if (go != null && go.activeSelf != on)
             go.SetActive(on);
+    }
+
+    // 배경 FBX 안의 로케이터. 디자이너가 "여기 UI를 붙이라"고 심어 둔 자리다.
+    // 있으면 그쪽을 우선하고, 없으면 플레이어 기준으로 계산한다.
+    private Transform _uiAnchor;
+    private Transform _userSpawn;
+    private Transform _head;
+
+    // 배치를 한 번만 넣으면 지워진다(아래 ApplySpawnOnce 주석 참고).
+    // 이 시간 동안은 어긋날 때마다 다시 맞추고, 지나면 손대지 않는다.
+    [SerializeField] private float _spawnSettleSeconds = 3f;
+
+    private bool _spawnPlaced;
+    private bool _spawnDone;
+    private float _spawnDeadline;
+
+    private Button _nameButton;
+    private bool _nameConfirmed;
+
+    // 이름 입력칸이 비어 있으면 확인을 눌러도 넘어가지 않는다(원본도 거부한다).
+    private void HandleNameConfirmed()
+    {
+        if (_namePanel == null)
+            return;
+
+        TMP_InputField field =
+            _namePanel.GetComponentInChildren<TMP_InputField>(true);
+        if (field == null ||
+            string.IsNullOrWhiteSpace((field.text ?? string.Empty).Replace("​", string.Empty)))
+            return;
+
+        _nameConfirmed = true;
+    }
+
+    private void ResolveLocators()
+    {
+        if (_uiAnchor == null || _userSpawn == null)
+        {
+            GameObject world = GameObject.Find("XRMeetingWorld");
+            if (world == null)
+                return;
+
+            foreach (Transform t in world.transform)
+            {
+                if (t.name == "ANCHOR_StartUI") _uiAnchor = t;
+                else if (t.name == "SPAWN_User") _userSpawn = t;
+            }
+        }
+
+        ApplySpawnOnce();
+    }
+
+    /// <summary>
+    /// 사용자를 SPAWN_User 로케이터에 세우고 UI(=노을) 쪽을 보게 한다.
+    ///
+    /// 한 번만 넣으면 안 된다. OVR 리그가 초기화를 마치면서 회전을 (0,0,0) 으로
+    /// 한 번 되돌리는데, 그게 Start 직후가 아니라 몇 프레임 뒤라 먼저 넣은 값이 지워진다.
+    /// 실측: 배치 로그는 정상인데 정착 후 리그 euler 가 (0,0,0) 이 되고,
+    /// UI 가 정면에서 111도 옆으로 밀려 시작 화면이 아예 안 보였다.
+    ///
+    /// 그래서 짧은 정착 구간 동안 어긋나면 다시 맞춘다. 구간이 지나면 손대지 않는다.
+    /// 계속 붙잡으면 사용자가 몸을 돌릴 수 없다.
+    /// </summary>
+    private void ApplySpawnOnce()
+    {
+        if (_spawnDone || _uiAnchor == null || _userSpawn == null || _player == null)
+            return;
+
+        Vector3 forward = _uiAnchor.position - _userSpawn.position;
+        forward.y = 0f;
+        if (forward.sqrMagnitude < 0.001f)
+            return;
+
+        float targetYaw = Quaternion.LookRotation(forward.normalized, Vector3.up).eulerAngles.y;
+
+        // 헤드셋을 쓰면 머리 회전이 리그 위에 더해진다. 리그를 그만큼 빼서 돌려야
+        // 실제로 눈이 보는 방향이 UI 를 향한다. (에디터는 머리가 없어 0)
+        float headYaw = _head != null ? _head.localEulerAngles.y : 0f;
+        Quaternion want = Quaternion.Euler(0f, targetYaw - headYaw, 0f);
+
+        if (!_spawnPlaced)
+        {
+            _player.SetPositionAndRotation(_userSpawn.position, want);
+            _spawnPlaced = true;
+            _spawnDeadline = Time.unscaledTime + Mathf.Max(0.5f, _spawnSettleSeconds);
+            return;
+        }
+
+        // 위치는 다시 잡지 않는다. 로코모션이 중력으로 바닥에 앉히는 중이라
+        // 여기서 끼어들면 그 정착과 싸운다. 지워지는 건 회전뿐이다.
+        if (Time.unscaledTime < _spawnDeadline)
+        {
+            const float YawTolerance = 5f;
+            if (Mathf.Abs(Mathf.DeltaAngle(_player.eulerAngles.y, want.eulerAngles.y)) > YawTolerance)
+                _player.rotation = want;
+            return;
+        }
+
+        _spawnDone = true;
+        Debug.Log("[MVP 로비] 시작 배치 완료 — " + _player.position.ToString("F2") +
+                  " / UI 를 향해 " + targetYaw.ToString("F0") + "도");
     }
 
     // 지금 단계의 캔버스를 눈앞 정해진 거리에 세운다.
@@ -233,14 +391,33 @@ public class MvpLobbyFlowGuide : MonoBehaviour
         if (target == null)
             return;
 
-        Vector3 forward = Vector3.ProjectOnPlane(_player.forward, Vector3.up);
-        if (forward.sqrMagnitude < 0.001f)
-            forward = Vector3.forward;
-        forward.Normalize();
+        ResolveLocators();
 
-        Vector3 basePos = new Vector3(_player.position.x, 0f, _player.position.z);
-        Vector3 pos = basePos + forward * _distance;
-        pos.y = _eyeHeight;
+        Vector3 forward;
+        Vector3 pos;
+
+        if (_uiAnchor != null && _userSpawn != null)
+        {
+            // 로케이터 기준: 사용자는 SPAWN_User 에 서고 UI 는 ANCHOR_StartUI 에 뜬다.
+            // 둘 사이 거리가 곧 디자이너가 정한 시야 거리(1.8m)다.
+            forward = _uiAnchor.position - _userSpawn.position;
+            forward.y = 0f;
+            if (forward.sqrMagnitude < 0.001f)
+                forward = Vector3.forward;
+            forward.Normalize();
+            pos = _uiAnchor.position;
+        }
+        else
+        {
+            forward = Vector3.ProjectOnPlane(_player.forward, Vector3.up);
+            if (forward.sqrMagnitude < 0.001f)
+                forward = Vector3.forward;
+            forward.Normalize();
+
+            Vector3 basePos = new Vector3(_player.position.x, 0f, _player.position.z);
+            pos = basePos + forward * _distance;
+            pos.y = _eyeHeight;
+        }
 
         RectTransform content = ContentOf(step);
 
@@ -298,7 +475,15 @@ public class MvpLobbyFlowGuide : MonoBehaviour
 
         float scale = _panelHeight / contentHeight;
         if (Mathf.Abs(target.localScale.y - scale) > 0.000001f)
-            target.localScale = Vector3.one * scale;
+        {
+            // z 는 건드리지 않는다(원본 캔버스는 1).
+            // Vector3.one * scale 로 z 까지 줄이면 캔버스 아래 레이 면의
+            // z 스케일이 0 이 되어 변환 행렬이 특이해진다. 그러면
+            // ClippedPlaneSurface 의 BoundsClipper 가 범위를 엉뚱하게 계산해
+            // 레이가 면에 정확히 맞아도 히트로 인정되지 않는다.
+            // 실측: 면 lossyScale z 가 0, 행렬식 0 -> 히트 0/9.
+            target.localScale = new Vector3(scale, scale, 1f);
+        }
     }
 
     // ------------------------------------------------------------------
@@ -381,14 +566,33 @@ public class MvpLobbyFlowGuide : MonoBehaviour
         if (target == null)
             return;
 
-        Vector3 forward = Vector3.ProjectOnPlane(_player.forward, Vector3.up);
-        if (forward.sqrMagnitude < 0.001f)
-            forward = Vector3.forward;
-        forward.Normalize();
+        ResolveLocators();
 
-        Vector3 basePos = new Vector3(_player.position.x, 0f, _player.position.z);
-        Vector3 pos = basePos + forward * (_distance - 0.02f);
-        pos.y = _eyeHeight + 0.72f;
+        Vector3 forward;
+        Vector3 pos;
+
+        if (_uiAnchor != null && _userSpawn != null)
+        {
+            forward = _uiAnchor.position - _userSpawn.position;
+            forward.y = 0f;
+            if (forward.sqrMagnitude < 0.001f)
+                forward = Vector3.forward;
+            forward.Normalize();
+            // 패널보다 살짝 앞·위에 띄워 겹치지 않게 한다.
+            pos = _uiAnchor.position - forward * 0.02f;
+            pos.y = _uiAnchor.position.y + 0.72f;
+        }
+        else
+        {
+            forward = Vector3.ProjectOnPlane(_player.forward, Vector3.up);
+            if (forward.sqrMagnitude < 0.001f)
+                forward = Vector3.forward;
+            forward.Normalize();
+
+            Vector3 basePos = new Vector3(_player.position.x, 0f, _player.position.z);
+            pos = basePos + forward * (_distance - 0.02f);
+            pos.y = _eyeHeight + 0.72f;
+        }
 
         _stepLabel.transform.parent.SetPositionAndRotation(
             pos,

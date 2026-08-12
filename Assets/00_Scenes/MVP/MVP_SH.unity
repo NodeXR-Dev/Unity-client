@@ -9540,6 +9540,7 @@ GameObject:
   - component: {fileID: 1030815424}
   - component: {fileID: 1650281640}
   - component: {fileID: 1650281641}
+  - component: {fileID: 1650281642}
   m_Layer: 0
   m_Name: MvpApp
   m_TagString: Untagged
@@ -9566,7 +9567,7 @@ MonoBehaviour:
   _generate3DController: {fileID: 0}
   _mainSketchView: {fileID: 555310988}
   _workspaceLayout: {fileID: 381997463}
-  _backendHost: https://scores-texts-pierre-origin.trycloudflare.com
+  _backendHost: https://yippee-connector-ritzy.ngrok-free.dev
   _tryBackendFirst: 1
   _imageWaitSeconds: 9
   _networkSession: {fileID: 1137757600}
@@ -12562,6 +12563,23 @@ MonoBehaviour:
   _fogStart: 90
   _fogEnd: 260
   _fogColor: {r: 0.66, g: 0.74, b: 0.84, a: 1}
+--- !u!114 &1650281642
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1030815416}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 438823e9e5e0ca646930ed07fe0775d8, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  _boardOffset: {x: 0, y: -430}
+  _size: {x: 1180, y: 150}
+  _stampSize: 46
+  _selectedSize: 62
+  _emptyText: "\uC544\uC9C1 \uB418\uB3CC\uC544\uAC08 \uAE30\uB85D\uC774 \uC5C6\uC5B4\uC694"
 --- !u!1 &1662339465
 GameObject:
   m_ObjectHideFlags: 0
@@ -14207,6 +14225,14 @@ PrefabInstance:
       propertyPath: m_Enabled
       value: 0
       objectReference: {fileID: 0}
+    - target: {fileID: 822908242926698197, guid: 0a7d2469f24041c4284c66706f84c45e, type: 3}
+      propertyPath: _hideWhenNoInteractable
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 846247959884174320, guid: 0a7d2469f24041c4284c66706f84c45e, type: 3}
+      propertyPath: _hideWhenNoInteractable
+      value: 1
+      objectReference: {fileID: 0}
     - target: {fileID: 1048423620701879689, guid: 0a7d2469f24041c4284c66706f84c45e, type: 3}
       propertyPath: m_Enabled
       value: 0
@@ -14235,6 +14261,14 @@ PrefabInstance:
       propertyPath: _centerEyeCamera
       value: 
       objectReference: {fileID: 1670405491}
+    - target: {fileID: 3613698024409418140, guid: 0a7d2469f24041c4284c66706f84c45e, type: 3}
+      propertyPath: _hideWhenNoInteractable
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 3671449172887545017, guid: 0a7d2469f24041c4284c66706f84c45e, type: 3}
+      propertyPath: _hideWhenNoInteractable
+      value: 1
+      objectReference: {fileID: 0}
     - target: {fileID: 4148778239110795873, guid: 0a7d2469f24041c4284c66706f84c45e, type: 3}
       propertyPath: m_Name
       value: '[BuildingBlock] OVRInteractionComprehensive'

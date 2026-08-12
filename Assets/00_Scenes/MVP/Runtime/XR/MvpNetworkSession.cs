@@ -129,6 +129,13 @@ public class MvpNetworkSession : MonoBehaviour, INetworkRunnerCallbacks
     }
 
 
+    // 아바타를 리그 자리에서 시작시키기 위해 쓴다(_spawnPoint 미할당 폴백).
+    private static Transform ResolveCameraRig()
+    {
+        OVRCameraRig rig = FindFirstObjectByType<OVRCameraRig>();
+        return rig != null ? rig.transform : null;
+    }
+
     /// <summary>
     /// 로비에서 씬을 갈아탄 직후에는 프리팹 에셋 로드가 끝나지 않아 동기 Spawn 이
     /// NetworkObjectSpawnException 을 던진다. 그러면 아바타가 안 생겨
@@ -199,8 +206,17 @@ public class MvpNetworkSession : MonoBehaviour, INetworkRunnerCallbacks
             _playerPrefab != null &&
             _runner.GetPlayerObject(_runner.LocalPlayer) == null)
         {
-            Vector3 pos = _spawnPoint != null ? _spawnPoint.position : Vector3.zero;
-            Quaternion rot = _spawnPoint != null ? _spawnPoint.rotation : Quaternion.identity;
+            // _spawnPoint 는 씬에서 비어 있는 경우가 많다. 그때 Vector3.zero 로
+            // 스폰하면 아바타가 월드 원점에 뜬다 — 회의실 바닥은 y≈-2.1 이라
+            // 첫 프레임에 카메라와 캐릭터가 크게 어긋나 보인다.
+            // XRPlayerBinder 가 곧 리그를 따라오지만, 처음부터 리그 자리에서 시작한다.
+            Transform rig = ResolveCameraRig();
+            Vector3 pos = _spawnPoint != null ? _spawnPoint.position
+                        : rig != null ? rig.position
+                        : Vector3.zero;
+            Quaternion rot = _spawnPoint != null ? _spawnPoint.rotation
+                           : rig != null ? rig.rotation
+                           : Quaternion.identity;
             NetworkObject avatar = null;
             yield return SpawnWhenPrefabReady(
                 _playerPrefab, pos, rot, spawned => avatar = spawned);
