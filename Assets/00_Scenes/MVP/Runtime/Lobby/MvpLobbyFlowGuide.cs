@@ -1,5 +1,6 @@
 using TMPro;
 using UnityEngine;
+using UnityEngine.UI;
 
 /// <summary>
 /// 로비를 "한 번에 한 단계"로 보여준다.
@@ -111,6 +112,14 @@ public class MvpLobbyFlowGuide : MonoBehaviour
 
         if (_namePanel == null && _left != null)
             _namePanel = FindChild(_left, "NamePanel");
+
+        // 이름 확인 버튼(원본에서 SetPlayerNickname 을 부르는 그 버튼)에 한 번만 붙는다.
+        if (_nameButton == null && _namePanel != null)
+        {
+            _nameButton = _namePanel.GetComponentInChildren<Button>(true);
+            if (_nameButton != null)
+                _nameButton.onClick.AddListener(HandleNameConfirmed);
+        }
         if (_right == null)
             return;
         if (_createPanel == null)
@@ -170,8 +179,22 @@ public class MvpLobbyFlowGuide : MonoBehaviour
     private static bool IsOn(GameObject go) =>
         go != null && go.activeInHierarchy;
 
+    /// <summary>
+    /// 1단계(이름)를 끝냈는지.
+    ///
+    /// "입력칸에 글자가 있으면 끝난 것"으로 보면 안 된다. NetworkManager.Start() 가
+    /// 저장된 닉네임을(없으면 기본값 "Actor_1") 입력칸에 미리 써넣기 때문에
+    /// 칸은 항상 채워진 채로 시작하고, 그러면 1단계가 통째로 건너뛰어진다.
+    /// 실제로 실기기에서 2단계가 먼저 떴다.
+    ///
+    /// 그래서 사용자가 확인 버튼을 눌렀는지로 판단한다.
+    /// 버튼을 못 찾은 경우에만 예전 방식(칸에 글자가 있는지)으로 물러선다.
+    /// </summary>
     private bool HasNickname()
     {
+        if (_nameButton != null)
+            return _nameConfirmed;
+
         if (_namePanel == null)
             return false;
 
@@ -241,6 +264,24 @@ public class MvpLobbyFlowGuide : MonoBehaviour
     private bool _spawnPlaced;
     private bool _spawnDone;
     private float _spawnDeadline;
+
+    private Button _nameButton;
+    private bool _nameConfirmed;
+
+    // 이름 입력칸이 비어 있으면 확인을 눌러도 넘어가지 않는다(원본도 거부한다).
+    private void HandleNameConfirmed()
+    {
+        if (_namePanel == null)
+            return;
+
+        TMP_InputField field =
+            _namePanel.GetComponentInChildren<TMP_InputField>(true);
+        if (field == null ||
+            string.IsNullOrWhiteSpace((field.text ?? string.Empty).Replace("​", string.Empty)))
+            return;
+
+        _nameConfirmed = true;
+    }
 
     private void ResolveLocators()
     {
