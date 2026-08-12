@@ -77,6 +77,12 @@ public class MvpOnDeviceDictation : MonoBehaviour
     private volatile string _workerFinal;
     private volatile bool _workerEndpoint;   // 문장 끝 무음 감지
 
+    // 듣기를 멈춘 뒤 워커의 마무리를 기다리는 중인지. 메인 스레드는 여기서
+    // 블록하지 않고 Update 에서 폴링한다(Join 은 Quest 에서 모래시계를 부른다).
+    private const float FlushTimeoutSeconds = 2f;
+    private bool _awaitingFinal;
+    private float _flushStartedAt;
+
     private static OnlineRecognizer Recognizer => _sharedRecognizer;
 
     public event Action<string> OnPartial;   // 듣는 중 부분 자막
@@ -205,6 +211,11 @@ public class MvpOnDeviceDictation : MonoBehaviour
         if (!IsSupported() || !EnsureRecognizer())
             return false;
 
+        // 앞 세션의 마무리 결과가 아직 안 나왔으면 먼저 거둬들인다.
+        // (안 그러면 새 워커가 참조를 덮어써 그 문장이 사라진다)
+        if (_awaitingFinal)
+            PumpFinalResult();
+
         // 다른 소비자(예: 키보드 ↔ 액션바)가 듣는 중이면 그쪽을 먼저 확정·정리한다.
         if (_activeListener != null && _activeListener != this)
             _activeListener.StopListening();
@@ -315,29 +326,57 @@ public class MvpOnDeviceDictation : MonoBehaviour
         _micClip = null;
         Level = 0f;
 
-        // 마무리 디코딩은 워커가 한다(무음 패딩 포함). 여기서는 결과만 기다린다.
-        string text = "";
+        // 마무리 디코딩(무음 패딩 포함)은 워커가 이어서 한다.
+        //
+        // 예전에는 여기서 Join(1500) 으로 기다렸는데, 그러면 말이 끝날 때마다
+        // 메인 스레드가 최대 1.5초 멈춘다. Quest 에서 그때마다 모래시계가 떴다.
+        // 신호만 주고 즉시 빠져나오고, 결과는 Update 가 받아 OnFinal 로 넘긴다.
         if (_worker != null)
         {
             _flushRequested = true;
-            if (!_worker.Join(1500))
-                Debug.LogWarning(
-                    "[MVP STT] 인식 스레드 마무리가 늦어 부분 결과를 사용합니다.");
-            text = _workerFinished
-                ? (_workerFinal ?? "")
-                : (_workerPartial ?? "");
-            _worker = null;
+            _awaitingFinal = true;
+            _flushStartedAt = Time.unscaledTime;
         }
-        // 스트림 정리는 워커의 finally 가 책임진다(대기 시간 초과로 아직 쓰는 중일 수 있다).
+
+        return _workerPartial ?? "";
+    }
+
+    // 워커가 마무리 디코딩을 끝냈는지 확인하고, 끝났으면 확정 문장을 넘긴다.
+    private void PumpFinalResult()
+    {
+        if (_worker == null)
+        {
+            _awaitingFinal = false;
+            return;
+        }
+
+        bool timedOut = Time.unscaledTime - _flushStartedAt > FlushTimeoutSeconds;
+        if (!_workerFinished && !timedOut)
+            return;
+
+        if (timedOut && !_workerFinished)
+            Debug.LogWarning(
+                "[MVP STT] 인식 스레드 마무리가 늦어 부분 결과를 사용합니다.");
+
+        string text = _workerFinished
+            ? (_workerFinal ?? "")
+            : (_workerPartial ?? "");
+
+        _worker = null;
+        // 스트림 정리는 워커의 finally 가 책임진다(아직 쓰는 중일 수 있다).
         _stream = null;
+        _awaitingFinal = false;
 
         if (text.Length > 0)
             OnFinal?.Invoke(text);
-        return text;
     }
 
     private void Update()
     {
+        // 듣기를 멈춘 뒤 워커의 마무리 결과를 받아 가는 단계.
+        if (_awaitingFinal)
+            PumpFinalResult();
+
         if (!_listening)
             return;
 
