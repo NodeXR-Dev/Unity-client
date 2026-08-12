@@ -243,6 +243,32 @@ public class MvpLobbyFlowGuide : MonoBehaviour
         group.alpha = visible ? 1f : 0f;
         group.interactable = visible;
         group.blocksRaycasts = visible;
+
+        // CanvasGroup 은 Unity UI 의 레이캐스트만 막는다.
+        // Meta 의 RayInteractable / PokeInteractable 은 전혀 영향을 받지 않아,
+        // 투명해진 캔버스가 그대로 레이를 가로챈다.
+        //
+        // 실측(2단계): 1단계 캔버스가 alpha 0 인 채로 2단계보다 4cm 앞에 남아 있었다.
+        // 레이는 그 투명한 면에 붙어 선은 그려지는데(그래서 "레이는 간다"),
+        // 클릭은 blocksRaycasts=false 인 캔버스로 가서 아무 일도 일어나지 않았다.
+        SetMetaInteractables(group.transform, visible);
+    }
+
+    private static void SetMetaInteractables(Transform root, bool on)
+    {
+        if (root == null)
+            return;
+
+        foreach (MonoBehaviour behaviour in
+                 root.GetComponentsInChildren<MonoBehaviour>(true))
+        {
+            if (behaviour == null)
+                continue;
+
+            string name = behaviour.GetType().Name;
+            if (name == "RayInteractable" || name == "PokeInteractable")
+                behaviour.enabled = on;
+        }
     }
 
     // 이미 원하는 상태면 건드리지 않는다(원본 흐름의 SetActive 와 싸우지 않도록).
