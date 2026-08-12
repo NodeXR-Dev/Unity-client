@@ -449,7 +449,15 @@ public class MvpLobbyFlowGuide : MonoBehaviour
 
         float scale = _panelHeight / contentHeight;
         if (Mathf.Abs(target.localScale.y - scale) > 0.000001f)
-            target.localScale = Vector3.one * scale;
+        {
+            // z 는 건드리지 않는다(원본 캔버스는 1).
+            // Vector3.one * scale 로 z 까지 줄이면 캔버스 아래 레이 면의
+            // z 스케일이 0 이 되어 변환 행렬이 특이해진다. 그러면
+            // ClippedPlaneSurface 의 BoundsClipper 가 범위를 엉뚱하게 계산해
+            // 레이가 면에 정확히 맞아도 히트로 인정되지 않는다.
+            // 실측: 면 lossyScale z 가 0, 행렬식 0 -> 히트 0/9.
+            target.localScale = new Vector3(scale, scale, 1f);
+        }
     }
 
     // ------------------------------------------------------------------
