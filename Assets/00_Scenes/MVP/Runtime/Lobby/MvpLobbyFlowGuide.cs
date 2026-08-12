@@ -232,68 +232,9 @@ public class MvpLobbyFlowGuide : MonoBehaviour
             SetPanel(_pwPanel, false);
         }
 
-        FitRaySurface(
-            step == Step.Name ? _left : step == Step.Choose ? _center : _right,
-            ContentOf(step));
-
         UpdateStepLabel(step);
     }
 
-    /// <summary>
-    /// 레이가 닿는 면을 '지금 실제로 보이는 패널' 크기로 맞춘다.
-    ///
-    /// 캔버스 전체를 면으로 두면 패널 바깥 빈 공간에도 히트가 잡힌다.
-    /// 실측(1단계): 보이는 패널은 1.20 x 1.15m 인데 면은 1.91 x 2.89m 였다.
-    /// 그래서 아무것도 없는 허공을 겨눠도 레이가 켜지고, 그 경계에서 손이 조금만
-    /// 흔들리면 잡았다 놨다를 반복해 선이 껌뻑였다(기기 실측 3초에 18회).
-    /// </summary>
-    private void FitRaySurface(Transform canvasRoot, RectTransform content)
-    {
-        if (canvasRoot == null)
-            return;
-
-        RectTransform rig = FindRayRig(canvasRoot);
-        if (rig == null || rig.parent == null)
-            return;
-
-        RectTransform target = content != null ? content : canvasRoot as RectTransform;
-        if (target == null || target.rect.width < 1f || target.rect.height < 1f)
-            return;
-
-        // 월드 크기로 재서 부모 배율로 환산한다.
-        // 패널이 캔버스 아래 여러 겹 안에 있을 수 있어 rect 를 그대로 쓰면 어긋난다.
-        Vector3[] corners = new Vector3[4];
-        target.GetWorldCorners(corners);
-        float worldWidth = Vector3.Distance(corners[0], corners[3]);
-        float worldHeight = Vector3.Distance(corners[0], corners[1]);
-
-        Vector3 parentScale = rig.parent.lossyScale;
-        if (Mathf.Abs(parentScale.x) < 1e-6f || Mathf.Abs(parentScale.y) < 1e-6f)
-            return;
-
-        Vector3 centerInParent =
-            rig.parent.InverseTransformPoint(target.TransformPoint(target.rect.center));
-
-        // 로컬 값만 건드린다. 리그는 localScale.z 가 0 이라 월드 좌표를 직접 넣으면
-        // 부모 행렬이 특이해져 역변환이 깨진다(예전에 그렇게 한 번 망가뜨렸다).
-        rig.anchorMin = rig.anchorMax = new Vector2(0.5f, 0.5f);
-        rig.pivot = new Vector2(0.5f, 0.5f);
-        rig.sizeDelta = new Vector2(
-            worldWidth / Mathf.Abs(parentScale.x),
-            worldHeight / Mathf.Abs(parentScale.y));
-        rig.localPosition = new Vector3(
-            centerInParent.x, centerInParent.y, rig.localPosition.z);
-    }
-
-    private static RectTransform FindRayRig(Transform canvasRoot)
-    {
-        foreach (RectTransform t in canvasRoot.GetComponentsInChildren<RectTransform>(true))
-        {
-            if (t.name.StartsWith("ISDK") && t.gameObject.activeInHierarchy)
-                return t;
-        }
-        return null;
-    }
 
     private static void SetVisible(CanvasGroup group, bool visible)
     {
