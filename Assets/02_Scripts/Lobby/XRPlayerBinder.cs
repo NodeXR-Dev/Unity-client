@@ -5,29 +5,46 @@ public class XRPlayerBinder : NetworkBehaviour
 {
     private Transform cameraRigTransform;
 
-    // 사용자의 눈(HMD)과 아바타의 머리.
+    // 사용자의 눈(CenterEyeAnchor)과, 아바타에서 그에 해당하는 지점.
     // 루트를 리그 루트에 맞추면 모델 키(약 1.2m)와 실제 사용자 키가 달라
-    // 카메라가 캐릭터 머리 위 허공에 뜬다. 머리끼리 맞춰야 한다.
+    // 카메라가 캐릭터 머리 위 허공에 뜬다. 눈끼리 맞춰야 한다.
     private Transform headTransform;
-    private Transform avatarHead;
 
-    private static Transform FindAvatarHead(Transform root)
+    // 루트 기준 눈 위치(로컬). 스폰 때 한 번만 재고 이후 재사용한다.
+    private Vector3 eyeLocalOffset;
+    private bool hasEyeOffset;
+
+    /// <summary>
+    /// 아바타에서 '눈'에 해당하는 지점을 루트 기준 로컬 좌표로 잰다.
+    ///
+    /// 노드 위치(transform)를 쓰면 안 된다. HMD 메시는 Neck 본에 스킨되어 있어
+    /// transform 은 본 원점(루트 기준 y 0.37)에 있고 실제로 그려지는 바이저는
+    /// y 0.87~1.11 에 있다. 노드를 기준으로 맞추면 62cm 어긋나 카메라가 목에 온다.
+    /// 그래서 렌더러가 실제로 차지하는 영역의 중심을 쓴다.
+    /// </summary>
+    private static bool TryMeasureEyeOffset(Transform root, out Vector3 localOffset)
     {
-        // 아바타가 쓰고 있는 HMD 모형이 곧 눈 위치다.
-        foreach (Transform t in root.GetComponentsInChildren<Transform>(true))
+        foreach (Renderer renderer in root.GetComponentsInChildren<Renderer>(true))
         {
-            if (t.name == "HMD")
-                return t;
+            if (renderer == null || renderer.name != "HMD")
+                continue;
+
+            localOffset = root.InverseTransformPoint(renderer.bounds.center);
+            return true;
         }
 
-        // 없으면 머리 노드로 대신한다(Avatar_Head 아래 중복 노드는 제외).
+        // HMD 모형이 없는 아바타면 디자이너가 심어 둔 눈 노드를 쓴다.
         foreach (Transform t in root.GetComponentsInChildren<Transform>(true))
         {
-            if (t.name == "Head" && (t.parent == null || t.parent.name != "Avatar_Head"))
-                return t;
+            if (t.name != "Camera" && t.name != "FaceCam")
+                continue;
+
+            localOffset = root.InverseTransformPoint(t.position);
+            return true;
         }
 
-        return null;
+        localOffset = Vector3.zero;
+        return false;
     }
 
     public override void Spawned()
@@ -55,7 +72,7 @@ public class XRPlayerBinder : NetworkBehaviour
             headTransform = rig != null && rig.centerEyeAnchor != null
                 ? rig.centerEyeAnchor
                 : (Camera.main != null ? Camera.main.transform : null);
-            avatarHead = FindAvatarHead(transform);
+            hasEyeOffset = TryMeasureEyeOffset(transform, out eyeLocalOffset);
 
             // 생성되자마자 착! 달라붙기
             SyncTransform();
@@ -78,8 +95,8 @@ public class XRPlayerBinder : NetworkBehaviour
     // 위치와 회전을 일치시키는 공통 함수
     private void SyncTransform()
     {
-        // 머리를 못 찾았으면 예전처럼 리그 루트에 맞춘다.
-        if (headTransform == null || avatarHead == null)
+        // 눈 위치를 못 쟀으면 예전처럼 리그 루트에 맞춘다.
+        if (headTransform == null || !hasEyeOffset)
         {
             transform.position = cameraRigTransform.position;
             transform.rotation = cameraRigTransform.rotation;
@@ -93,9 +110,9 @@ public class XRPlayerBinder : NetworkBehaviour
             ? Quaternion.LookRotation(forward.normalized, Vector3.up)
             : cameraRigTransform.rotation;
 
-        // 아바타 머리(HMD 모형)가 사용자의 눈에 오도록 루트를 그만큼 뒤로 물린다.
-        // 회전을 먼저 정한 뒤에 재야 오프셋이 같이 돌아간다.
-        Vector3 headOffset = avatarHead.position - transform.position;
-        transform.position = headTransform.position - headOffset;
+        // 아바타의 눈(HMD 바이저)이 사용자의 눈에 오도록 루트를 그만큼 뒤로 물린다.
+        // 회전을 먼저 정했으므로 로컬 오프셋을 그 회전으로 돌려 쓴다.
+        transform.position =
+            headTransform.position - transform.rotation * eyeLocalOffset;
     }
 }
