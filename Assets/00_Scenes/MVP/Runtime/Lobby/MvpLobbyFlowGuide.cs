@@ -84,11 +84,18 @@ public class MvpLobbyFlowGuide : MonoBehaviour
 
     private void ResolveReferences()
     {
-        if (_player == null)
+        if (_player == null || _head == null)
         {
             OVRCameraRig rig = FindFirstObjectByType<OVRCameraRig>();
             if (rig != null)
+            {
                 _player = rig.transform;
+                // 머리는 리그 위에 얹혀 돈다. 시작 방향을 맞출 때 이걸 빼줘야
+                // 헤드셋을 비스듬히 쓴 채로 들어와도 UI 가 정면에 온다.
+                _head = rig.centerEyeAnchor != null
+                    ? rig.centerEyeAnchor
+                    : (Camera.main != null ? Camera.main.transform : null);
+            }
         }
 
         if (_left == null)
@@ -225,8 +232,15 @@ public class MvpLobbyFlowGuide : MonoBehaviour
     // 있으면 그쪽을 우선하고, 없으면 플레이어 기준으로 계산한다.
     private Transform _uiAnchor;
     private Transform _userSpawn;
+    private Transform _head;
 
-    private bool _spawnApplied;
+    // 배치를 한 번만 넣으면 지워진다(아래 ApplySpawnOnce 주석 참고).
+    // 이 시간 동안은 어긋날 때마다 다시 맞추고, 지나면 손대지 않는다.
+    [SerializeField] private float _spawnSettleSeconds = 3f;
+
+    private bool _spawnPlaced;
+    private bool _spawnDone;
+    private float _spawnDeadline;
 
     private void ResolveLocators()
     {
@@ -248,27 +262,53 @@ public class MvpLobbyFlowGuide : MonoBehaviour
 
     /// <summary>
     /// 사용자를 SPAWN_User 로케이터에 세우고 UI(=노을) 쪽을 보게 한다.
-    /// 씬에 저장해 둔 리그 회전은 런타임에 (0,0,0) 으로 초기화돼 버려서
-    /// 여기서 한 번 잡아 준다. 이후에는 건드리지 않아 자유롭게 둘러볼 수 있다.
+    ///
+    /// 한 번만 넣으면 안 된다. OVR 리그가 초기화를 마치면서 회전을 (0,0,0) 으로
+    /// 한 번 되돌리는데, 그게 Start 직후가 아니라 몇 프레임 뒤라 먼저 넣은 값이 지워진다.
+    /// 실측: 배치 로그는 정상인데 정착 후 리그 euler 가 (0,0,0) 이 되고,
+    /// UI 가 정면에서 111도 옆으로 밀려 시작 화면이 아예 안 보였다.
+    ///
+    /// 그래서 짧은 정착 구간 동안 어긋나면 다시 맞춘다. 구간이 지나면 손대지 않는다.
+    /// 계속 붙잡으면 사용자가 몸을 돌릴 수 없다.
     /// </summary>
     private void ApplySpawnOnce()
     {
-        if (_spawnApplied || _uiAnchor == null || _userSpawn == null || _player == null)
+        if (_spawnDone || _uiAnchor == null || _userSpawn == null || _player == null)
             return;
 
         Vector3 forward = _uiAnchor.position - _userSpawn.position;
         forward.y = 0f;
         if (forward.sqrMagnitude < 0.001f)
             return;
-        forward.Normalize();
 
-        _player.SetPositionAndRotation(
-            _userSpawn.position,
-            Quaternion.LookRotation(forward, Vector3.up));
-        _spawnApplied = true;
+        float targetYaw = Quaternion.LookRotation(forward.normalized, Vector3.up).eulerAngles.y;
 
-        Debug.Log("[MVP 로비] SPAWN_User 로케이터에 배치했습니다 — " +
-                  _userSpawn.position.ToString("F2"));
+        // 헤드셋을 쓰면 머리 회전이 리그 위에 더해진다. 리그를 그만큼 빼서 돌려야
+        // 실제로 눈이 보는 방향이 UI 를 향한다. (에디터는 머리가 없어 0)
+        float headYaw = _head != null ? _head.localEulerAngles.y : 0f;
+        Quaternion want = Quaternion.Euler(0f, targetYaw - headYaw, 0f);
+
+        if (!_spawnPlaced)
+        {
+            _player.SetPositionAndRotation(_userSpawn.position, want);
+            _spawnPlaced = true;
+            _spawnDeadline = Time.unscaledTime + Mathf.Max(0.5f, _spawnSettleSeconds);
+            return;
+        }
+
+        // 위치는 다시 잡지 않는다. 로코모션이 중력으로 바닥에 앉히는 중이라
+        // 여기서 끼어들면 그 정착과 싸운다. 지워지는 건 회전뿐이다.
+        if (Time.unscaledTime < _spawnDeadline)
+        {
+            const float YawTolerance = 5f;
+            if (Mathf.Abs(Mathf.DeltaAngle(_player.eulerAngles.y, want.eulerAngles.y)) > YawTolerance)
+                _player.rotation = want;
+            return;
+        }
+
+        _spawnDone = true;
+        Debug.Log("[MVP 로비] 시작 배치 완료 — " + _player.position.ToString("F2") +
+                  " / UI 를 향해 " + targetYaw.ToString("F0") + "도");
     }
 
     // 지금 단계의 캔버스를 눈앞 정해진 거리에 세운다.
