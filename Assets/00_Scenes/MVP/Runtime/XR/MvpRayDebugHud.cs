@@ -449,15 +449,31 @@ public class MvpRayDebugHud : MonoBehaviour
         _text.richText = true;
 
         // 한글 글리프가 있는 폰트를 씬에서 빌려온다.
+        // 아무 폰트나 집으면 LiberationSans 를 잡아 한글이 전부 □ 로 나온다
+        // (실제로 그렇게 나왔다). 실제로 한글을 렌더 중인 것에서 가져온다.
         foreach (TextMeshProUGUI sample in FindObjectsByType<TextMeshProUGUI>(
                      FindObjectsInactive.Include, FindObjectsSortMode.None))
         {
-            if (sample != null && sample != _text && sample.font != null)
-            {
-                _text.font = sample.font;
-                break;
-            }
+            if (sample == null || sample == _text || sample.font == null)
+                continue;
+            if (!HasHangul(sample.text))
+                continue;
+
+            _text.font = sample.font;
+            return;
         }
+    }
+
+    private static bool HasHangul(string s)
+    {
+        if (string.IsNullOrEmpty(s))
+            return false;
+        foreach (char c in s)
+        {
+            if (c >= '가' && c <= '힣')
+                return true;
+        }
+        return false;
     }
 
     // 시야 왼쪽 아래에 붙어 따라다닌다(본 UI 를 가리지 않게).
