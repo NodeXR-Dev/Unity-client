@@ -25,9 +25,25 @@ public class GraphManager : MonoBehaviour
     // 레이아웃 (Inspector에서 조절 가능)
     // ─────────────────────────────────────────────
     [Header("레이아웃 간격 (씬에서 직접 조절)")]
-    [SerializeField] private float _layoutHSpacing   = 0.5f;  // depth 단계별 오른쪽 간격 (X축)
+    // depth 단계별 간격(_layoutRight 방향). 노드 실폭이 3.98 × _nodeViewScale(0.09) ≈ 0.36m 라
+    // 0.5 면 노드 사이 빈 공간이 약 0.14m 다. (씬에 직렬화된 값이 이 기본값을 덮는다)
+    [SerializeField] private float _layoutHSpacing   = 0.5f;
     [SerializeField] private float _layoutVSpacing   = 0.6f;  // 형제 노드 세로 간격 (Y축)
     [SerializeField] private float _layoutTreeGap    = 0.2f;  // 독립 서브트리 간 추가 여백
+
+    // 자식 배치가 따라갈 좌표축. 기본은 월드 축이다.
+    // 보드(MainSketchPanel)처럼 회전한 평면 위에 그래프를 놓을 때는 그 평면의 축을 넣어야 한다.
+    //   루트는 MvpWorkspaceLayout.MoveRoot 가 panel.right/up 기준으로 놓는데 자식만 월드 +X 로
+    //   밀면, 보드가 유저를 향해 돌아간 각도만큼 자식이 평면을 벗어나 z 로 어긋난다.
+    private Vector3 _layoutRight = Vector3.right;
+    private Vector3 _layoutUp    = Vector3.up;
+
+    // 회전한 작업 평면 위에 배치할 때 그 평면의 축을 알려준다. 0 벡터는 무시한다.
+    public void SetLayoutBasis(Vector3 right, Vector3 up)
+    {
+        if (right.sqrMagnitude > 0.000001f) _layoutRight = right.normalized;
+        if (up.sqrMagnitude    > 0.000001f) _layoutUp    = up.normalized;
+    }
 
     private const string DefaultPropertyLabel  = "";
 
@@ -383,8 +399,33 @@ public class GraphManager : MonoBehaviour
             return false;
         }
 
+        // 7. ALL 은 부품이 하나라도 있어야 연결할 수 있다 (사용자 확정 2026-08-13).
+        //    ALL 은 "모든 부품에 적용되는 속성" 자리라, 적용될 부품이 없으면 의미가 없다.
+        //    ALL 노드는 MainSketchView 가 보드에 항상 하나 자동 생성하므로(_autoCreateAllNode)
+        //    "노드가 있으니 연결도 된다"가 되어 버린다 → 여기서 막는다.
+        if (IsAllNode(toNode) && !HasAnyPartNode())
+        {
+            reason = "먼저 부품을 추가해 주세요. 부품이 있어야 전체에 연결할 수 있어요.";
+            return false;
+        }
+
         reason = null;
         return true;
+    }
+
+    // ALL = PART + is_global. (MainSketchView.Refresh 의 분류와 같은 기준)
+    private static bool IsAllNode(NodeData node) =>
+        node != null && node.NodeType == NodeType.PART && node.is_global;
+
+    // ALL 이 아닌 PART(= 보드의 PartPort)가 하나라도 있는가.
+    private bool HasAnyPartNode()
+    {
+        foreach (var node in _nodeRegistry.GetAll())
+        {
+            if (node == null || node.NodeType != NodeType.PART) continue;
+            if (!node.is_global) return true;
+        }
+        return false;
     }
 
     private bool IsAllowedConnection(NodeType from, NodeType to)
@@ -1139,12 +1180,8 @@ public class GraphManager : MonoBehaviour
         {
             var rootNode = _nodeRegistry.Get(rootId);
             if (rootNode == null) continue;
-            // 루트 위치는 건드리지 않고 자식들만 루트의 X(depth기준)/Y(중심) 기준으로 재배치
-            AssignChildPositions(
-                rootId,
-                rootNode.Position.x,
-                rootNode.Position.y,
-                rootNode.Position.z);
+            // 루트 위치는 건드리지 않고 자식들만 루트 기준으로 재배치
+            AssignChildPositions(rootId, rootNode.Position, 0f, 0f);
         }
 
         var depthMap = CalculateDepthMap();
@@ -1202,19 +1239,19 @@ public class GraphManager : MonoBehaviour
         return total;
     }
 
-    // 이 노드를 x/centerY 에 배치하고 자식도 재귀 배치 (오른쪽 방향 트리)
-    private void AssignPositions(string nodeId, float x, float centerY, float z)
+    // 루트를 원점으로 오른쪽(dx)·위(dy) 만큼 떨어진 곳에 배치하고 자식도 재귀 배치 (오른쪽 방향 트리)
+    private void AssignPositions(string nodeId, Vector3 rootOrigin, float dx, float dy)
     {
         var node = _nodeRegistry.Get(nodeId);
         if (node == null) return;
-        node.SetPosition(new Vector3(x, centerY, z));
-        AssignChildPositions(nodeId, x, centerY, z);
+        node.SetPosition(rootOrigin + _layoutRight * dx + _layoutUp * dy);
+        AssignChildPositions(nodeId, rootOrigin, dx, dy);
     }
 
-    // 이 노드 자체는 움직이지 않고 자식들만 x/centerY 기준으로 배치
-    // x: 현재 depth의 X 위치, centerY: 이 서브트리 전체의 Y 중심.
-    // z는 루트의 작업 평면 깊이를 유지한다.
-    private void AssignChildPositions(string nodeId, float x, float centerY, float z)
+    // 이 노드 자체는 움직이지 않고 자식들만 배치한다.
+    // dx: 루트에서 오른쪽으로 떨어진 거리(depth 단계), dy: 이 서브트리의 세로 중심.
+    // 깊이(작업 평면과의 거리)는 루트 위치가 그대로 갖고 있다 — 오프셋은 평면 안에서만 움직인다.
+    private void AssignChildPositions(string nodeId, Vector3 rootOrigin, float dx, float dy)
     {
         var children = GetPropertyChildren(nodeId);
         if (children.Count == 0) return;
@@ -1223,12 +1260,12 @@ public class GraphManager : MonoBehaviour
         foreach (var child in children)
             totalHeight += CalculateSubtreeWidth(child);
 
-        float cursor = centerY - (totalHeight / 2f) * _layoutVSpacing;
+        float cursor = dy - (totalHeight / 2f) * _layoutVSpacing;
         foreach (var child in children)
         {
-            float childHeight  = CalculateSubtreeWidth(child);
-            float childCenterY = cursor + (childHeight / 2f) * _layoutVSpacing;
-            AssignPositions(child, x + _layoutHSpacing, childCenterY, z);
+            float childHeight = CalculateSubtreeWidth(child);
+            float childCenter = cursor + (childHeight / 2f) * _layoutVSpacing;
+            AssignPositions(child, rootOrigin, dx + _layoutHSpacing, childCenter);
             cursor += childHeight * _layoutVSpacing;
         }
     }

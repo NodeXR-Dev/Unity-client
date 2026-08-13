@@ -160,7 +160,7 @@ MonoBehaviour:
   _lineWidth: 0.004
   _fromConnector: {fileID: 2464282718870365176}
   _toConnector: {fileID: 89348991125345767}
-  _connectorScale: 0.001
+  _connectorScale: 0.0009
 --- !u!1001 &4068016095721674013
 PrefabInstance:
   m_ObjectHideFlags: 0

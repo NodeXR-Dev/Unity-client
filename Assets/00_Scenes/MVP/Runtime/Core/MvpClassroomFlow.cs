@@ -8,6 +8,7 @@ using TMPro;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.Networking;
+using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 
 [DefaultExecutionOrder(-1000)]
@@ -17,6 +18,13 @@ public class MvpClassroomFlow : MonoBehaviour
     [SerializeField] private GraphManager _graphManager;
     [SerializeField] private MvpWaterRocketGraphController _waterRocketGraph;
     [SerializeField] private GraphSyncClient _graphSyncClient;
+
+    [Tooltip("'설계 마치기' 때 띄울 회의 리포트 패널 " +
+             "(Assets/01_Prefabs/Graph/Designer/ReportPanel). " +
+             "씬에 미리 놓아 두었다면 비워 둬도 된다.")]
+    [SerializeField] private GameObject _reportPanelPrefab;
+
+    private GameObject _reportPanel;
     [SerializeField] private Generate2DController _generate2DController;
     [SerializeField] private Generate3DController _generate3DController;
     [SerializeField] private MainSketchView _mainSketchView;
@@ -58,7 +66,11 @@ public class MvpClassroomFlow : MonoBehaviour
     private TMP_Text _workspaceStatus;
     private Button _reviewButton;
     private Button _threeDViewButton;
-    private Button _voiceButton;   // '말로 추가' 음성 입력 토글
+    private Button _voiceButton;   // '말로 추가' 음성 입력 토글 (시안 버튼을 쓸 땐 null)
+
+    // MainSketchPanel 프리팹(디자이너 시안)의 버튼을 쓰고 있는지.
+    // true 면 버튼 색·배경을 코드가 덮어쓰지 않는다(스프라이트 위 덧칠 방지).
+    private bool _usingDesignerButtons;
     private RawImage _centerSketchImage;
     private MvpFlowState _state;
     private bool _requestBusy;
@@ -142,6 +154,16 @@ public class MvpClassroomFlow : MonoBehaviour
         Debug.Log(
             "[MVP Flow] 로비 세션 이어받음 — room_id=" + _session.roomId +
             ", nickname=" + _session.nickname);
+
+        // 로비에서 요구사항을 말하면 서버가 그때 초기 2D 스케치를 만들기 시작한다.
+        // 완성 통보(WS 2D_GENERATED)는 요청자에게만 가는데 씬을 갈아타며 연결이 끊겨 놓치므로,
+        // 회의실에 들어온 지금 서버에 이미 만들어진 그림을 직접 가져와 보드에 올린다.
+        // (아직 생성 중이면 컨트롤러가 생길 때까지 기다렸다 표시한다.)
+        if (_generate2DController == null)
+            _generate2DController = FindFirstObjectByType<Generate2DController>();
+        if (_generate2DController != null)
+            _generate2DController.RestoreExistingSketch();
+
         return true;
     }
 
@@ -1409,56 +1431,104 @@ public class MvpClassroomFlow : MonoBehaviour
         // 메시지는 MvpStudentWorkspaceGuide 의 큐를 거치므로
         // _workspaceStatus 에는 연결하지 않는다(직접 쓰면 큐를 우회한다).
 
-        _reviewButton = MvpStudentUiFactory.CreateButton(
-            bar.transform,
-            "Generate2D",
-            "그림 생성하기",
-            new Vector2(-245f, 0f),
-            new Vector2(225f, 66f),
-            new Color(0.30f, 0.38f, 0.82f, 1f),
-            BeginWorkspaceGenerate,
-            19f);
-
-        // 위계: 주 행동(그림 생성하기)만 강조색, 보조 행동(3D/말로 추가)은 글래스 톤.
-        _threeDViewButton = MvpStudentUiFactory.CreateButton(
-            bar.transform,
-            "Generate3D",
-            "3D 생성하기",
-            new Vector2(0f, 0f),
-            new Vector2(225f, 66f),
-            MvpStudentUiFactory.GlassAction,
-            ToggleOrCreateWorkspace3D,
-            19f);
-
-        _voiceButton = MvpStudentUiFactory.CreateButton(
-            bar.transform,
-            "VoiceInput",
-            "말로 추가",
-            new Vector2(245f, 0f),
-            new Vector2(225f, 66f),
-            MvpStudentUiFactory.GlassAction,
-            ToggleVoiceInput,
-            19f);
-        _voiceIndicator = MvpVoiceIndicator.Attach(
-            _voiceButton.transform, new Vector2(-86f, 0f), 16f);
-        RefreshVoiceButtonLabel();
-
         _workspaceStatus = null;
 
-        Button finish = MvpStudentUiFactory.CreateButton(
-            _mainSketchCanvas.transform,
-            "MvpFinishDesignButton",
-            "설계 마치기",
-            new Vector2(625f, -410f),
-            new Vector2(230f, 66f),
-            new Color(0.12f, 0.40f, 0.34f, 1f),
-            () => ShowConfirmDialog(
-                "설계를 마칠까요?",
-                "마치면 완료 화면으로 이동해요.\n계속 수정하려면 취소를 누르세요.",
+        // MainSketchPanel 프리팹(디자이너 시안)에 2D / 3D / 리포트 버튼이 들어 있으면 그것을 쓴다.
+        //   액션바에 같은 버튼을 또 만들면 화면에 두 벌이 겹치기 때문이다.
+        //   프리팹의 onClick 은 씬 오브젝트를 참조할 수 없으므로 여기서 런타임에 연결한다.
+        // 시안 버튼을 못 찾으면(프리팹 교체 전 씬 등) 예전처럼 액션바에 직접 만든다 — 그래야
+        //   2D·3D 생성 진입점이 사라지지 않는다.
+        Button panel2D     = FindSketchPanelButton("Button_2D");
+        Button panel3D     = FindSketchPanelButton("Button_3D");
+        Button panelReport = FindSketchPanelButton("Report");
+        _usingDesignerButtons =
+            panel2D != null && panel3D != null && panelReport != null;
+
+        Button finish;
+
+        if (_usingDesignerButtons)
+        {
+            // 액션바는 안내 칩(SpatialStatus) 전용으로만 남긴다. 배경 띠는 지운다.
+            // 칩 배경까지 지워야 시안에 검은 막대가 남지 않는다 — 글자는 그대로 보인다.
+            bar.color = new Color(0f, 0f, 0f, 0f);
+            bar.raycastTarget = false;
+            barRim.enabled = false;
+            statusChip.color = new Color(0f, 0f, 0f, 0f);
+
+            _reviewButton = panel2D;
+            _reviewButton.onClick.RemoveListener(BeginWorkspaceGenerate);
+            _reviewButton.onClick.AddListener(BeginWorkspaceGenerate);
+
+            _threeDViewButton = panel3D;
+            _threeDViewButton.onClick.RemoveListener(ToggleOrCreateWorkspace3D);
+            _threeDViewButton.onClick.AddListener(ToggleOrCreateWorkspace3D);
+
+            finish = panelReport;
+            finish.onClick.RemoveListener(ConfirmFinishDesign);
+            finish.onClick.AddListener(ConfirmFinishDesign);
+
+            // '말로 추가'는 시안에서 뺐다. 음성 입력은 노드 키보드의 '음성' 키로 쓴다.
+            _voiceButton = null;
+
+            Debug.Log(
+                "[MVP Flow] 액션바 대신 MainSketchPanel 시안 버튼(2D/3D/리포트)에 연결했습니다.");
+        }
+        else
+        {
+            // 왜 폴백으로 왔는지 남긴다. 셋 중 하나만 없어도 예전 액션바가 통째로 살아난다.
+            Transform panelRoot = _workspaceLayout != null
+                ? _workspaceLayout.MainSketchPanel
+                : null;
+            Debug.LogWarning(
+                "[MVP Flow] 시안 버튼을 찾지 못해 예전 액션바를 만듭니다 — " +
+                $"Button_2D={(panel2D != null)} Button_3D={(panel3D != null)} " +
+                $"Report={(panelReport != null)} / " +
+                $"탐색 기준={(panelRoot != null ? panelRoot.name : "(MainSketchPanel 없음)")}");
+
+            _reviewButton = MvpStudentUiFactory.CreateButton(
+                bar.transform,
+                "Generate2D",
+                "그림 생성하기",
+                new Vector2(-245f, 0f),
+                new Vector2(225f, 66f),
+                new Color(0.30f, 0.38f, 0.82f, 1f),
+                BeginWorkspaceGenerate,
+                19f);
+
+            // 위계: 주 행동(그림 생성하기)만 강조색, 보조 행동(3D/말로 추가)은 글래스 톤.
+            _threeDViewButton = MvpStudentUiFactory.CreateButton(
+                bar.transform,
+                "Generate3D",
+                "3D 생성하기",
+                new Vector2(0f, 0f),
+                new Vector2(225f, 66f),
+                MvpStudentUiFactory.GlassAction,
+                ToggleOrCreateWorkspace3D,
+                19f);
+
+            _voiceButton = MvpStudentUiFactory.CreateButton(
+                bar.transform,
+                "VoiceInput",
+                "말로 추가",
+                new Vector2(245f, 0f),
+                new Vector2(225f, 66f),
+                MvpStudentUiFactory.GlassAction,
+                ToggleVoiceInput,
+                19f);
+            _voiceIndicator = MvpVoiceIndicator.Attach(
+                _voiceButton.transform, new Vector2(-86f, 0f), 16f);
+            RefreshVoiceButtonLabel();
+
+            finish = MvpStudentUiFactory.CreateButton(
+                _mainSketchCanvas.transform,
+                "MvpFinishDesignButton",
                 "설계 마치기",
-                MvpStudentUiFactory.Mint,
-                () => ShowState(MvpFlowState.Complete)),
-            20f);
+                new Vector2(625f, -410f),
+                new Vector2(230f, 66f),
+                new Color(0.12f, 0.40f, 0.34f, 1f),
+                ConfirmFinishDesign,
+                20f);
+        }
 
         foreach (Button button in new[] { _reviewButton, _threeDViewButton, _voiceButton, finish })
         {
@@ -1472,6 +1542,258 @@ public class MvpClassroomFlow : MonoBehaviour
         }
 
         RefreshThreeDViewButton();
+    }
+
+    // '설계 마치기'(시안에서는 리포트 버튼). 되돌릴 수 없는 행동이라 확인을 한 번 받는다.
+    // 람다가 아니라 메서드로 둔 이유: onClick 에 중복 등록되지 않도록 RemoveListener 로 지울 수 있어야 한다.
+    // public 인 이유: 손목 패널의 '나가기'도 같은 리포트를 띄운다(MvpWristSettingsMenu).
+    public void ConfirmFinishDesign()
+    {
+        ShowConfirmDialog(
+            "설계를 마칠까요?",
+            "마치면 회의 리포트를 보여 줘요.\n계속 수정하려면 취소를 누르세요.",
+            "설계 마치기",
+            MvpStudentUiFactory.Mint,
+            ShowReportPanel);
+    }
+
+    // 회의 리포트 패널(01_Prefabs/Graph/Designer/ReportPanel)을 띄우고 서버 값을 채운다.
+    //   씬에 미리 놓아 둔 게 있으면 그것을 쓰고, 없으면 프리팹에서 만든다.
+    private void ShowReportPanel()
+    {
+        if (_reportPanel == null)
+        {
+            ReportPanelBinder existing =
+                FindFirstObjectByType<ReportPanelBinder>(FindObjectsInactive.Include);
+            if (existing != null)
+            {
+                _reportPanel = existing.gameObject;
+            }
+            else if (_reportPanelPrefab != null)
+            {
+                // ReportPanel 프리팹에는 Canvas 가 없다 — 월드 캔버스의 자식으로 쓰도록 만들어졌다.
+                // 씬 루트에 그냥 만들면 렌더링 자체가 되지 않으므로(리포트는 받아왔는데 화면에
+                // 아무것도 안 보이던 원인) 설계 보드와 같은 캔버스 밑에 붙인다.
+                Transform parent = _mainSketchCanvas != null
+                    ? _mainSketchCanvas.transform
+                    : null;
+                _reportPanel = Instantiate(_reportPanelPrefab, parent, false);
+
+                if (_reportPanel.transform is RectTransform rect)
+                {
+                    rect.anchoredPosition3D = new Vector3(0f, 0f, -30f);   // 보드보다 앞
+                    rect.localRotation = Quaternion.identity;
+                    rect.localScale = Vector3.one;
+                }
+            }
+        }
+
+        if (_reportPanel == null)
+        {
+            Debug.LogWarning(
+                "[MVP Flow] 리포트 패널을 찾지 못했습니다. " +
+                "MvpClassroomFlow 의 Report Panel Prefab 에 " +
+                "01_Prefabs/Graph/Designer/ReportPanel 을 넣어 주세요.");
+            SetWorkspaceMessage(
+                "리포트 화면 연결을 확인해 주세요.", MvpStudentUiFactory.Coral);
+            return;
+        }
+
+        _reportPanel.SetActive(true);
+        _reportPanel.transform.SetAsLastSibling();   // 보드 위에 그린다
+        HideWorkspaceForReport();
+
+        // 리포트 조회 클라이언트가 씬에 없으면 붙인다.
+        // (ReportApiClient.Awake 가 GraphSyncClient 를 스스로 찾으므로 배선은 필요 없다.)
+        if (FindFirstObjectByType<ReportApiClient>() == null)
+        {
+            GameObject host = _graphSyncClient != null
+                ? _graphSyncClient.gameObject
+                : _reportPanel;
+            host.AddComponent<ReportApiClient>();
+        }
+
+        // 월드 캔버스는 GraphicRaycaster 만으로는 XR 에서 안 눌린다(Meta ISDK 배선이 필요).
+        // 프리팹에 Canvas 가 없으므로 부모(설계 보드) 캔버스를 다시 배선한다.
+        Canvas canvas = _reportPanel.GetComponentInParent<Canvas>();
+        if (canvas != null)
+            AttachPointableCanvas(canvas);
+
+        WireReportRestartButton();
+
+        ReportPanelBinder binder =
+            _reportPanel.GetComponentInChildren<ReportPanelBinder>(true);
+        if (binder != null)
+            binder.ShowReport();
+        else
+            Debug.LogWarning("[MVP Flow] ReportPanel 에 ReportPanelBinder 가 없습니다.");
+    }
+
+    // 리포트 프리팹의 'Restart' 버튼 — 리포트에서 나가는 유일한 길이다.
+    //   HideWorkspaceForReport 가 보드를 통째로 숨기고, MvpTableSettingsDock('방 나가기')은
+    //   MVP_SH 씬에 놓여 있지 않다(참조 0). 이 버튼이 없으면 리포트에서 갇힌다.
+    // 프리팹 onClick 은 씬 오브젝트를 참조할 수 없으므로 런타임 배선이 유일한 방법이다.
+    //   (시안 버튼 Button_2D / Button_3D / Report 와 같은 방식)
+    private void WireReportRestartButton()
+    {
+        if (_reportPanel == null) return;
+
+        Button restart = null;
+        foreach (Transform t in
+                 _reportPanel.GetComponentsInChildren<Transform>(true))
+        {
+            if (t == null || t.name != "Restart") continue;
+            restart = t.GetComponent<Button>();
+            if (restart != null) break;
+        }
+
+        if (restart == null)
+        {
+            Debug.LogWarning(
+                "[MVP Flow] ReportPanel 에서 'Restart' 버튼을 찾지 못했습니다. " +
+                "리포트에서 처음으로 돌아갈 방법이 없습니다.");
+            return;
+        }
+
+        // 리포트를 띄울 때마다 배선하므로 중복 등록을 먼저 지운다.
+        restart.onClick.RemoveListener(RestartFromReport);
+        restart.onClick.AddListener(RestartFromReport);
+        restart.interactable = true;
+    }
+
+    // 리포트를 닫고 처음으로 돌아간다.
+    // '설계 마치기' 단계에서 이미 확인을 받았으므로 여기서 또 묻지 않는다.
+    //
+    // 돌아갈 '처음'은 빌드 구성에 따라 다르다.
+    //   로비가 함께 빌드돼 있으면 → 로비 씬
+    //   회의실만 빌드돼 있으면    → 이 씬의 첫 화면(Welcome)
+    private void RestartFromReport()
+    {
+        // 숨겨 둔 보드를 먼저 되살린다 — 안 그러면 다음에 방에 들어와도
+        // 보드·노드·연결선이 꺼진 채로 남는다(_hiddenForReport 가 복원되지 않는다).
+        RestoreWorkspaceAfterReport();
+
+        if (TryGetLobbySceneIndex(out int lobbyIndex))
+        {
+            if (NetworkManager.runnerInsatance != null)
+            {
+                // Fusion 러너를 정상 종료하면 NetworkManager.OnShutdown 이 로비 씬을 연다.
+                // (intentionalShutdown 을 세워 세션 복구가 끼어들지 않게 하는 것도 그쪽이 한다)
+                Debug.Log("[MVP Flow] 리포트 Restart → 로비로 돌아갑니다.");
+                NetworkManager.ReturnToLobby();
+                return;
+            }
+
+            // 러너가 없으면(오프라인으로 회의실에 들어온 경우) 씬만 직접 연다.
+            // NetworkManager.ReturnToLobby 의 폴백은 "LobbyScene" 이름을 가정하므로 쓰지 않는다.
+            Debug.Log("[MVP Flow] 리포트 Restart → 로비 씬을 직접 엽니다(러너 없음).");
+            _networkSession?.EndSession();
+            SceneManager.LoadScene(lobbyIndex);
+            return;
+        }
+
+        // 회의실만 빌드된 경우 — 씬을 갈아탈 곳이 없으니 이 씬의 처음 화면으로.
+        Debug.Log("[MVP Flow] 리포트 Restart → 이 씬의 처음 화면으로(빌드에 로비 씬 없음).");
+        LeaveRoom();
+    }
+
+    // 빌드 설정에 로비 씬이 들어 있는지 본다.
+    // 이름으로 찾는 이유: 빌드 인덱스는 팀원마다 다르고, 로비 씬 이름이
+    // MvpLobby / LobbyScene 두 가지로 쓰인 적이 있다(NetworkManager 참고).
+    private static bool TryGetLobbySceneIndex(out int index)
+    {
+        for (int i = 0; i < SceneManager.sceneCountInBuildSettings; i++)
+        {
+            string path = SceneUtility.GetScenePathByBuildIndex(i);
+            if (string.IsNullOrEmpty(path)) continue;
+
+            string name = System.IO.Path.GetFileNameWithoutExtension(path);
+            if (name.IndexOf("Lobby", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                index = i;
+                return true;
+            }
+        }
+
+        index = -1;
+        return false;
+    }
+
+    // 리포트를 볼 때 뒤에 남아 비쳐 보이던 것들을 치운다.
+    //   설계 보드(같은 캔버스의 형제들) + 노드 + 연결선.
+    //   되돌릴 수 있게 "내가 끈 것"만 기억한다(원래 꺼져 있던 건 건드리지 않는다).
+    private readonly List<GameObject> _hiddenForReport = new List<GameObject>();
+
+    private void HideWorkspaceForReport()
+    {
+        _hiddenForReport.Clear();
+
+        if (_mainSketchCanvas != null)
+        {
+            foreach (Transform child in _mainSketchCanvas.transform)
+            {
+                if (child == null) continue;
+                if (_reportPanel != null && child == _reportPanel.transform) continue;
+                if (!child.gameObject.activeSelf) continue;
+
+                child.gameObject.SetActive(false);
+                _hiddenForReport.Add(child.gameObject);
+            }
+        }
+
+        foreach (NodeView node in
+                 FindObjectsByType<NodeView>(FindObjectsSortMode.None))
+        {
+            if (node == null || !node.gameObject.activeSelf) continue;
+            node.gameObject.SetActive(false);
+            _hiddenForReport.Add(node.gameObject);
+        }
+
+        foreach (EdgeView edge in
+                 FindObjectsByType<EdgeView>(FindObjectsSortMode.None))
+        {
+            if (edge == null || !edge.gameObject.activeSelf) continue;
+            edge.gameObject.SetActive(false);
+            _hiddenForReport.Add(edge.gameObject);
+        }
+    }
+
+    // 리포트를 닫고 설계로 돌아갈 때 쓴다.
+    public void RestoreWorkspaceAfterReport()
+    {
+        foreach (GameObject hidden in _hiddenForReport)
+        {
+            if (hidden != null)
+                hidden.SetActive(true);
+        }
+        _hiddenForReport.Clear();
+
+        if (_reportPanel != null)
+            _reportPanel.SetActive(false);
+    }
+
+    // MainSketchPanel(디자이너 시안) 안에서 이름으로 버튼을 찾는다.
+    // 비활성 자식도 훑는다 — 시작 시 꺼져 있는 경우가 있다.
+    private Button FindSketchPanelButton(string name)
+    {
+        Transform panel = _workspaceLayout != null
+            ? _workspaceLayout.MainSketchPanel
+            : null;
+        if (panel == null && _mainSketchCanvas != null)
+            panel = _mainSketchCanvas.transform;
+        if (panel == null)
+            return null;
+
+        foreach (Transform t in panel.GetComponentsInChildren<Transform>(true))
+        {
+            if (t != null && t.name == name)
+            {
+                Button button = t.GetComponent<Button>();
+                if (button != null)
+                    return button;
+            }
+        }
+        return null;
     }
 
 
@@ -1768,6 +2090,11 @@ public class MvpClassroomFlow : MonoBehaviour
                 : visible
                     ? "3D 숨기기"
                     : "3D 보기";
+
+        // 시안 버튼은 디자이너 스프라이트를 그대로 살린다. 여기서 색을 칠하면 그림 위에 덧칠된다.
+        // (상태는 위의 라벨로만 알린다 — 시안 버튼에 글자가 없으면 label 이 null 이라 그것도 건너뛴다.)
+        if (_usingDesignerButtons)
+            return;
 
         Color stateColor = !hasModel
             ? MvpStudentUiFactory.GlassAction   // 기본: 보조 글래스 톤(위계 유지)

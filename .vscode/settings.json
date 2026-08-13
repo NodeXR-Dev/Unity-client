@@ -66,5 +66,5 @@
     "explorer.fileNesting.patterns": {
         "*.sln": "*.csproj"
     },
-    "dotnet.defaultSolution": "Unity-client.sln"
+    "dotnet.defaultSolution": "NodeXR.sln"
 }

@@ -9,6 +9,11 @@ public class MvpWorkspacePolish : MonoBehaviour
 {
     [SerializeField] private RectTransform _panel;
     [SerializeField] private TMP_FontAsset _mvpFont;
+
+    [Tooltip("디자이너 시안(MainSketchPanel 프리팹)을 그대로 쓴다. " +
+             "켜 두면 보드 배경·스케치 영역·포트 배치를 코드로 다시 그리지 않는다. " +
+             "끄면 예전(코드로 그리던) 배치로 돌아간다.")]
+    [SerializeField] private bool _useDesignerLayout = true;
     [Header("MVP 포트 스프라이트")]
     [SerializeField] private Sprite _allEmptySprite;
     [SerializeField] private Sprite _allConnectedSprite;
@@ -48,14 +53,76 @@ public class MvpWorkspacePolish : MonoBehaviour
             return;
         }
 
-        StyleSpatialChrome();
-        StyleSketchArea();
-        StyleMainPorts();
+        // [2026-08-13] 디자이너 시안(MainSketchPanel 프리팹)을 쓰는 동안에는 보드 자체를
+        //   코드로 다시 그리지 않는다. StyleMainPorts 가 MvpPartRail(짙은 가로 막대)을 만들고
+        //   AllPortSlot / PartPortContainer 를 제 위치에서 끌어다 재배치하는 바람에,
+        //   프리팹이 갖고 있는 ALL·PART 포트 자리가 코드 배치로 덮여 있었다.
+        //   노드 글자 스타일(StyleNodeLabels)만 남긴다 — 이건 보드가 아니라 노드 쪽이다.
+        if (_useDesignerLayout)
+        {
+            KeepOnlyDesignerPanel();
+        }
+        else
+        {
+            StyleSpatialChrome();
+            StyleSketchArea();
+            StyleMainPorts();
+        }
         HideLegacyControls();
         StyleNodeLabels();
 
         _lastPortSignature = GetPortSignature();
         _lastNodeSignature = GetNodeSignature();
+    }
+
+    // 보드 캔버스에는 디자이너 시안(MainSketchPanel 프리팹)만 남긴다.
+    //
+    // 씬에는 예전 작업대 UI 가 실제 오브젝트로 남아 있고(제목 "중앙 설계 스케치", 부제,
+    // "부품을 고르고…" 안내, 딥블루 카드, 그리드 …), 지금까지 StyleSpatialChrome 계열이
+    // 그걸 다시 칠하거나 숨겨 왔다. 스타일링만 끄면 원본이 그대로 드러나므로,
+    // 이름으로 하나씩 지우는 대신 시안 프리팹의 형제를 통째로 끈다(빠뜨림 없음).
+    //
+    // 리포트 패널은 예외다 — 같은 캔버스 아래에 만들어지는데, 여기서 끄면
+    // 설계 마치기로 띄운 리포트가 곧바로 사라진다.
+    private void KeepOnlyDesignerPanel()
+    {
+        if (_panel == null) return;
+
+        MainSketchView view = FindFirstObjectByType<MainSketchView>();
+        if (view == null) return;
+
+        Transform keepRoot = view.transform;
+
+        // 2D 스케치 영역(둥근 카드 + 이미지 + 안내 문구)은 시안 프리팹 밖에 있을 수 있다.
+        // 그 조상 체인을 살려 두지 않으면 각진 흰 사각형만 남는다.
+        RawImage sketch = keepRoot.GetComponentInChildren<RawImage>(true);
+        if (sketch == null)
+        {
+            foreach (RawImage candidate in _panel.GetComponentsInChildren<RawImage>(true))
+            {
+                if (candidate != null) { sketch = candidate; break; }
+            }
+        }
+
+        // 오브젝트를 끄지 않고 그리기(Graphic)만 끈다.
+        //   옛 UI 판때기("물로켓 공간 설계대", "중앙 설계 스케치" 카드 …)가 시안 프리팹의
+        //   조상인 경우가 있어서, SetActive(false) 로 끄면 시안까지 같이 사라진다.
+        //   Image/TMP_Text 만 꺼도 화면에서는 완전히 없어진다.
+        foreach (Graphic graphic in _panel.GetComponentsInChildren<Graphic>(true))
+        {
+            if (graphic == null) continue;
+            if (graphic.transform.IsChildOf(keepRoot)) continue;              // 시안 안쪽은 유지
+            if (graphic.GetComponentInParent<ReportPanelBinder>() != null)    // 리포트는 예외
+                continue;
+            // 스케치 카드/이미지/안내 문구가 있는 가지는 통째로 살린다.
+            if (sketch != null &&
+                (graphic.transform.IsChildOf(sketch.transform.parent) ||
+                 sketch.transform.IsChildOf(graphic.transform)))
+                continue;
+            if (!graphic.enabled) continue;
+
+            graphic.enabled = false;
+        }
     }
 
     private void ResolvePanel()
@@ -121,43 +188,33 @@ public class MvpWorkspacePolish : MonoBehaviour
             }
         }
 
-        StyleChromeText(
-            "WorkspaceTitle", "물로켓 설계",
-            new Vector2(-455f, 398f), new Vector2(440f, 50f),
-            32f, new Color(0.96f, 0.98f, 1f, 1f),
-            TextAlignmentOptions.MidlineLeft, true);
-        StyleChromeText(
-            "WorkspaceSubtitle", "아이디어를 부품에 연결하고 설계를 함께 완성하세요",
-            new Vector2(300f, 398f), new Vector2(760f, 40f),
-            18f, new Color(0.67f, 0.73f, 0.84f, 1f),
-            TextAlignmentOptions.MidlineRight, false);
-
+        // [2026-08-13] 보드 위에 덧그리던 제목·섹션 라벨을 전부 끈다.
+        //   MainSketchPanel 프리팹(디자이너 시안)이 배경·구획을 이미 갖고 있어서,
+        //   여기서 다시 글자를 얹으면 시안 위에 겹쳐 보인다.
+        //   StyleChromeText 는 오브젝트를 만들지 않고 기존 것을 찾아 스타일만 덮으므로,
+        //   호출을 지우고 숨김 목록으로 옮기는 것으로 충분하다.
         string[] hidden =
         {
             "LabBadgeSurface", "LabBadge", "RequirementGuideChip",
             "StepChip2", "StepChip3", "PartSectionHint",
             "GenerateSectionTitle", "GenerateSectionHint",
-            "GenerateFooterHint", "HistoryLabel"
+            "GenerateFooterHint", "HistoryLabel",
+            "WorkspaceTitle", "WorkspaceSubtitle",
+            "PartSectionTitle", "SketchSectionTitle", "SketchCaption",
+
+            // [2026-08-13] 시안(MainSketchPanel 프리팹)이 배경·카드·구획을 모두 갖고 있어서,
+            //   씬에 남아 있던 옛 판때기를 겹쳐 그릴 이유가 없다. 전부 끈다.
+            //   프리팹 안의 BG / SketchImage / PartPortContainer / AllPortSlot 은 건드리지 않는다
+            //   (부품 추가 → 속성 연결, ALL 연결 흐름이 그 안에 있다).
+            "WorkspaceSurface",
+            "HeaderAccent", "HeaderDivider",
+            "WorkspaceGlowA", "WorkspaceGlowB"
+            // SketchCard(둥근 스케치 배경)와 SketchPlaceholder("아직 스케치가 비어 있어요")는
+            // 남긴다 — 이 둘을 끄면 2D 영역이 각진 흰 사각형이 되고 안내 문구도 사라진다.
+            // placeholder 는 이미지가 올라오면 Generate2DController 가 알아서 숨긴다.
         };
         foreach (string name in hidden)
             SetVisible(name, false);
-
-        SetVisible("PartSectionTitle", true);
-        StyleChromeText(
-            "PartSectionTitle", "설계 부품",
-            new Vector2(-555f, 316f), new Vector2(300f, 38f),
-            22f, new Color(0.90f, 0.93f, 0.98f, 1f),
-            TextAlignmentOptions.MidlineLeft, true);
-        StyleChromeText(
-            "SketchSectionTitle", "설계 미리보기",
-            new Vector2(-410f, 112f), new Vector2(330f, 38f),
-            23f, new Color(0.92f, 0.95f, 1f, 1f),
-            TextAlignmentOptions.MidlineLeft, true);
-        StyleChromeText(
-            "SketchCaption", "그림과 3D 결과를 한곳에서 확인합니다",
-            new Vector2(345f, 112f), new Vector2(650f, 32f),
-            17f, new Color(0.58f, 0.65f, 0.77f, 1f),
-            TextAlignmentOptions.MidlineRight, false);
     }
 
     private void HideLegacyControls()

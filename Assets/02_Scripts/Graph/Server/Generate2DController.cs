@@ -32,6 +32,12 @@ public class Generate2DController : MonoBehaviour
     [SerializeField] private TMP_Text _statusText;
     [SerializeField] private float _generationTimeoutSeconds = 120f;
 
+    [Header("로비에서 만든 스케치 복원")]
+    [Tooltip("회의실 진입 후 이 시간까지 서버에 그림이 생기길 기다린다")]
+    [SerializeField] private float _restoreTimeoutSeconds = 90f;
+    [Tooltip("복원 조회 주기")]
+    [SerializeField] private float _restorePollSeconds = 3f;
+
     private Texture2D _currentTexture;   // 이전 다운로드 텍스처(교체 시 파기용)
     private Coroutine _timeoutCoroutine;
     private bool _isGenerating;
@@ -319,10 +325,133 @@ public class Generate2DController : MonoBehaviour
         SetButtonInteractable(false);
         SetStatus("생성된 스케치를 불러오는 중...");
         StopGenerationTimeout();
-        StartCoroutine(DownloadAndShow(imgUrl));
+        StartCoroutine(DownloadAndShow(imgUrl, "2D 스케치 생성 완료"));
     }
 
-    private IEnumerator DownloadAndShow(string imgUrl)
+    // ─────────────────────────────────────────────
+    // 진입 시 기존 스케치 복원 (로비 → 회의실)
+    // ─────────────────────────────────────────────
+
+    // 로비에서 요구사항을 제출하면 서버가 POST /api/features/generate 를 받는 즉시 초기 2D 스케치
+    // 생성을 백그라운드로 시작한다. 완성되면 WS 2D_GENERATED 를 "요청한 사용자에게만" 보내는데
+    // (서버 image_2d_generation_task_service 의 send_to_user), 로비 → 회의실은 씬을 갈아타면서
+    // WS 가 끊기므로 그 푸시를 놓친다. 서버 로그에는 2d_generation_ws_skipped 만 남는다.
+    //
+    // 그래서 회의실에 들어올 때 이미 만들어진 이미지를 GET /api/history/{room_id} 로 직접 가져온다.
+    // (서버는 손댈 필요가 없다 — 결과가 이미 core_2d_image 로 조회된다.)
+    //
+    // 생성 중이거나 이미 서버 이미지가 화면에 올라와 있으면 아무 것도 하지 않는다.
+    // 사용자가 방금 만든 그림을 로비 시절 그림으로 덮지 않기 위해서다.
+    public void RestoreExistingSketch()
+    {
+        if (_isGenerating || !string.IsNullOrEmpty(_currentAssetId))
+            return;
+
+        ResolveReferences();
+        if (_syncClient == null ||
+            string.IsNullOrEmpty(_syncClient.Host) ||
+            string.IsNullOrEmpty(_syncClient.RoomId))
+        {
+            Debug.Log(
+                "[Generate2DController] 기존 스케치 복원 건너뜀: host/room_id 가 아직 없습니다.");
+            return;
+        }
+
+        StartCoroutine(CoRestoreExistingSketch());
+    }
+
+    private IEnumerator CoRestoreExistingSketch()
+    {
+        string url =
+            $"{ServerAddress.Http(_syncClient.Host)}/api/history/" +
+            UnityWebRequest.EscapeURL(_syncClient.RoomId);
+
+        // 회의실 진입은 로비의 요구사항 제출 직후(실측 1초)라, 그 시점엔 서버가 아직 그림을
+        // 만드는 중이다. 한 번만 조회하면 항상 빈손이므로 생길 때까지 주기적으로 다시 본다.
+        CoreImageDto latest = null;
+        int latestVersion = int.MinValue;
+        float deadline = Time.unscaledTime + _restoreTimeoutSeconds;
+
+        while (latest == null && Time.unscaledTime < deadline)
+        {
+            // 사용자가 직접 생성을 시작했으면 그쪽이 우선이다. 폴링을 접는다.
+            if (_isGenerating || !string.IsNullOrEmpty(_currentAssetId))
+                yield break;
+
+            string raw = null;
+            using (var req = UnityWebRequest.Get(url))
+            {
+                req.timeout = 15;
+                yield return req.SendWebRequest();
+
+                if (req.result == UnityWebRequest.Result.Success)
+                {
+                    raw = req.downloadHandler.text;
+                }
+                else
+                {
+                    // 아직 방이 준비되지 않았거나 서버가 늦은 경우다. 다음 주기에 다시 본다.
+                    Debug.LogWarning(
+                        $"[Generate2DController] 기존 스케치 조회 실패: {req.error} (code={req.responseCode})");
+                }
+            }
+
+            if (!string.IsNullOrEmpty(raw))
+            {
+                HistoryResponse res = null;
+                try { res = JsonUtility.FromJson<HistoryResponse>(raw); }
+                catch (System.Exception e)
+                {
+                    Debug.LogWarning(
+                        $"[Generate2DController] 기존 스케치 응답 파싱 실패: {e.Message}");
+                }
+
+                // 여러 버전이 올 수 있으므로 이미지가 붙어 있는 것 중 가장 최신(graph_version 최대)을 고른다.
+                List<GraphSnapshotDto> history = res?.result?.history;
+                if (history != null)
+                {
+                    foreach (GraphSnapshotDto snapshot in history)
+                    {
+                        if (snapshot?.core_2d_image == null ||
+                            string.IsNullOrEmpty(snapshot.core_2d_image.image_url))
+                            continue;
+                        if (snapshot.graph_version < latestVersion)
+                            continue;
+                        latestVersion = snapshot.graph_version;
+                        latest = snapshot.core_2d_image;
+                    }
+                }
+            }
+
+            if (latest == null)
+                yield return new WaitForSecondsRealtime(_restorePollSeconds);
+        }
+
+        if (latest == null)
+        {
+            Debug.Log(
+                $"[Generate2DController] 복원할 기존 스케치가 없습니다 " +
+                $"({_restoreTimeoutSeconds}초 안에 생성되지 않음).");
+            yield break;
+        }
+
+        // 조회하는 사이에 사용자가 직접 생성을 시작했으면 그쪽이 우선이다.
+        if (_isGenerating || !string.IsNullOrEmpty(_currentAssetId))
+            yield break;
+
+        // 3D 생성이 source_asset_id 로 쓰므로 복원한 이미지의 asset_id 도 채워 둔다.
+        _currentAssetId = latest.asset_id;
+        _isGenerating   = true;
+        SetButtonInteractable(false);
+        SetStatus("이전에 만든 스케치를 불러오는 중...");
+        Debug.Log(
+            $"[Generate2DController] 기존 스케치 복원: graph_version={latestVersion} " +
+            $"asset_id={latest.asset_id}");
+
+        yield return DownloadAndShow(latest.image_url, "로비에서 만든 스케치예요.");
+    }
+
+    private IEnumerator DownloadAndShow(string imgUrl, string doneStatus)
     {
         // 상대 경로면 host 를 붙여 절대 URL 로 만든다.
         string url = imgUrl.StartsWith("http")
@@ -363,7 +492,35 @@ public class Generate2DController : MonoBehaviour
             if (_currentTexture != null && _currentTexture != texture)
                 Destroy(_currentTexture);
             _currentTexture = texture;
-            FinishGeneration("2D 스케치 생성 완료");
+            HideSketchPlaceholder();
+            Debug.Log(
+                $"[Generate2DController] 2D 이미지 표시 완료: {texture.width}x{texture.height} " +
+                $"→ {_centerImage.name} (canvas={(_centerImage.canvas != null ? _centerImage.canvas.name : "없음")}, " +
+                $"활성={_centerImage.gameObject.activeInHierarchy})");
+            FinishGeneration(doneStatus);
+        }
+    }
+
+    // 보드에 깔려 있는 "아직 생성된 그림이 없어요" 안내를 지운다.
+    //
+    // 지금까지는 MvpClassroomFlow 가 자기 생성 흐름에서만 이 문구를 숨겼다(HideSketchPlaceholder).
+    // 그래서 서버에서 받아 온 이미지를 올려도 안내가 그림 위에 그대로 남아, 그림이 없는 것처럼 보였다.
+    // 이미지를 올리는 지점이 여기 하나이므로 여기서 함께 처리한다.
+    private void HideSketchPlaceholder()
+    {
+        if (_centerImage == null) return;
+
+        Transform root = _centerImage.canvas != null
+            ? _centerImage.canvas.transform
+            : _centerImage.transform.root;
+
+        foreach (Transform t in root.GetComponentsInChildren<Transform>(true))
+        {
+            if (t != null && t.name == "SketchPlaceholder")
+            {
+                t.gameObject.SetActive(false);
+                return;
+            }
         }
     }
 

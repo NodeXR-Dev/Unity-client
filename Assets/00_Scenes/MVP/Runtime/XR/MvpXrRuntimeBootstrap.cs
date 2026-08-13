@@ -19,11 +19,30 @@ public static class MvpXrRuntimeBootstrap
     internal static int SuppressedRendererCount => DuplicateRenderers.Count;
     internal static int SuppressedHandVisualCount => DuplicateHandVisuals.Count;
 
+    // AfterSceneLoad 는 앱이 시작할 때 "첫 씬"에서 한 번만 실행된다.
+    // 로비를 0번 씬으로 함께 빌드하면 그 시점엔 MvpClassroomFlow 가 없어 그냥 돌아가고,
+    // 이후 로비가 SceneManager 로 MVP_SH 를 열어도 이 메서드는 다시 불리지 않는다.
+    //   → MVP_SH 만 빌드하면 손목 패널이 보이고, 로비와 함께 빌드하면 안 보이던 원인.
+    //      다른 부품(Bridge/PlayerController/NodeInteraction/GraphLink)은 MVP_SH 씬에
+    //      직접 놓여 있어 멀쩡했고, 씬에 없는 유일한 부품인 손목 메뉴만 사라졌다.
+    // → 이후에 로드되는 씬도 받도록 sceneLoaded 를 함께 구독한다.
     [RuntimeInitializeOnLoadMethod(
         RuntimeInitializeLoadType.AfterSceneLoad)]
-    private static void EnsureMvpXrAdapters()
+    private static void Install()
     {
-        Scene scene = SceneManager.GetActiveScene();
+        SceneManager.sceneLoaded -= HandleSceneLoaded;
+        SceneManager.sceneLoaded += HandleSceneLoaded;
+        EnsureMvpXrAdapters(SceneManager.GetActiveScene());
+    }
+
+    private static void HandleSceneLoaded(Scene scene, LoadSceneMode mode)
+    {
+        EnsureMvpXrAdapters(scene);
+    }
+
+    // 부품을 붙이는 판단은 전부 "이미 있으면 건너뛴다"라서 여러 번 불려도 안전하다.
+    private static void EnsureMvpXrAdapters(Scene scene)
+    {
         if (string.IsNullOrEmpty(scene.path) ||
             !scene.path.StartsWith(
                 MvpSceneFolder, StringComparison.OrdinalIgnoreCase))

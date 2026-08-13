@@ -20,7 +20,14 @@ public class EdgeView : MonoBehaviour
     [Header("엔드포인트 구 (엣지 자식으로 배치)")]
     [SerializeField] private ConnectorSphereView _fromConnector;
     [SerializeField] private ConnectorSphereView _toConnector;
-    [SerializeField] private float _connectorScale = 0.06f;  // Inspector에서 조절
+    // 엣지가 양 끝에 놓는 구체의 월드 스케일.
+    // (노드 프리팹 Port_In/Port_Out 아래의 구체 크기와는 다른 값이다 — 그쪽은 노드 로컬 0.02.)
+    [SerializeField] private float _connectorScale = 0.0003f;
+
+    // PART/ALL 연결선(MvpXrGraphLinkController)도 끝에 구체를 얹는다.
+    // 그쪽이 이 값을 그대로 쓰게 해서 두 종류의 구체가 같은 크기로 보이게 한다
+    // — 값을 복사해 두면 프리팹만 고쳤을 때 한쪽만 바뀐다.
+    public float ConnectorScale => _connectorScale;
 
     private static Material _sharedLineMaterial;
 

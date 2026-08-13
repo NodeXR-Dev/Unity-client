@@ -460,11 +460,13 @@ public class MvpWristSettingsMenu : MonoBehaviour
             flow.ToggleVoiceInput();
     }
 
+    // 손목 패널의 '나가기' = 설계를 마치고 회의 리포트를 본다.
+    // (방을 즉시 뜨는 '방 나가기'는 테이블 도크에 그대로 있다 — MvpTableSettingsDock)
     private void LeaveRoomFromWrist()
     {
         MvpClassroomFlow flow = FindFirstObjectByType<MvpClassroomFlow>();
         if (flow != null)
-            flow.RequestLeaveRoom();
+            flow.ConfirmFinishDesign();
     }
 
     // ── 화면 공유 ─────────────────────────────────────────────
