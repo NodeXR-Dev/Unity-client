@@ -83,6 +83,9 @@ public class MvpOnDeviceDictation : MonoBehaviour
     private bool _awaitingFinal;
     private float _flushStartedAt;
 
+    // 마이크 링버퍼 길이(초). 30초는 16kHz 기준 480,000 샘플이라 여는 데만도 부담이다.
+    private const int MicBufferSeconds = 10;
+
     private static OnlineRecognizer Recognizer => _sharedRecognizer;
 
     public event Action<string> OnPartial;   // 듣는 중 부분 자막
@@ -226,15 +229,24 @@ public class MvpOnDeviceDictation : MonoBehaviour
             return false;
         }
 
-        _micClip = Microphone.Start(_micDevice, true, 30, SampleRate);
-        if (_micClip == null)
+        // 마이크는 발화마다 껐다 켜지 않는다.
+        // Microphone.Start / End 는 OS 오디오 경로를 타서 메인 스레드를 수백 ms 잡는다.
+        // Quest 에서 인식기를 누를 때와 끝날 때 모래시계가 뜨던 원인이 여기였다.
+        // 한 번 열어 두고 읽는 위치만 옮기며, 실제 정지는 ReleaseMicrophone 에서 한다.
+        if (_micClip == null || !Microphone.IsRecording(_micDevice))
         {
-            Debug.LogWarning("[MVP STT] 마이크를 시작하지 못했습니다.");
-            return false;
+            _micClip = Microphone.Start(_micDevice, true, MicBufferSeconds, SampleRate);
+            if (_micClip == null)
+            {
+                Debug.LogWarning("[MVP STT] 마이크를 시작하지 못했습니다.");
+                return false;
+            }
         }
 
+        // 이번 발화는 '지금'부터 듣는다. 앞선 구간이 섞이지 않게 읽기 위치를 현재로.
+        _micReadPos = Mathf.Max(0, Microphone.GetPosition(_micDevice));
+
         _stream = Recognizer.CreateStream();
-        _micReadPos = 0;
         _lastPartial = "";
 
         while (_pending.TryDequeue(out _)) { }   // 이전 세션 잔여 제거
@@ -321,10 +333,11 @@ public class MvpOnDeviceDictation : MonoBehaviour
         if (_activeListener == this)
             _activeListener = null;
 
-        DrainMic();                  // 남은 마이크 샘플을 큐에 밀어 넣고
-        Microphone.End(_micDevice);
-        _micClip = null;
+        DrainMic();   // 남은 마이크 샘플을 큐에 밀어 넣는다
         Level = 0f;
+
+        // 마이크는 여기서 끄지 않는다(Microphone.End 가 메인 스레드를 잡는다).
+        // 다음 발화를 바로 시작할 수 있고, 실제 정지는 ReleaseMicrophone 이 한다.
 
         // 마무리 디코딩(무음 패딩 포함)은 워커가 이어서 한다.
         //
@@ -339,6 +352,23 @@ public class MvpOnDeviceDictation : MonoBehaviour
         }
 
         return _workerPartial ?? "";
+    }
+
+    /// <summary>
+    /// 마이크를 실제로 놓는다. 발화 사이에는 열어 두므로(재시작 비용 회피),
+    /// 음성 UI 를 닫을 때 이걸 불러 준다. 안 부르면 마이크가 계속 켜져 있다.
+    /// </summary>
+    public void ReleaseMicrophone()
+    {
+        if (_listening)
+            StopListening();
+
+        if (_micClip != null || Microphone.IsRecording(_micDevice))
+            Microphone.End(_micDevice);
+
+        _micClip = null;
+        _micReadPos = 0;
+        Level = 0f;
     }
 
     // 워커가 마무리 디코딩을 끝냈는지 확인하고, 끝났으면 확정 문장을 넘긴다.
@@ -455,7 +485,13 @@ public class MvpOnDeviceDictation : MonoBehaviour
                 Path.Combine(ModelDirCached, "joiner-epoch-99-avg-1.int8.onnx");
             config.ModelConfig.Tokens =
                 Path.Combine(ModelDirCached, "tokens.txt");
+            // Quest 는 앱에 주는 코어가 적어 디코드 스레드를 2개 쓰면 렌더 스레드와
+            // 다퉈 말하는 동안 프레임이 끊긴다. 기기에서는 1개로 둔다.
+#if UNITY_ANDROID && !UNITY_EDITOR
+            config.ModelConfig.NumThreads = 1;
+#else
             config.ModelConfig.NumThreads = 2;
+#endif
             config.ModelConfig.Provider = "cpu";
             config.DecodingMethod = "greedy_search";
             config.EnableEndpoint = 1;
@@ -475,13 +511,21 @@ public class MvpOnDeviceDictation : MonoBehaviour
         }
     }
 
+    private void OnDisable()
+    {
+        // 키보드가 닫히거나 컴포넌트가 꺼지면 마이크를 놓는다.
+        // (발화 사이에는 열어 두므로 여기서 정리해야 계속 켜져 있지 않다)
+        ReleaseMicrophone();
+    }
+
     private void OnDestroy()
     {
-        if (_listening)
+        if (_micClip != null || Microphone.IsRecording(_micDevice))
         {
             Microphone.End(_micDevice);
-            _listening = false;
+            _micClip = null;
         }
+        _listening = false;
         if (_activeListener == this)
             _activeListener = null;
 
