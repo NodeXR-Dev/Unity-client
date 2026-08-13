@@ -34,6 +34,9 @@ public class MainSketchView : MonoBehaviour
     [Header("옵션")]
     [SerializeField] private bool _refreshOnStart = true;
 
+    [Tooltip("ALL 노드가 없으면 자동으로 만든다. 꺼 두면 ALL 포트는 빈 원으로만 남고 연결되지 않는다.")]
+    [SerializeField] private bool _autoCreateAllNode = true;
+
     private bool _subscribed;
 
     private void Start()
@@ -45,6 +48,10 @@ public class MainSketchView : MonoBehaviour
     // 발화 응답으로 서버 PART 노드가 들어오면 이 경로로 메인그래프에 반영된다.
     private void OnEnable()
     {
+        // 배선이 비어 있으면(프리팹 인스턴스) 여기서도 찾아 둔다.
+        // 못 찾으면 그래프 변경 통지를 못 받아 포트가 갱신되지 않는다.
+        if (_graphManager == null)
+            _graphManager = FindFirstObjectByType<GraphManager>();
         if (_graphManager == null || _subscribed) return;
         _graphManager.OnGraphChanged += Refresh;
         _subscribed = true;
@@ -80,6 +87,20 @@ public class MainSketchView : MonoBehaviour
             }
         }
 
+        // ALL 노드가 없으면 만든다.
+        //   ALL 포트는 보드에 항상 하나 있고 "모든 부품에 적용되는 속성"을 받는 자리인데,
+        //   노드가 없으면 AllPort.NodeId 가 비어 클릭해도 연결이 성립하지 않는다
+        //   (PART 는 노드가 있어서 되고 ALL 만 안 되던 원인).
+        if (allNode == null && _autoCreateAllNode)
+        {
+            string createdId = _graphManager.RequestCreatePartNode("전체", true);
+            if (!string.IsNullOrEmpty(createdId))
+            {
+                allNode = _graphManager.GetNode(createdId);
+                Debug.Log($"[MainSketchView] ALL 노드를 새로 만들었습니다: {createdId}");
+            }
+        }
+
         // ALL 포트
         bool allConnected = false;
         if (allNode != null)
@@ -89,10 +110,10 @@ public class MainSketchView : MonoBehaviour
         }
         if (_allPort != null)
         {
-            // ALL 노드가 없으면(MVP는 전체 포트 미사용) '전체 설계' 빈 원을 숨긴다.
-            _allPort.gameObject.SetActive(allNode != null);
-            if (allNode != null)
-                _allPort.Bind(allNode, _graphManager, Refresh, allConnected);
+            // ALL 포트는 보드에 항상 1개 자리를 지킨다(추가/삭제 대상이 아니다).
+            // ALL 노드가 아직 없으면 빈 원으로 보이며, Bind 는 null 을 안전하게 처리한다.
+            _allPort.gameObject.SetActive(true);
+            _allPort.Bind(allNode, _graphManager, Refresh, allConnected);
         }
 
         // PartPortContainer 부분 갱신: 기존 자식 재사용 + 사라진 것만 Destroy.
@@ -155,6 +176,13 @@ public class MainSketchView : MonoBehaviour
 
     private bool EnsureRefs()
     {
+        // 프리팹(MainSketchPanel)은 씬 오브젝트를 참조할 수 없어서 인스펙터 배선이 비어 있다.
+        // 그대로 두면 Refresh 가 통째로 중단돼 PART/AddPart 포트가 영영 그려지지 않는다.
+        if (_graphManager == null)
+            _graphManager = FindFirstObjectByType<GraphManager>();
+        if (_apiClient == null)
+            _apiClient = FindFirstObjectByType<PartNodeApiClient>();
+
         if (_graphManager == null)
         {
             Debug.LogWarning("[MainSketchView] Refresh 실패: GraphManager가 연결되지 않았습니다.");

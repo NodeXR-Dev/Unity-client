@@ -199,11 +199,14 @@ public class AllPort : MonoBehaviour,
             if (node == null) continue;
 
             string capturedEdgeId = edge.edge_id;
-            Button btn = Instantiate(_connectedNodeButtonPrefab, _connectedListContainer);
+            Button entry = Instantiate(_connectedNodeButtonPrefab, _connectedListContainer);
 
-            TMP_Text labelText = btn.GetComponentInChildren<TMP_Text>();
+            TMP_Text labelText = ResolveLabel(entry.transform);
             if (labelText != null) labelText.text = node.DisplayText;
 
+            // PartPort 처럼 원 + X + 이름을 한 칸에 담는 구조를 쓰면 X 는 자식 버튼이다.
+            // 예전 구조(루트 자체가 X)도 그대로 동작하도록 둘 다 받는다.
+            Button btn = ResolveDeleteButton(entry);
             btn.onClick.AddListener(() =>
             {
                 bool ok = _manager.RequestDeleteEdge(capturedEdgeId);
@@ -214,6 +217,24 @@ public class AllPort : MonoBehaviour,
                 }
             });
         }
+    }
+
+    // 한 칸(ConnectedNodeButton) 안에서 실제로 눌러야 할 X 버튼을 고른다.
+    //   새 구조: 칸 안에 "DeleteButton" 자식이 있다(PartPort 와 같은 이름).
+    //   옛 구조: 칸 루트가 곧 X 버튼이다.
+    private static Button ResolveDeleteButton(Button entry)
+    {
+        Transform child = entry.transform.Find("DeleteButton");
+        Button button = child != null ? child.GetComponent<Button>() : null;
+        return button != null ? button : entry;
+    }
+
+    // 이름표도 같은 규약. "LabelText" 가 있으면 그것, 없으면 칸 안의 첫 TMP_Text.
+    private static TMP_Text ResolveLabel(Transform entry)
+    {
+        Transform child = entry.Find("LabelText");
+        TMP_Text text = child != null ? child.GetComponent<TMP_Text>() : null;
+        return text != null ? text : entry.GetComponentInChildren<TMP_Text>(true);
     }
 
     private void ClearConnectedList()

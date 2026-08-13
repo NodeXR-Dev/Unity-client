@@ -136,6 +136,9 @@ public class MvpWorkspaceLayout : MonoBehaviour
                      FindObjectsByType<NodeView>(FindObjectsSortMode.None))
                 if (view != null)
                     view.transform.rotation = nodeRot;
+
+            // 보드가 방금 돌아갔을 수 있다 — 다음 노드 생성이 옛 축으로 배치되지 않게 갱신한다.
+            ApplyLayoutBasis();
         }
 
         if (!_arrangeOnGraphChanged || _graphManager == null) return;
@@ -253,6 +256,10 @@ public class MvpWorkspaceLayout : MonoBehaviour
 
         ArrangePartRoots(partRoots, propertyChildrenById);
         ArrangeReferenceRoots(referenceRoots);
+
+        // 루트를 보드 평면(panel.right/up) 위에 놓았으니 자식도 같은 평면을 따라야 한다.
+        // 안 맞추면 보드가 유저를 향해 돌아간 각도만큼 자식이 z 로 어긋난다.
+        ApplyLayoutBasis();
 
         _graphManager.ReflowAllSubtrees();
         ScaleNodeViews();
@@ -563,6 +570,17 @@ public class MvpWorkspaceLayout : MonoBehaviour
             float y = _referenceBaseHeight - row * _referenceRowGap;
             MoveRoot(roots[index], x, y);
         }
+    }
+
+    // 하위 노드 배치가 쓸 좌표축을 보드 평면에 맞춘다.
+    // 보드는 LateUpdate 에서 유저를 향해 계속 회전하므로, Reflow 직전뿐 아니라
+    // 회전을 갱신한 뒤에도 함께 갱신해야 다음 노드 생성이 옛 축으로 배치되지 않는다.
+    private void ApplyLayoutBasis()
+    {
+        if (_graphManager == null || _mainSketchPanel == null) return;
+        _graphManager.SetLayoutBasis(
+            _mainSketchPanel.right,
+            _mainSketchPanel.up);
     }
 
     private void MoveRoot(NodeData root, float localX, float localY)

@@ -13,8 +13,18 @@ public class MvpXrGraphLinkController : MonoBehaviour
     [SerializeField] private float _lineWidth = 0.009f;
     [SerializeField] private Color _dragColor =
         new Color(0.25f, 0.88f, 1f, 0.95f);
+    // 활성화된 연결선 색. 구체(Sphere_Grabbed)의 _EmissionColor 와 맞춘다.
+    //   _Color(0, 0.934, 0.162)는 어두워서, 빛나는 구체 옆에 두면 선만 탁해 보인다.
+    //   구체가 화면에서 실제로 내는 밝은 연두가 이 값이다.
     [SerializeField] private Color _linkedColor =
-        new Color(0.27f, 0.92f, 0.63f, 0.95f);
+        new Color(0.51806414f, 1f, 0.495283f, 1f);
+
+    [Tooltip("아직 활성화하지 않은 연결선 색. 선 자체는 항상 보인다.")]
+    [SerializeField] private Color _inactiveLineColor = Color.white;
+
+    [Tooltip("PART/ALL 연결선 끝 구체 크기의 폴백. 씬에 EdgeView 가 있으면 " +
+             "그쪽 _connectorScale(EdgePrefab 0.0009)을 우선 쓴다.")]
+    [SerializeField] private float _fallbackSphereScale = 0.0009f;
 
     private readonly Dictionary<string, LineRenderer> _edgeLines =
         new Dictionary<string, LineRenderer>();
@@ -148,10 +158,23 @@ public class MvpXrGraphLinkController : MonoBehaviour
             if (string.IsNullOrEmpty(
                 _graphManager.GetPropertyParentId(ev.ToNodeId)))
             continue;
+            // 선은 항상 보인다 — 연결 자체가 사라진 것처럼 보이면 안 된다.
+            // 활성이면 초록(Sphere_Grabbed), 아니면 기본 흰색으로 구분만 한다.
             bool active = _graphManager.IsNodeActive(ev.ToNodeId);
-            ev.SetLineColor(_linkedColor);
-            ev.SetLineVisible(active);
+
+            // 선 색은 구체 머티리얼에서 직접 가져온다 — 값을 복사해 두면 둘이 미묘하게 어긋난다.
+            Color activeColor = ResolveSphereActiveColor(ev);
+            ev.SetLineColor(active ? activeColor : _inactiveLineColor);
+            ev.SetLineVisible(true);
+
+            // 끝점 구도 함께 바뀌어야 한다 — 선만 초록이고 구는 흰색이면 따로 논다.
+            // ConnectorSphereView 의 grabbed 머티리얼이 Sphere_Grabbed(초록) 그 자체다.
+            ev.SetFromConnectorPressed(active);
+            ev.SetToConnectorPressed(active);
         }
+
+        // 노드에 달린 구체는 포트별로 따로 판단한다(아래 참조).
+        RefreshConnectorSpheres();
 
         foreach (NodeView nv in
              FindObjectsByType<NodeView>(FindObjectsSortMode.None))
@@ -196,6 +219,29 @@ public class MvpXrGraphLinkController : MonoBehaviour
                 mr.SetPropertyBlock(new MaterialPropertyBlock());
             }
         }
+    }
+
+    // 프리팹 LinkButton 용 진입점. 드래그 핸들 없이 버튼 클릭만으로 연결을 시작한다
+    // (버튼을 누르고 → 빛나는 부품 원을 누른다).
+    public void ToggleConnectionSelection(NodeView node)
+    {
+        ResolveReferences();
+        if (_graphManager == null || node == null ||
+            string.IsNullOrEmpty(node.NodeId))
+            return;
+
+        if (_selectedLinkNodeId == node.NodeId)
+        {
+            ClearConnectionSelection(false);
+            return;
+        }
+
+        _selectedLinkHandle = null;
+        _selectedLinkNodeId = node.NodeId;
+        RefreshPortHighlights(node.NodeId, null);
+        ShowMessage(
+            "연결할 부품을 골라 주세요. 빛나는 원을 한 번 누르면 돼요.",
+            MvpStudentUiFactory.HoloCyan);
     }
 
     public void ToggleConnectionSelection(
@@ -343,10 +389,25 @@ public class MvpXrGraphLinkController : MonoBehaviour
 
     private void WireIdeaHandles()
     {
-        foreach (NodeView node in
-             FindObjectsByType<NodeView>(
-                 FindObjectsInactive.Include,
-                 FindObjectsSortMode.None))
+        NodeView[] nodes =
+            FindObjectsByType<NodeView>(
+                FindObjectsInactive.Include,
+                FindObjectsSortMode.None);
+
+        // 누군가의 부모인 node_id 모음 — 여기 없으면 최하위(leaf)다.
+        HashSet<string> parentIds = new HashSet<string>();
+        if (_graphManager != null)
+        {
+            foreach (NodeView n in nodes)
+            {
+                if (n == null || string.IsNullOrEmpty(n.NodeId)) continue;
+                string parent = _graphManager.GetPropertyParentId(n.NodeId);
+                if (!string.IsNullOrEmpty(parent))
+                    parentIds.Add(parent);
+            }
+        }
+
+        foreach (NodeView node in nodes)
         {
             if (node == null)
             continue;
@@ -364,66 +425,66 @@ public class MvpXrGraphLinkController : MonoBehaviour
             legacyGrip.gameObject.SetActive(false);
 
             // 원본 R은 레퍼런스 stub이라 남겨 두면 연결점과 중복되어 보인다.
-            // MVP에서는 숨기고, 아래의 단일 '연결' 점만 사용한다.
             Transform referenceButton = canvas.Find("ReferenceButton");
             if (referenceButton != null && referenceButton.gameObject.activeSelf)
             referenceButton.gameObject.SetActive(false);
 
-            // 프리팹 원본의 한글 '연결' 버튼. onClick 리스너도 코드 참조도 없는 죽은 버튼인데
-            // MvpNodeLinkPort 와 같은 자리에 겹쳐 디자이너 스프라이트 뒤로 비쳐 보였다.
-            Transform legacyLinkButton = canvas.Find("LinkButton");
-            if (legacyLinkButton != null && legacyLinkButton.gameObject.activeSelf)
-            legacyLinkButton.gameObject.SetActive(false);
+            // [2026-08-13] 코드가 만들던 '연결' 패널(MvpNodeLinkPort)을 걷어낸다.
+            //   NewNodebox 프리팹이 LinkButton / ActivateButton 을 이미 갖고 있는데
+            //   그 위에 같은 기능의 패널을 얹어 두 겹으로 보이고 서로 클릭을 가로챘다.
+            Transform legacyPort = canvas.Find("MvpNodeLinkPort");
+            if (legacyPort != null)
+            legacyPort.gameObject.SetActive(false);
 
-            Transform existing = canvas.Find("MvpNodeLinkPort");
-            Image linkPoint = existing != null
-            ? existing.GetComponent<Image>()
-            : null;
-            if (linkPoint == null)
+            // 최상위(부모 없음) = 부품에 연결할 수 있는 노드.
+            bool isRoot = _graphManager == null ||
+            string.IsNullOrEmpty(
+                _graphManager.GetPropertyParentId(node.NodeId));
+            // 최하위(자식 없음) = 2D 재생성에 쓸지 고르는 노드.
+            bool isLeaf = !parentIds.Contains(node.NodeId);
+
+            // LinkButton — 최상위에만. 누르면 연결 대상 선택이 시작되고, 이어서 부품 원을 누른다.
+            Button linkButton = FindNodeButton(canvas, "LinkButton");
+            if (linkButton != null)
             {
-                linkPoint = MvpStudentUiFactory.CreatePanel(
-                canvas,
-                "MvpNodeLinkPort",
-                new Vector2(0f, -1.65f),
-                // 디자이너 스프라이트가 2.26:1 이라 그 비율로 맞춘다(늘어나면 알약이 찌그러진다).
-                new Vector2(190f, 84f),
-                Color.white,
-                true);
-                linkPoint.raycastTarget = true;
-
-                // 라벨은 만들지 않는다 — 스프라이트에 글자가 들어 있다.
+                linkButton.gameObject.SetActive(isRoot);
+                if (isRoot)
+                {
+                    NodeView captured = node;
+                    linkButton.onClick.RemoveAllListeners();
+                    linkButton.onClick.AddListener(
+                        () => ToggleConnectionSelection(captured));
+                }
             }
 
-            linkPoint.raycastTarget = true;
-
-            // 노드 Canvas 자식은 0.02 스케일 규약을 따른다. CreatePanel 은 localScale=1 로 만들어
-            // "연결" 패널이 노드보다 ~50배 크게 보이므로(이슈 1), 형제(라벨/버튼) 스케일에 맞춰 축소한다.
-            Transform linkSibling =
-            canvas.Find("LabelInputField") ?? canvas.Find("AddButton");
-            float linkChildScale =
-            linkSibling != null ? linkSibling.localScale.x : 0.02f;
-            linkPoint.rectTransform.localScale = Vector3.one * linkChildScale;
-
-            NodeActionPanel panel =
-            node.GetComponentInChildren<NodeActionPanel>(true);
-            MvpIdeaCardDragHandle handle =
-            linkPoint.GetComponent<MvpIdeaCardDragHandle>();
-            if (handle == null)
-            handle = linkPoint.gameObject.AddComponent<MvpIdeaCardDragHandle>();
-            handle.Configure(this, node, panel);
-            // 자식 PROPERTY(부모가 있는 노드)는 부품 '연결'이 아니라 '활성화' 토글이다.
-            // 최상위(부모 없는) 노드만 부품에 연결한다.
-            bool isChild = _graphManager != null &&
-            !string.IsNullOrEmpty(
-                _graphManager.GetPropertyParentId(node.NodeId));
-            handle.SetChildMode(isChild);
-            if (isChild)
-            handle.RefreshChildLabel(
-                _graphManager.IsNodeActive(node.NodeId));
-            else
-            handle.SetConnectionSelected(
-                _selectedLinkNodeId == node.NodeId);
+            // ActivateButton — 최하위에만. 켜진 노드만 2D 재생성에 반영된다.
+            Button activateButton = FindNodeButton(canvas, "ActivateButton");
+            if (activateButton != null)
+            {
+                activateButton.gameObject.SetActive(isLeaf && !isRoot);
+                if (isLeaf && !isRoot)
+                {
+                    NodeView captured = node;
+                    activateButton.onClick.RemoveAllListeners();
+                    activateButton.onClick.AddListener(
+                        () => ToggleChildActive(captured));
+                }
+            }
         }
+    }
+
+    // 노드 Canvas 아래에서 이름으로 버튼을 찾는다(꺼져 있어도 찾는다).
+    private static Button FindNodeButton(Transform canvas, string name)
+    {
+        Transform found = canvas.Find(name);
+        if (found == null)
+        {
+            foreach (Transform t in canvas.GetComponentsInChildren<Transform>(true))
+            {
+                if (t != null && t.name == name) { found = t; break; }
+            }
+        }
+        return found != null ? found.GetComponent<Button>() : null;
     }
 
     private void SyncIdeaTitleIfEmpty(
@@ -639,7 +700,11 @@ public class MvpXrGraphLinkController : MonoBehaviour
         foreach (NodeView nv in
                  FindObjectsByType<NodeView>(FindObjectsSortMode.None))
             if (nv != null && !string.IsNullOrEmpty(nv.NodeId))
-                nodeMap[nv.NodeId] = nv.transform;
+                // PART/ALL 은 속성 서브그래프의 위쪽에 붙으므로, 부모→자식 엣지와 똑같이
+                // 속성 최상위 노드의 왼쪽 입력 포트로 들어와야 한다.
+                // (nv.transform 을 쓰면 선이 노드 한가운데를 관통한다.)
+                nodeMap[nv.NodeId] =
+                    nv.InputPort != null ? nv.InputPort : nv.transform;
 
         Dictionary<string, Transform> portMap =
             new Dictionary<string, Transform>();
@@ -700,6 +765,11 @@ public class MvpXrGraphLinkController : MonoBehaviour
                 line.enabled = true;
                 line.SetPosition(0, node.position);
                 line.SetPosition(1, port.position);
+
+                // 양 끝에 구체를 얹는다. 부품(PART/ALL) 쪽은 테두리만 있는 원형 스프라이트 위에
+                // 구체가 덮이면서 "꽂혔다"로 읽힌다. 노드 쪽은 입력 포트에 붙는다.
+                PlaceEdgeSphere(key + "#node", node.position);
+                PlaceEdgeSphere(key + "#port", port.position);
             }
         }
 
@@ -718,7 +788,193 @@ public class MvpXrGraphLinkController : MonoBehaviour
                 line != null)
                 Destroy(line.gameObject);
             _edgeLines.Remove(key);
+
+            RemoveEdgeSphere(key + "#node");
+            RemoveEdgeSphere(key + "#port");
         }
+    }
+
+    // ── PART/ALL 연결선 끝점 구체 ──────────────────────────
+    // EdgeView(노드↔노드)는 자기 구체를 갖고 있지만, 이 연결선은 LineRenderer 뿐이라
+    // 끝이 허공에서 끊겨 보였다. 속성 노드끼리의 엣지가 쓰는 구체를 그대로 본떠
+    // 같은 크기·같은 연두로 얹는다.
+
+    private const string SphereClonePrefix = "MvpLinkSphere_";
+
+    private readonly Dictionary<string, GameObject> _edgeSpheres =
+        new Dictionary<string, GameObject>();
+    private GameObject _sphereTemplate;
+    private float _sphereScale;
+
+    private void PlaceEdgeSphere(string key, Vector3 position)
+    {
+        if (!_edgeSpheres.TryGetValue(key, out GameObject sphere) ||
+            sphere == null)
+        {
+            GameObject template = ResolveSphereTemplate();
+            if (template == null)
+                return;
+
+            sphere = Instantiate(template, transform);
+            sphere.name = SphereClonePrefix + key;
+
+            // 복제본은 표시 전용이다 — 콜라이더가 있으면 포크/레이가 포트 대신 이걸 집는다.
+            foreach (Collider collider in
+                     sphere.GetComponentsInChildren<Collider>(true))
+                collider.enabled = false;
+
+            // 이 선은 연결이 성립해 있을 때만 그려진다 → 구체는 항상 활성(연두)이다.
+            // 연두색 자체는 ConnectorSphereView 의 grabbed 머티리얼(Sphere_Grabbed)에서 온다.
+            ConnectorSphereView view =
+                sphere.GetComponentInChildren<ConnectorSphereView>(true);
+            if (view != null)
+                view.SetGrabbed(true);
+
+            _edgeSpheres[key] = sphere;
+        }
+
+        // 크기는 매번 맞춘다 — 템플릿이 늦게 잡히면 첫 프레임의 잘못된 크기가 남는다.
+        // EdgeView 는 구체를 엣지 아래(스케일 1)에 두므로 _connectorScale 이 곧 월드 크기다.
+        // 이쪽 부모는 이 컨트롤러라 스케일이 1이라는 보장이 없어 나눠서 상쇄한다.
+        float scale = _sphereScale > 0f ? _sphereScale : _fallbackSphereScale;
+        Vector3 parentScale = transform.lossyScale;
+        sphere.transform.localScale = new Vector3(
+            scale / SafeDivisor(parentScale.x),
+            scale / SafeDivisor(parentScale.y),
+            scale / SafeDivisor(parentScale.z));
+        sphere.transform.position = position;
+        sphere.SetActive(true);
+    }
+
+    private static float SafeDivisor(float value) =>
+        Mathf.Approximately(value, 0f) ? 1f : value;
+
+    // 속성 노드끼리의 엣지(EdgeView)가 쓰는 구체를 1순위로 본뜬다.
+    // 크기까지 그 엣지의 _connectorScale 로 맞춰야 두 종류의 구체가 같아 보인다
+    // — 노드에 달린 구체를 본뜨면 lossyScale 이 노드 스케일에 묶여 있어 크기가 어긋난다.
+    private GameObject ResolveSphereTemplate()
+    {
+        if (_sphereTemplate != null)
+            return _sphereTemplate;
+
+        foreach (EdgeView edge in
+                 FindObjectsByType<EdgeView>(
+                     FindObjectsInactive.Include,
+                     FindObjectsSortMode.None))
+        {
+            if (edge == null)
+                continue;
+            ConnectorSphereView sphere =
+                edge.GetComponentInChildren<ConnectorSphereView>(true);
+            if (sphere == null ||
+                sphere.name.StartsWith(SphereClonePrefix))
+                continue;
+
+            _sphereTemplate = sphere.gameObject;
+            _sphereScale = edge.ConnectorScale;
+            return _sphereTemplate;
+        }
+
+        // 폴백: 엣지가 아직 하나도 없으면 노드에 달린 구체를 본뜬다.
+        // 이때는 크기 기준이 없으므로 EdgePrefab 의 값을 그대로 쓴다.
+        foreach (ConnectorSphereView sphere in
+                 FindObjectsByType<ConnectorSphereView>(
+                     FindObjectsInactive.Include,
+                     FindObjectsSortMode.None))
+        {
+            // 내가 만든 복제본을 다시 본뜨지 않는다.
+            if (sphere == null ||
+                sphere.name.StartsWith(SphereClonePrefix))
+                continue;
+
+            _sphereTemplate = sphere.gameObject;
+            _sphereScale = _fallbackSphereScale;
+            return _sphereTemplate;
+        }
+        return null;
+    }
+
+    private void RemoveEdgeSphere(string key)
+    {
+        if (_edgeSpheres.TryGetValue(key, out GameObject sphere) &&
+            sphere != null)
+            Destroy(sphere);
+        _edgeSpheres.Remove(key);
+    }
+
+    // 이 엣지가 쓰는 구체의 활성 색. 구체를 못 찾으면 인스펙터 색으로 떨어진다.
+    private Color ResolveSphereActiveColor(EdgeView edge)
+    {
+        if (edge != null)
+        {
+            ConnectorSphereView sphere =
+                edge.GetComponentInChildren<ConnectorSphereView>(true);
+            if (sphere != null)
+                return sphere.ActiveColor;
+        }
+        return _linkedColor;
+    }
+
+    // 노드에 달린 ConnectorSphere(입력/출력)를 포트별로 판단해 색을 맞춘다.
+    // 구체가 배선돼 있지 않으면 InputPort/OutputPort 가 그냥 Transform 이라 아무 일도 없다.
+    //
+    // 예전에는 노드 하나의 In·Out 을 한꺼번에 켜고 껐다. 그래서 자식을 만드는 순간
+    // "그 자식은 아직 비활성" → 부모의 In 까지 흰색으로 꺼지는 문제가 있었다
+    // (부모가 PART/ALL 에 연결돼 있어도, 들어오는 선은 초록인데 구만 흰색).
+    //
+    // 규칙:
+    //   In  — 이 노드로 들어오는 연결이 살아 있으면 초록.
+    //         · PART/ALL 연결은 속성 최상위 노드의 In 으로 들어온다(RefreshPermanentLines 와 같은 규약).
+    //           연결이 존재하는 것 자체가 "연결됨"이므로 활성 여부와 무관하게 켠다.
+    //         · 부모→자식 연결은 그 자식이 활성일 때만 켠다.
+    //   Out — 활성인 자식이 하나라도 있으면 초록.
+    private void RefreshConnectorSpheres()
+    {
+        GraphData graph = _graphManager.GetGraphData();
+        if (graph?.edges == null) return;
+
+        HashSet<string> inActive = new HashSet<string>();
+        HashSet<string> outActive = new HashSet<string>();
+
+        foreach (EdgeData edge in graph.edges)
+        {
+            if (edge == null) continue;
+
+            NodeData from = _graphManager.GetNode(edge.from_node_id);
+            NodeData to = _graphManager.GetNode(edge.to_node_id);
+            if (from == null || to == null) continue;
+            if (from.NodeType != NodeType.PROPERTY) continue;
+
+            // 속성 → PART/ALL (보드의 부품에 붙인 연결)
+            if (to.NodeType == NodeType.PART)
+            {
+                inActive.Add(from.node_id);
+                continue;
+            }
+
+            // 속성 → 속성 (부모→자식)
+            if (to.NodeType != NodeType.PROPERTY) continue;
+            if (!_graphManager.IsNodeActive(to.node_id)) continue;
+
+            outActive.Add(from.node_id);
+            inActive.Add(to.node_id);
+        }
+
+        foreach (NodeView node in
+                 FindObjectsByType<NodeView>(FindObjectsSortMode.None))
+        {
+            if (node == null || string.IsNullOrEmpty(node.NodeId)) continue;
+            ApplyConnector(node.InputPort, inActive.Contains(node.NodeId));
+            ApplyConnector(node.OutputPort, outActive.Contains(node.NodeId));
+        }
+    }
+
+    private static void ApplyConnector(Transform port, bool active)
+    {
+        if (port == null) return;
+        ConnectorSphereView sphere = port.GetComponent<ConnectorSphereView>();
+        if (sphere != null)
+            sphere.SetGrabbed(active);
     }
 
     private static Transform FindNodeTransform(string nodeId)
@@ -728,7 +984,10 @@ public class MvpXrGraphLinkController : MonoBehaviour
                      FindObjectsSortMode.None))
         {
             if (node != null && node.NodeId == nodeId)
-                return node.transform;
+                // PART/ALL 은 속성 서브그래프의 "위쪽"에 붙는다. 그래서 부모→자식 엣지와 똑같이
+                // 속성 최상위 노드의 왼쪽 입력 포트(Port_In)로 들어와야 한다.
+                // (Port_Out 을 쓰면 선이 노드를 가로질러 반대편으로 빠진다.)
+                return node.InputPort != null ? node.InputPort : node.transform;
         }
         return null;
     }
