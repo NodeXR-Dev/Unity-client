@@ -490,9 +490,15 @@ public class MvpNodePointerManipulator :
 [DisallowMultipleComponent]
 public class MvpNodeContactGate : MonoBehaviour
 {
-    // 손끝이 보이는 노드 Collider 안에 들어왔을 때만 새 Pinch를 연다.
-    // 부동소수점 오차만 흡수하는 1mm 허용치이며 체감 판정 범위를 넓히지 않는다.
-    private const float ContactSurfaceTolerance = 0.001f;
+    // 손끝이 노드 가까이 왔을 때 새 Pinch 를 연다.
+    //
+    // 예전에는 1mm 였다. ClosestPoint 는 콜라이더 '안'이면 그 점을 그대로 돌려주므로
+    // 사실상 손끝이 상자 안에 들어가야만 핀치가 열렸다. 노드 콜라이더는
+    // 0.26 x 0.12 x 0.13m 인데 손 추적 오차가 1~2cm 라 거의 잡히지 않았다.
+    //
+    // 손가락 한 마디만큼 여유를 준다. 이 정도면 허공에서 잘못 잡히지는 않으면서
+    // 노드 표면 근처에서 핀치가 자연스럽게 열린다.
+    private const float ContactSurfaceTolerance = 0.035f;
 
     private readonly List<IHand> _hands = new List<IHand>();
     private NodeView _node;
@@ -639,16 +645,27 @@ public class MvpNodeContactGate : MonoBehaviour
         foreach (IHand hand in _hands)
         {
             Pose thumbPose;
-            if (hand.GetJointPose(HandJointId.HandThumbTip, out thumbPose) &&
-                IsPointTouching(thumbPose.position))
+            bool hasThumb =
+                hand.GetJointPose(HandJointId.HandThumbTip, out thumbPose);
+            if (hasThumb && IsPointTouching(thumbPose.position))
             {
                 rawTouching = true;
                 break;
             }
 
             Pose indexPose;
-            if (hand.GetJointPose(HandJointId.HandIndexTip, out indexPose) &&
-                IsPointTouching(indexPose.position))
+            bool hasIndex =
+                hand.GetJointPose(HandJointId.HandIndexTip, out indexPose);
+            if (hasIndex && IsPointTouching(indexPose.position))
+            {
+                rawTouching = true;
+                break;
+            }
+
+            // 사용자가 실제로 겨냥하는 곳은 두 손끝 사이다. 손끝 하나하나보다
+            // 이 지점이 노드에 먼저 닿는 경우가 많아 함께 본다.
+            if (hasThumb && hasIndex &&
+                IsPointTouching((thumbPose.position + indexPose.position) * 0.5f))
             {
                 rawTouching = true;
                 break;
