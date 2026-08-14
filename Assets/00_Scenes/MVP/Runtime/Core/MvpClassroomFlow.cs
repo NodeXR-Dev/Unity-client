@@ -98,8 +98,11 @@ public class MvpClassroomFlow : MonoBehaviour
 
         // 로비(MvpLobby)에서 넘어왔다면 방 생성·입장이 이미 끝났다.
         // 그걸 모르고 Welcome 부터 시작하면 방을 한 번 더 만들고 Fusion 세션도 둘이 된다.
+        //
+        // 브리핑('오늘의 설계 미션')도 건너뛴다. 주제·목표는 로비에서 이미 입력받아
+        // 같은 내용을 한 번 더 읽히고 '설계 시작'을 누르게 할 뿐이다. 바로 설계로 들어간다.
         if (TryAdoptLobbySession())
-            ShowState(MvpFlowState.Briefing);
+            StartDesign();   // ShowState(Design) 만 부르면 그래프·작업판 초기화가 빠진다
         else
             ShowState(MvpFlowState.Welcome);
 
@@ -3762,7 +3765,10 @@ public class MvpClassroomFlow : MonoBehaviour
 
     private void StartDesign()
     {
-        _recommendationsDismissed = false;
+        // '어떤 부품으로 시작할까요?' 추천 패널은 자동으로 띄우지 않는다.
+        // 설계에 들어서자마자 보드를 가려 아무것도 못 하게 만든다.
+        // 부품은 보드의 '+'(AddPartPort)로 언제든 직접 추가할 수 있다.
+        _recommendationsDismissed = true;
         _resolvedRecommendations.Clear();
 
         // '내 자리 설정' 도크는 띄우지 않는다.
@@ -3940,7 +3946,7 @@ public class MvpClassroomFlow : MonoBehaviour
         if (_graphSyncClient != null)
             _graphSyncClient.enabled = false;
 
-        _recommendationsDismissed = false;
+        _recommendationsDismissed = true;   // 추천 패널은 자동으로 띄우지 않는다
         _resolvedRecommendations.Clear();
         _session.Reset();
         FindFirstObjectByType<MvpTableSettingsDock>()?.HideDock();
