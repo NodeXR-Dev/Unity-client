@@ -55,8 +55,44 @@ public class MvpWorkspaceLayout : MonoBehaviour
     private float _nextNodeFaceTime;
     private bool _onDesk;   // 설계 보드(+노드)를 책상 위에 평평하게 눕힌 상태
 
+    // 보드를 카메라 기준으로 놓는데, Start 시점의 카메라는 아직 제자리가 아니다.
+    // 리그 배치(MvpMeetingRoomPlayerController)는 코루틴으로 여러 프레임에 걸쳐
+    // 끝나고, 헤드 트래킹은 그보다 더 늦게 붙는다. 첫 프레임 위치로 굳혀 버리면
+    // 보드만 위에 남고 사용자는 아래로 떨어진 것처럼 보인다.
+    //
+    // 그래서 눈 위치가 실제로 멎을 때까지는 잠그지 않고 다시 놓는다.
+    // 문턱은 넉넉히 잡는다. 트래킹이 늦게 붙을 때 눈이 뛰는 폭은 1.5m 안팎이라
+    // 몸을 기울이는 정도(수십 cm)와 뚜렷이 구분된다. 문턱이 낮으면 들어오자마자
+    // 살짝 움직였을 뿐인데 보드가 끌려온다.
+    private const float PoseSettleTolerance = 0.04f;
+    private const float PoseFollowWindowSeconds = 8f;
+    private const float PoseFollowThreshold = 0.5f;
+
+    private bool _hasPoseSample;
+    private Vector3 _lastPoseSample;
+    private Vector3 _lockedEyePosition;
+    private float _poseFollowDeadline;
+
     // 도크가 따라붙을 중앙 보드.
     public Transform MainSketchPanel => _mainSketchPanel;
+
+    /// <summary>
+    /// 보드를 지금 눈 위치 기준으로 다시 놓는다.
+    /// 리그 배치(MvpMeetingRoomPlayerController)가 자리를 확정한 뒤 호출한다.
+    /// 시간 창에 기대지 않고 "자리가 정해졌다"는 사실에 맞춰 놓기 위한 것이다.
+    /// </summary>
+    public void RecenterWorkspacePose()
+    {
+        if (_onDesk)   // 책상 모드는 보드가 책상에 붙어 있으므로 건드리지 않는다.
+            return;
+
+        ResolveActiveCamera();
+        _workspacePoseInitialized = false;
+        _hasPoseSample = false;
+        _poseFollowDeadline =
+            Time.unscaledTime + PoseFollowWindowSeconds;
+        PositionMainSketchPanel();
+    }
 
     private void OnValidate()
     {
@@ -85,6 +121,9 @@ public class MvpWorkspaceLayout : MonoBehaviour
             ApplyRecommendedLayoutProfile();
         ResolveActiveCamera();
         _workspacePoseInitialized = false;
+        _hasPoseSample = false;
+        _poseFollowDeadline =
+            Time.unscaledTime + PoseFollowWindowSeconds;
         ArrangeWorkspace();
     }
 
@@ -97,6 +136,28 @@ public class MvpWorkspaceLayout : MonoBehaviour
             if (!_onDesk)   // 책상 모드에선 유저 앞으로 재정렬하지 않는다.
             {
                 _workspacePoseInitialized = false;
+                _hasPoseSample = false;
+                PositionMainSketchPanel();
+            }
+        }
+
+        // 눈 위치가 멎을 때까지는 계속 다시 놓는다. 확정된 뒤라도 들어온 직후
+        // 잠깐은 큰 이동을 따라간다(리그 배치·트래킹이 늦게 끝나는 경우).
+        // 그 시간이 지나면 다시는 따라가지 않으므로, 유저가 걸어 다녀도
+        // 보드는 회의실 공간에 그대로 남는다.
+        if (!_onDesk && _camera != null && _camera.isActiveAndEnabled)
+        {
+            if (!_workspacePoseInitialized)
+            {
+                PositionMainSketchPanel();
+            }
+            else if (Time.unscaledTime < _poseFollowDeadline &&
+                     (_camera.transform.position - _lockedEyePosition)
+                         .sqrMagnitude >
+                     PoseFollowThreshold * PoseFollowThreshold)
+            {
+                _workspacePoseInitialized = false;
+                _hasPoseSample = false;
                 PositionMainSketchPanel();
             }
         }
@@ -377,6 +438,27 @@ public class MvpWorkspaceLayout : MonoBehaviour
 
         _mainSketchPanel.localScale =
             Vector3.one * (_panelScale * _workspaceScaleMultiplier);
+
+        // 카메라가 아직 움직이는 중이면 잠그지 않는다. 두 번 연속 같은 자리로
+        // 들어왔을 때만 확정한다. 카메라가 없으면 판단할 근거가 없으므로
+        // 예전처럼 바로 잠근다.
+        if (_camera == null || !_camera.isActiveAndEnabled)
+        {
+            _workspacePoseInitialized = true;
+            return;
+        }
+
+        Vector3 eye = _camera.transform.position;
+        if (!_hasPoseSample ||
+            (eye - _lastPoseSample).sqrMagnitude >
+                PoseSettleTolerance * PoseSettleTolerance)
+        {
+            _hasPoseSample = true;
+            _lastPoseSample = eye;
+            return;
+        }
+
+        _lockedEyePosition = eye;
         _workspacePoseInitialized = true;
     }
 

@@ -111,11 +111,50 @@ public class MvpMeetingRoomPlayerController : MonoBehaviour
     private IEnumerator StabilizeAssignedSeat()
     {
         int seatNumber = 0;
-        int frames = Mathf.Max(2, _seatStabilizeFrames);
-        for (int frame = 0; frame < frames; frame++)
+
+        // 헤드 트래킹은 씬이 뜨고 한참 뒤에야 붙는다. 정해진 프레임 수만 돌고
+        // 끝내면 머리 위치가 아직 0 인 상태로 자리를 잡고 마무리되고, 트래킹이
+        // 붙는 순간 눈높이가 통째로 어긋난다(사용자만 아래로 뚝 떨어진 것처럼
+        // 보이고, 그 사이에 붙은 작업판만 위에 남는다).
+        //
+        // 그래서 프레임을 세지 않고, 리그 안에서의 머리 위치(트래킹이 직접
+        // 움직이는 값)가 실제로 멎을 때까지 배치를 반복한다.
+        const float SettleTolerance = 0.015f;
+        const int RequiredStableTicks = 6;
+        const float MaxWaitSeconds = 5f;
+
+        int minFrames = Mathf.Max(2, _seatStabilizeFrames);
+        float deadline = Time.unscaledTime + MaxWaitSeconds;
+        bool hasSample = false;
+        Vector3 lastLocalEye = Vector3.zero;
+        int stableTicks = 0;
+        int frame = 0;
+
+        while (true)
         {
             yield return new WaitForEndOfFrame();
             PlaceAtAssignedSeat(out seatNumber);
+            frame++;
+
+            Camera head = ResolveHeadCamera();
+            Vector3 localEye = head != null
+                ? head.transform.localPosition
+                : Vector3.zero;
+
+            if (hasSample &&
+                (localEye - lastLocalEye).sqrMagnitude <=
+                    SettleTolerance * SettleTolerance)
+                stableTicks++;
+            else
+                stableTicks = 0;
+
+            hasSample = true;
+            lastLocalEye = localEye;
+
+            if (frame >= minFrames && stableTicks >= RequiredStableTicks)
+                break;
+            if (Time.unscaledTime >= deadline)
+                break;
         }
 
         MvpXrCanvasAnchor[] anchors =
@@ -124,6 +163,13 @@ public class MvpMeetingRoomPlayerController : MonoBehaviour
                 FindObjectsSortMode.None);
         foreach (MvpXrCanvasAnchor anchor in anchors)
             anchor.Recenter();
+
+        // 설계 보드는 이 컨트롤러가 자리를 잡기 전에 Start 에서 이미 놓인다.
+        // 그대로 두면 "떨어지기 전" 눈높이에 박혀 보드만 위에 남으므로,
+        // 자리가 확정된 지금 다시 놓는다.
+        MvpWorkspaceLayout workspace =
+            FindFirstObjectByType<MvpWorkspaceLayout>();
+        workspace?.RecenterWorkspacePose();
 
         MvpTableSettingsDock dock =
             FindFirstObjectByType<MvpTableSettingsDock>();
@@ -226,21 +272,22 @@ public class MvpMeetingRoomPlayerController : MonoBehaviour
 
         float offset =
             (index - (slots - 1) * 0.5f) * _openFloorSpacing;
-        // 서는 자리는 '바닥'이다. 헤드셋은 바닥 기준 트래킹이라 머리 높이는 HMD 가 준다.
-        // 그러므로 리그 루트(= 발 위치)를 바닥에 놓아야 시야와 아바타가 같이 맞는다.
+        // 머리가 눈높이에 오도록 맞춘다.
         //
-        // 예전에는 머리를 _standingEyeHeight 로 끌어올렸다. 그러면 리그 루트가
-        //     바닥 − (실제 키 − 1.55m)
-        // 만큼 내려앉는다. 시야는 맞는데 아바타(XRPlayerBinder 가 리그 루트를 따라간다)만
-        // 바닥 아래로 파묻혀 카메라와 캐릭터 위치가 어긋났다. 키가 클수록 더 벌어진다.
-        Vector3 targetFloor = _openFloorCenter + right * offset;
-
-        // 에디터에는 HMD 가 없어 머리가 리그와 같은 높이다. 그대로 두면 화면이
-        // 바닥에 붙으므로 이때만 눈높이만큼 올려 준다.
-        bool hasHeadHeight =
-            head.transform.position.y - _cameraRig.transform.position.y > 0.2f;
-        if (!hasHeadHeight)
-            targetFloor += Vector3.up * _standingEyeHeight;
+        // 한때 리그 루트를 바닥에 직접 놓아 봤다(아바타가 리그 루트를 따라가 어긋난다고
+        // 봤기 때문). 그런데 그러면 에디터 보정을 위한
+        //     head.y - rig.y > 0.2f
+        // 판정이 프레임마다 뒤집힌다. 트래킹이 붙기 전에는 머리 높이가 0 이라
+        // 1.55m 올려 놓고, 붙는 순간 바닥으로 내려놓는다. 그 사이에 작업판이 배치되면
+        // 판만 위에 남고 사용자는 아래로 뚝 떨어진 것처럼 보인다.
+        //
+        // 카메라와 아바타의 어긋남은 XRPlayerBinder 가 아바타의 눈(HMD 바이저)을
+        // CenterEyeAnchor 에 맞추는 것으로 이미 해결했다. 여기서는 흔들리지 않는
+        // 머리 기준 배치로 되돌린다.
+        Vector3 targetEye =
+            _openFloorCenter +
+            right * offset +
+            Vector3.up * _standingEyeHeight;
 
         Vector3 currentForward = Vector3.ProjectOnPlane(
             head.transform.forward,
@@ -258,10 +305,18 @@ public class MvpMeetingRoomPlayerController : MonoBehaviour
             Vector3.up,
             yaw);
 
-        // 리그 루트를 목표 바닥에 직접 둔다. 머리 위치를 기준으로 상대 보정하면
-        // 트래킹이 아직 안 붙은 프레임에 머리가 튀어 보정이 누적 발산한다
-        // (로비에서 y=-743 까지 내려간 적이 있다). 직접 대입은 그 위험이 없다.
-        _cameraRig.transform.position = targetFloor;
+        // 트래킹이 아직 안 붙은 프레임에는 머리 위치가 튀어 보정이 누적 발산할 수
+        // 있다(로비에서 y=-743 까지 내려간 적이 있다). 비정상적으로 큰 보정이면
+        // 오프셋을 믿지 않고 리그를 목표에 직접 둔다.
+        Vector3 delta = targetEye - head.transform.position;
+        const float MaxCorrection = 50f;
+        if (delta.sqrMagnitude > MaxCorrection * MaxCorrection)
+        {
+            _cameraRig.transform.position = targetEye;
+            return true;
+        }
+
+        _cameraRig.transform.position += delta;
         return true;
     }
 

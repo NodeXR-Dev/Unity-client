@@ -13,10 +13,25 @@ public class MvpXrCanvasAnchor : MonoBehaviour
     [SerializeField] private float _worldScale = 0.001f;
     [SerializeField] private int _settleFrames = 4;
 
+    // 눈 위치가 이만큼 안 움직인 폴링이 연속으로 나와야 "트래킹이 붙었다"로 본다.
+    private const float SettleTolerance = 0.04f;
+
+    // 고정한 뒤라도 이 시간 안에 눈이 크게 움직이면 다시 붙인다.
+    // 트래킹이 늦게 잡히거나 회의실 자리 배치가 리그를 옮기는 경우를 흡수한다.
+    // 트래킹이 늦게 붙을 때 눈이 뛰는 폭은 1.5m 안팎이라 몸을 기울이는 정도와
+    // 뚜렷이 구분된다. 문턱이 낮으면 살짝 움직였을 뿐인데 패널이 끌려온다.
+    private const float ReanchorWindowSeconds = 6f;
+    private const float ReanchorThreshold = 0.5f;
+
     private Camera _camera;
     private bool _anchored;
     private int _readyFrame;
     private float _nextResolveTime;
+
+    private bool _hasSample;
+    private Vector3 _lastSample;
+    private Vector3 _anchoredEye;
+    private float _reanchorDeadline;
 
 
     public void Configure(
@@ -44,20 +59,54 @@ public class MvpXrCanvasAnchor : MonoBehaviour
 
     private void LateUpdate()
     {
-        if (_anchored ||
-            Time.frameCount < _readyFrame ||
+        if (Time.frameCount < _readyFrame ||
             Time.unscaledTime < _nextResolveTime)
             return;
 
         _nextResolveTime = Time.unscaledTime + 0.25f;
+
+        Camera view = ResolveViewCamera();
+        if (view == null)
+            return;
+        Vector3 eye = view.transform.position;
+
+        if (_anchored)
+        {
+            // 판을 붙인 뒤 눈높이가 내려앉는 일이 있었다.
+            // 헤드 트래킹은 씬이 뜨고 한참 뒤에 붙고, 회의실 자리 배치도
+            // 리그를 통째로 옮긴다. 그 전에 판을 고정해 버리면 사용자만
+            // 아래로 내려가고 판은 위에 남는다.
+            //
+            // 그래서 들어온 직후 잠깐은 큰 이동을 따라가고, 그 시간이 지나면
+            // 다시는 따라가지 않는다(고개를 돌려도 안 따라오는 성질은 유지).
+            if (Time.unscaledTime < _reanchorDeadline &&
+                (eye - _anchoredEye).sqrMagnitude >
+                    ReanchorThreshold * ReanchorThreshold)
+                TryPlaceInMeetingRoom();
+            return;
+        }
+
+        // 트래킹이 붙기 전 눈 위치는 원점 근처에서 튄다. 그 값으로 판을 놓으면
+        // 엉뚱한 높이에 박히므로, 두 번 연속 같은 자리일 때만 고정한다.
+        if (!_hasSample ||
+            (eye - _lastSample).sqrMagnitude >
+                SettleTolerance * SettleTolerance)
+        {
+            _hasSample = true;
+            _lastSample = eye;
+            return;
+        }
+
         TryPlaceInMeetingRoom();
     }
 
     private void RequestRoomPlacement()
     {
         _anchored = false;
+        _hasSample = false;
         _readyFrame = Time.frameCount + Mathf.Max(1, _settleFrames);
         _nextResolveTime = 0f;
+        _reanchorDeadline = Time.unscaledTime + ReanchorWindowSeconds;
     }
 
     private bool TryPlaceInMeetingRoom()
@@ -100,6 +149,7 @@ public class MvpXrCanvasAnchor : MonoBehaviour
                 Quaternion.LookRotation(towardTable, Vector3.up));
             transform.localScale = Vector3.one * _worldScale;
             _anchored = true;
+            _anchoredEye = _camera.transform.position;
 
             Debug.Log(
                 "[MVP XR] 안내 UI를 헤드가 아닌 회의실 자리 앞 공간에 고정했습니다.");
@@ -120,6 +170,7 @@ public class MvpXrCanvasAnchor : MonoBehaviour
             Quaternion.LookRotation(forward, Vector3.up));
         transform.localScale = Vector3.one * _worldScale;
         _anchored = true;
+        _anchoredEye = _camera.transform.position;
         return true;
     }
 
