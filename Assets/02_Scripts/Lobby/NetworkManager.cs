@@ -401,6 +401,15 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
         }
     }
 
+    // 방 목록은 서버 DB 에서 오고(SetupFromDB) 살아있는지는 Photon 세션 목록과
+    // 대조해 판정한다. 그래서 참여를 누를 때 room_id 로 실제 세션을 되찾아야 한다.
+    public SessionInfo FindCachedSession(string roomId)
+    {
+        if (string.IsNullOrEmpty(roomId))
+            return null;
+        return cachedSessionList.Find(s => s != null && s.Name == roomId);
+    }
+
     public void RequestJoinSession(SessionInfo session)
     {
         bool hasPwd = session.Properties.ContainsKey("password") &&

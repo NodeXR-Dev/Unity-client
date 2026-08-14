@@ -61,9 +61,32 @@ public class SessionListEntry : MonoBehaviour
             // 아직 살아있는 방이면 [참여하기]만 보이기
             joinButton.gameObject.SetActive(true);
             if (endedButton != null) endedButton.gameObject.SetActive(false);
-            
-            joinButton.interactable = true;            
+
+            joinButton.interactable = true;
             joinButton.onClick.RemoveAllListeners();
+
+            // 리스너를 지우기만 하고 다시 붙이지 않아, 살아있는 방인데도 눌러도
+            // 아무 일이 없었다. 두 번째 사람이 방에 들어갈 방법이 없던 원인이다.
+            // 실시간 세션 경로(Setup)와 달리 여기에는 SessionInfo 가 없으므로
+            // room_id 로 Photon 세션 목록에서 되찾아 넘긴다.
+            string roomId = data.room_id;
+            joinButton.onClick.AddListener(() =>
+            {
+                NetworkManager manager = FindFirstObjectByType<NetworkManager>();
+                if (manager == null)
+                    return;
+
+                SessionInfo live = manager.FindCachedSession(roomId);
+                if (live == null)
+                {
+                    // 목록을 그린 뒤 방이 닫혔을 수 있다.
+                    Debug.LogWarning(
+                        "[로비] 참여하려는 방이 더 이상 열려 있지 않습니다: " + roomId);
+                    return;
+                }
+
+                manager.RequestJoinSession(live);
+            });
         }
         else
         {
