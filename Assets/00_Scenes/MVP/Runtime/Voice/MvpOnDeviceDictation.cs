@@ -513,9 +513,24 @@ public class MvpOnDeviceDictation : MonoBehaviour
 
     private void OnDisable()
     {
-        // 키보드가 닫히거나 컴포넌트가 꺼지면 마이크를 놓는다.
-        // (발화 사이에는 열어 두므로 여기서 정리해야 계속 켜져 있지 않다)
-        ReleaseMicrophone();
+        // 듣는 것만 멈추고 마이크는 놓지 않는다.
+        //
+        // 월드 키보드는 닫을 때 SetActive(false) 라 여기가 매번 불린다.
+        // 예전에는 여기서 ReleaseMicrophone 을 불렀는데, Microphone.End 와
+        // 다음 번 Microphone.Start 가 OS 오디오 경로를 타 메인 스레드를 잡는다.
+        // 그래서 "인식 끝날 때"와 "다시 누를 때" 두 번 모래시계가 떴다.
+        //
+        // 마이크는 앱이 도는 동안 열어 두고, 실제 정지는 OnDestroy(씬 전환·종료)와
+        // OnApplicationPause(헤드셋을 벗는 등)에서만 한다.
+        if (_listening)
+            StopListening();
+    }
+
+    private void OnApplicationPause(bool paused)
+    {
+        // 앱이 뒤로 가면 마이크를 붙들고 있을 이유가 없다.
+        if (paused)
+            ReleaseMicrophone();
     }
 
     private void OnDestroy()

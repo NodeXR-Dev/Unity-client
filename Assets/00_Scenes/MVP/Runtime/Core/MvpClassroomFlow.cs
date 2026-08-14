@@ -247,9 +247,12 @@ public class MvpClassroomFlow : MonoBehaviour
             typeof(GraphicRaycaster));
         root.transform.SetParent(transform, false);
 
-        // 캔버스는 패널보다 훨씬 크게 — 남는 영역이 모달 블로커가 된다.
+        // 캔버스의 남는 영역이 모달 블로커가 된다. 다만 너무 키우면 안 된다.
+        // 예전에는 2400x1500 이라 0.85m 앞에서 2.16 x 1.35m — 시야각 103도로
+        // 검은 판이 화면을 통째로 덮었다(대화상자 0.65 x 0.34m 의 세 배 폭).
+        // 대화상자를 넉넉히 감싸는 정도로만 둔다.
         RectTransform rect = root.GetComponent<RectTransform>();
-        rect.sizeDelta = new Vector2(2400f, 1500f);
+        rect.sizeDelta = new Vector2(1200f, 700f);
 
         _confirmCanvas = root.GetComponent<Canvas>();
         _confirmCanvas.renderMode = RenderMode.WorldSpace;
@@ -279,7 +282,8 @@ public class MvpClassroomFlow : MonoBehaviour
             "ModalBlocker",
             Vector2.zero,
             rect.sizeDelta,
-            new Color(0.01f, 0.02f, 0.05f, 0.55f),
+            // 뒤를 가리기만 하면 된다. 0.55 는 VR 에서 검은 벽처럼 보였다.
+            new Color(0.01f, 0.02f, 0.05f, 0.32f),
             false);
         blocker.raycastTarget = true;
         Button blockerButton = blocker.gameObject.AddComponent<Button>();
@@ -3761,12 +3765,14 @@ public class MvpClassroomFlow : MonoBehaviour
         _recommendationsDismissed = false;
         _resolvedRecommendations.Clear();
 
-        // 테이블 위 '내 자리 설정' 도크(작업판 크기·자리 복귀·방 나가기)를 만들고 보인다.
+        // '내 자리 설정' 도크는 띄우지 않는다.
+        // 파빌리온으로 바뀌면서 책상·좌석이 사라져 '자리 복귀'가 의미를 잃었고,
+        // 작업판 크기와 방 나가기는 손목 패널에 있다.
+        // 이미 만들어져 있으면(이전 단계에서 켜진 경우) 접어 둔다.
         MvpTableSettingsDock dock =
             FindFirstObjectByType<MvpTableSettingsDock>();
-        if (dock == null)
-            dock = gameObject.AddComponent<MvpTableSettingsDock>();
-        dock.ShowCollapsed();
+        if (dock != null)
+            dock.HideDock();
 
         if (_centerSketchImage != null)
         {
