@@ -102,9 +102,17 @@ public class MvpClassroomFlow : MonoBehaviour
         // 브리핑('오늘의 설계 미션')도 건너뛴다. 주제·목표는 로비에서 이미 입력받아
         // 같은 내용을 한 번 더 읽히고 '설계 시작'을 누르게 할 뿐이다. 바로 설계로 들어간다.
         if (TryAdoptLobbySession())
-            StartDesign();   // ShowState(Design) 만 부르면 그래프·작업판 초기화가 빠진다
+        {
+            // 설계 화면은 한 프레임 뒤에 연다.
+            // 여기(Awake)에서 바로 StartDesign 을 부르면 보드·시안 프리팹 등 다른
+            // 컴포넌트의 Awake/Start 가 아직 안 돌아 빈 판만 뜬다.
+            // (원래 이 함수는 브리핑의 '설계 시작' 버튼이 훨씬 뒤에 부르던 것이다)
+            StartCoroutine(StartDesignWhenReady());
+        }
         else
+        {
             ShowState(MvpFlowState.Welcome);
+        }
 
         // 노드 X(캐스케이드 삭제)는 되돌릴 수 없으므로 MVP 에서는 확인을 거친다.
         NodeActionPanel.ConfirmDeleteHook = HandleConfirmNodeDelete;
@@ -3761,6 +3769,16 @@ public class MvpClassroomFlow : MonoBehaviour
         _session.password = "1234";
         _session.online = false;
         ShowState(MvpFlowState.Briefing);
+    }
+
+    // 로비에서 넘어온 경우 브리핑을 건너뛰고 바로 설계로 들어간다.
+    // 다만 Awake 에서 곧장 부르면 다른 컴포넌트가 아직 준비되기 전이라
+    // 보드가 빈 판으로 뜬다. 프레임 끝까지 기다린 뒤 연다.
+    private IEnumerator StartDesignWhenReady()
+    {
+        yield return null;
+        yield return new WaitForEndOfFrame();
+        StartDesign();
     }
 
     private void StartDesign()
