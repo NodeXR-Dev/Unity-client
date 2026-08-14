@@ -439,6 +439,27 @@ public class GraphNetworkManager : NetworkBehaviour
             RPC_RequestGenerated2DServerImage(version, Safe(assetId), Safe(mimeType), Safe(imgUrl));
     }
 
+    public void RequestGenerated2DImageSnapshot(
+        string assetId,
+        string mimeType,
+        string imgUrl)
+    {
+        if (!IsReadyForRpc || string.IsNullOrWhiteSpace(imgUrl))
+            return;
+
+        if (CanBroadcast)
+            RPC_BroadcastGenerated2DServerImage(
+                0,
+                Safe(assetId),
+                Safe(mimeType),
+                Safe(imgUrl));
+        else
+            RPC_RequestGenerated2DImageSnapshot(
+                Safe(assetId),
+                Safe(mimeType),
+                Safe(imgUrl));
+    }
+
     public void RequestGenerated2DFinish(int version)
     {
         if (!IsReadyForRpc)
@@ -686,6 +707,22 @@ public class GraphNetworkManager : NetworkBehaviour
         string imgUrl)
     {
         FinishGenerated2DWithImageAsAuthority(version, assetId, mimeType, imgUrl);
+    }
+
+    [Rpc(RpcSources.All, RpcTargets.StateAuthority)]
+    private void RPC_RequestGenerated2DImageSnapshot(
+        string assetId,
+        string mimeType,
+        string imgUrl)
+    {
+        if (!HasStateAuthority || string.IsNullOrWhiteSpace(imgUrl))
+            return;
+
+        RPC_BroadcastGenerated2DServerImage(
+            0,
+            Safe(assetId),
+            Safe(mimeType),
+            Safe(imgUrl));
     }
 
     [Rpc(RpcSources.StateAuthority, RpcTargets.All)]
