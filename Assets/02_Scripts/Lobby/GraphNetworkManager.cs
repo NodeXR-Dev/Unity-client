@@ -35,6 +35,7 @@ public class GraphNetworkManager : NetworkBehaviour
     public event Action<int, string, PlayerRef> Generated3DStartReceived;
     public event Action<PlayerRef> Generated3DStartRejected;
     public event Action<int> Generated3DFinishedReceived;
+    public event Action<PlayerRef> ReportPanelShowReceived;
 
     private readonly Dictionary<string, PlayerRef> lockCache = new Dictionary<string, PlayerRef>();
     private bool generated2DInProgress;
@@ -251,7 +252,7 @@ public class GraphNetworkManager : NetworkBehaviour
         string safeNodeId = Safe(nodeId);
         if (string.IsNullOrWhiteSpace(safeNodeId)) return;
 
-        if (!CanRequestNodeMutation(safeNodeId, "UpdateNodePosition"))
+        if (!CanRequestNodePositionUpdate(safeNodeId))
             return;
 
         if (!IsReadyForRpc)
@@ -439,6 +440,27 @@ public class GraphNetworkManager : NetworkBehaviour
             RPC_RequestGenerated2DServerImage(version, Safe(assetId), Safe(mimeType), Safe(imgUrl));
     }
 
+    public void RequestGenerated2DImageSnapshot(
+        string assetId,
+        string mimeType,
+        string imgUrl)
+    {
+        if (!IsReadyForRpc || string.IsNullOrWhiteSpace(imgUrl))
+            return;
+
+        if (CanBroadcast)
+            RPC_BroadcastGenerated2DServerImage(
+                0,
+                Safe(assetId),
+                Safe(mimeType),
+                Safe(imgUrl));
+        else
+            RPC_RequestGenerated2DImageSnapshot(
+                Safe(assetId),
+                Safe(mimeType),
+                Safe(imgUrl));
+    }
+
     public void RequestGenerated2DFinish(int version)
     {
         if (!IsReadyForRpc)
@@ -470,6 +492,17 @@ public class GraphNetworkManager : NetworkBehaviour
             FinishGenerated3DAsAuthority(version);
         else
             RPC_RequestGenerated3DFinish(version);
+    }
+
+    public void RequestReportPanelShow()
+    {
+        if (!IsReadyForRpc)
+            return;
+
+        if (CanBroadcast)
+            RPC_BroadcastReportPanelShow(Runner.LocalPlayer);
+        else
+            RPC_RequestReportPanelShow();
     }
 
     [Rpc(RpcSources.All, RpcTargets.StateAuthority)]
@@ -567,7 +600,7 @@ public class GraphNetworkManager : NetworkBehaviour
         string safeNodeId = Safe(nodeId);
         PlayerRef requester = GetRequester(info);
 
-        if (!HasNodeEditPermissionAsAuthority(safeNodeId, requester))
+        if (!HasNodePositionPermissionAsAuthority(safeNodeId, requester))
             return;
 
         RPC_BroadcastUpdateNodePosition(safeNodeId, position);
@@ -688,6 +721,22 @@ public class GraphNetworkManager : NetworkBehaviour
         FinishGenerated2DWithImageAsAuthority(version, assetId, mimeType, imgUrl);
     }
 
+    [Rpc(RpcSources.All, RpcTargets.StateAuthority)]
+    private void RPC_RequestGenerated2DImageSnapshot(
+        string assetId,
+        string mimeType,
+        string imgUrl)
+    {
+        if (!HasStateAuthority || string.IsNullOrWhiteSpace(imgUrl))
+            return;
+
+        RPC_BroadcastGenerated2DServerImage(
+            0,
+            Safe(assetId),
+            Safe(mimeType),
+            Safe(imgUrl));
+    }
+
     [Rpc(RpcSources.StateAuthority, RpcTargets.All)]
     private void RPC_BroadcastGenerated2DServerImage(
         int version,
@@ -747,6 +796,18 @@ public class GraphNetworkManager : NetworkBehaviour
         Generated3DFinishedReceived?.Invoke(version);
     }
 
+    [Rpc(RpcSources.All, RpcTargets.StateAuthority)]
+    private void RPC_RequestReportPanelShow(RpcInfo info = default)
+    {
+        RPC_BroadcastReportPanelShow(GetRequester(info));
+    }
+
+    [Rpc(RpcSources.StateAuthority, RpcTargets.All)]
+    private void RPC_BroadcastReportPanelShow(PlayerRef requester)
+    {
+        ReportPanelShowReceived?.Invoke(requester);
+    }
+
     private void ApplyCreateNode(
         string nodeId,
         int nodeType,
@@ -764,23 +825,82 @@ public class GraphNetworkManager : NetworkBehaviour
             ResolveGraphManager();
             if (graphManager == null) return;
 
+            NodeType resolvedNodeType = ToNodeType(nodeType);
+            string safeNodeId = EnsureId(nodeId, "node");
+            string safeParentNodeId = Safe(parentNodeId);
+
             NodeData node = new NodeData
             {
-                node_id = EnsureId(nodeId, "node"),
-                type = ToNodeType(nodeType).ToString(),
+                node_id = safeNodeId,
+                type = resolvedNodeType.ToString(),
                 label = Safe(label),
                 node_text = string.IsNullOrEmpty(description) ? Safe(label) : Safe(description),
+                parent_node_id = safeParentNodeId,
                 property_category = Safe(propertyCategory),
                 is_global = isGlobal
             };
             node.SetPosition(position);
 
-            bool changed = graphManager.AddNode(node);
+            bool nodeCreated = graphManager.AddNode(node);
+            bool changed = nodeCreated;
+
+            NodeData appliedNode = nodeCreated ? node : graphManager.GetNode(safeNodeId);
+            if (appliedNode != null && !string.IsNullOrWhiteSpace(safeParentNodeId))
+            {
+                appliedNode.parent_node_id = safeParentNodeId;
+
+                NodeData parentNode = graphManager.GetNode(safeParentNodeId);
+                if (string.IsNullOrEmpty(appliedNode.sub_graph_id) && parentNode != null)
+                    appliedNode.sub_graph_id = string.IsNullOrEmpty(parentNode.sub_graph_id)
+                        ? parentNode.node_id
+                        : parentNode.sub_graph_id;
+
+                if (resolvedNodeType == NodeType.PROPERTY)
+                    changed |= EnsurePropertyParentEdge(safeParentNodeId, safeNodeId);
+            }
+
             RenderIfChanged(changed);
-            if (changed)
+            if (nodeCreated)
                 RemoteNodeCreated?.Invoke(node.node_id, Safe(createdBy));
         }
         finally { _remoteApplyDepth--; }
+    }
+
+    private bool EnsurePropertyParentEdge(string parentNodeId, string childNodeId)
+    {
+        if (string.IsNullOrWhiteSpace(parentNodeId) || string.IsNullOrWhiteSpace(childNodeId))
+            return false;
+
+        NodeData parentNode = graphManager.GetNode(parentNodeId);
+        NodeData childNode = graphManager.GetNode(childNodeId);
+        if (parentNode == null || childNode == null)
+            return false;
+
+        if (parentNode.NodeType != NodeType.PROPERTY || childNode.NodeType != NodeType.PROPERTY)
+            return false;
+
+        foreach (EdgeData edge in graphManager.GetEdgesOutgoingFromNode(parentNodeId))
+        {
+            if (edge != null && edge.to_node_id == childNodeId)
+                return false;
+        }
+
+        return graphManager.AddEdge(new EdgeData
+        {
+            edge_id = BuildPropertyParentEdgeId(parentNodeId, childNodeId),
+            from_node_id = parentNodeId,
+            to_node_id = childNodeId
+        });
+    }
+
+    private static string BuildPropertyParentEdgeId(string parentNodeId, string childNodeId)
+    {
+        string source = $"{Safe(parentNodeId)}>{Safe(childNodeId)}";
+        using (var md5 = System.Security.Cryptography.MD5.Create())
+        {
+            byte[] hash = md5.ComputeHash(System.Text.Encoding.UTF8.GetBytes(source));
+            return new Guid(hash).ToString();
+        }
     }
 
     private void ApplyDeleteNode(string nodeId)
@@ -808,8 +928,7 @@ public class GraphNetworkManager : NetworkBehaviour
             ResolveGraphManager();
             if (graphManager == null || string.IsNullOrWhiteSpace(nodeId)) return;
 
-            bool changed = graphManager.RequestMoveNode(nodeId, position);
-            RenderIfChanged(changed);
+            graphManager.RequestMoveNode(nodeId, position);
         }
         finally { _remoteApplyDepth--; }
     }
@@ -1079,6 +1198,27 @@ public class GraphNetworkManager : NetworkBehaviour
         return false;
     }
 
+    private bool CanRequestNodePositionUpdate(string nodeId)
+    {
+        if (!requireLockForNodeEdits)
+            return true;
+
+        if (!IsReadyForRpc)
+            return applyLocallyWhenOffline;
+
+        if (CanLocalPlayerEditNode(nodeId))
+            return true;
+
+        if (TryGetNodeLockOwner(nodeId, out PlayerRef owner) && owner != Runner.LocalPlayer)
+        {
+            if (logLockConflicts)
+                Debug.LogWarning($"[GraphNetworkManager] UpdateNodePosition blocked by node lock. nodeId={nodeId}, owner={owner}");
+            return false;
+        }
+
+        return true;
+    }
+
     private bool HasNodeEditPermissionAsAuthority(string nodeId, PlayerRef requester)
     {
         if (!requireLockForNodeEdits)
@@ -1095,6 +1235,27 @@ public class GraphNetworkManager : NetworkBehaviour
             RPC_BroadcastNodeLockDenied(nodeId, requester, PlayerRef.None);
             return false;
         }
+
+        if (owner == requester)
+            return true;
+
+        RPC_BroadcastNodeLockDenied(nodeId, requester, owner);
+        return false;
+    }
+
+    private bool HasNodePositionPermissionAsAuthority(string nodeId, PlayerRef requester)
+    {
+        if (!requireLockForNodeEdits)
+            return true;
+
+        if (string.IsNullOrWhiteSpace(nodeId) || requester == PlayerRef.None)
+            return false;
+
+        if (allowStateAuthorityLockOverride && requester == Runner.LocalPlayer)
+            return true;
+
+        if (!TryGetAuthorityLockOwner(nodeId, out PlayerRef owner))
+            return true;
 
         if (owner == requester)
             return true;

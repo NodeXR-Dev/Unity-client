@@ -1,5 +1,6 @@
 using System;
 using System.Collections;
+using System.Collections.Generic;
 using System.Reflection;
 using Fusion;
 using TMPro;
@@ -12,11 +13,14 @@ public class MvpGenerated2DSync : MonoBehaviour
 {
     private const BindingFlags PrivateInstanceFlags =
         BindingFlags.Instance | BindingFlags.NonPublic;
+    private const string DefaultSeedRoomId =
+        "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 
     [Header("References")]
     [SerializeField] private GraphNetworkManager graphNetwork;
     [SerializeField] private Generate2DController generate2DController;
     [SerializeField] private GraphSyncClient graphSyncClient;
+    [SerializeField] private MvpClassroomFlow classroomFlow;
     [SerializeField] private MvpWaterRocketGraphController waterRocketGraph;
     [SerializeField] private RawImage centerImage;
     [SerializeField] private Button generateButton;
@@ -25,7 +29,11 @@ public class MvpGenerated2DSync : MonoBehaviour
     [Header("Options")]
     [SerializeField] private bool autoFindReferences = true;
     [SerializeField] private bool replaceGenerateButtonClick = true;
+    [SerializeField] private bool broadcastDirectServerResults = true;
+    [SerializeField] private bool restoreLatestSketchOnStart = true;
     [SerializeField] private float requestTimeoutSeconds = 125f;
+    [SerializeField] private float restoreTimeoutSeconds = 90f;
+    [SerializeField] private float restorePollSeconds = 3f;
 
     private GraphNetworkManager subscribedGraphNetwork;
     private GraphSyncClient subscribedGraphSyncClient;
@@ -40,8 +48,11 @@ public class MvpGenerated2DSync : MonoBehaviour
 
     private Coroutine requestTimeoutCoroutine;
     private Coroutine downloadCoroutine;
+    private Coroutine restoreCoroutine;
     private Texture2D mockTexture;
     private Texture2D downloadedTexture;
+    private string lastAppliedImageUrl;
+    private string lastBroadcastImageUrl;
 
     public bool IsBusy => networkGenerating || waitingForStartAccept;
 
@@ -56,6 +67,7 @@ public class MvpGenerated2DSync : MonoBehaviour
         yield return null;
         ResolveReferences();
         RefreshBindings();
+        StartLatestSketchRestore();
     }
 
     private void Update()
@@ -77,6 +89,7 @@ public class MvpGenerated2DSync : MonoBehaviour
         UnbindGraphSyncClient();
         UnbindButton();
         StopRequestTimeout();
+        StopLatestSketchRestore();
         networkGenerating = false;
         waitingForStartAccept = false;
         activeVersion = 0;
@@ -186,17 +199,36 @@ public class MvpGenerated2DSync : MonoBehaviour
         SetUiGenerating(networkGenerating, "다른 사용자가 2D 이미지를 생성 중입니다.");
     }
 
-    private void HandleServerImageFromGraphSync(string imgUrl)
+    private void HandleServerImageFromGraphSync(GraphSyncClient.Image2DResult result)
     {
-        if (localRequestVersion <= 0 || graphNetwork == null)
+        string imgUrl = result.ImgUrl;
+        if (string.IsNullOrWhiteSpace(imgUrl))
             return;
 
-        StopRequestTimeout();
-        int version = localRequestVersion;
-        localRequestVersion = 0;
-        graphNetwork.RequestGenerated2DServerImage(
-            version,
-            string.Empty,
+        if (localRequestVersion > 0 && graphNetwork != null)
+        {
+            StopRequestTimeout();
+            int version = localRequestVersion;
+            localRequestVersion = 0;
+            lastBroadcastImageUrl = imgUrl;
+            graphNetwork.RequestGenerated2DServerImage(
+                version,
+                result.AssetId,
+                string.Empty,
+                imgUrl);
+            return;
+        }
+
+        if (!broadcastDirectServerResults ||
+            graphNetwork == null ||
+            !graphNetwork.IsRpcReady ||
+            IsBusy ||
+            string.Equals(lastBroadcastImageUrl, imgUrl, StringComparison.Ordinal))
+            return;
+
+        lastBroadcastImageUrl = imgUrl;
+        graphNetwork.RequestGenerated2DImageSnapshot(
+            result.AssetId,
             string.Empty,
             imgUrl);
     }
@@ -218,7 +250,7 @@ public class MvpGenerated2DSync : MonoBehaviour
         SetUiGenerating(false, "2D 이미지 생성 완료");
 
         if (!string.IsNullOrEmpty(imgUrl))
-            StartServerImageDownload(imgUrl);
+            StartServerImageDownload(imgUrl, assetId);
     }
 
     private void HandleGenerated2DFinished(int version)
@@ -248,6 +280,8 @@ public class MvpGenerated2DSync : MonoBehaviour
                     : FindFirstObjectByType<GraphSyncClient>();
         if (graphNetwork == null)
             graphNetwork = FindFirstObjectByType<GraphNetworkManager>();
+        if (classroomFlow == null)
+            classroomFlow = FindFirstObjectByType<MvpClassroomFlow>();
         if (waterRocketGraph == null)
             waterRocketGraph = FindFirstObjectByType<MvpWaterRocketGraphController>();
 
@@ -260,10 +294,17 @@ public class MvpGenerated2DSync : MonoBehaviour
                 centerImage = sketchView.GetComponentInChildren<RawImage>(true);
         }
 
+        Button preferredButton =
+            FindSceneButton("Button_2D", "Generate2D", "Generate2DButton");
+        if (preferredButton != null &&
+            (generateButton == null ||
+             !generateButton.gameObject.activeInHierarchy ||
+             preferredButton.gameObject.activeInHierarchy))
+        {
+            generateButton = preferredButton;
+        }
         if (generateButton == null && generate2DController != null)
             generateButton = GetPrivateField<Button>(generate2DController, "_generateButton");
-        if (generateButton == null)
-            generateButton = FindSceneButton("Generate2DButton", "Generate2D");
 
         if (statusText == null && generate2DController != null)
             statusText = GetPrivateField<TMP_Text>(generate2DController, "_statusText");
@@ -314,7 +355,7 @@ public class MvpGenerated2DSync : MonoBehaviour
 
         subscribedGraphSyncClient = graphSyncClient;
         if (subscribedGraphSyncClient != null)
-            subscribedGraphSyncClient.OnImage2DGenerated += HandleServerImageFromGraphSync;
+            subscribedGraphSyncClient.OnImage2DResult += HandleServerImageFromGraphSync;
     }
 
     private void UnbindGraphSyncClient()
@@ -322,7 +363,7 @@ public class MvpGenerated2DSync : MonoBehaviour
         if (subscribedGraphSyncClient == null)
             return;
 
-        subscribedGraphSyncClient.OnImage2DGenerated -= HandleServerImageFromGraphSync;
+        subscribedGraphSyncClient.OnImage2DResult -= HandleServerImageFromGraphSync;
         subscribedGraphSyncClient = null;
     }
 
@@ -419,14 +460,14 @@ public class MvpGenerated2DSync : MonoBehaviour
         }
     }
 
-    private void StartServerImageDownload(string imgUrl)
+    private void StartServerImageDownload(string imgUrl, string assetId = "")
     {
         if (downloadCoroutine != null)
             StopCoroutine(downloadCoroutine);
-        downloadCoroutine = StartCoroutine(DownloadAndShow(imgUrl));
+        downloadCoroutine = StartCoroutine(DownloadAndShow(imgUrl, assetId));
     }
 
-    private IEnumerator DownloadAndShow(string imgUrl)
+    private IEnumerator DownloadAndShow(string imgUrl, string assetId)
     {
         string url = ResolveImageUrl(imgUrl);
         if (string.IsNullOrEmpty(url))
@@ -453,14 +494,15 @@ public class MvpGenerated2DSync : MonoBehaviour
             }
 
             Texture2D texture = DownloadHandlerTexture.GetContent(request);
-            ApplyServerTexture(texture);
+            ApplyServerTexture(texture, assetId);
+            lastAppliedImageUrl = imgUrl;
             SetUiGenerating(false, "2D 이미지 생성 완료");
         }
 
         downloadCoroutine = null;
     }
 
-    private void ApplyServerTexture(Texture2D texture)
+    private void ApplyServerTexture(Texture2D texture, string assetId)
     {
         ResolveReferences();
         if (centerImage == null || texture == null)
@@ -474,6 +516,7 @@ public class MvpGenerated2DSync : MonoBehaviour
         centerImage.enabled = true;
         centerImage.color = Color.white;
         HideSketchPlaceholder();
+        ApplyControllerAssetId(assetId);
 
         if (downloadedTexture != null && downloadedTexture != texture)
             Destroy(downloadedTexture);
@@ -529,12 +572,182 @@ public class MvpGenerated2DSync : MonoBehaviour
         }
     }
 
+    private void StartLatestSketchRestore()
+    {
+        if (!restoreLatestSketchOnStart || restoreCoroutine != null)
+            return;
+
+        restoreCoroutine = StartCoroutine(RestoreLatestSketchWhenReady());
+    }
+
+    private void StopLatestSketchRestore()
+    {
+        if (restoreCoroutine == null)
+            return;
+
+        StopCoroutine(restoreCoroutine);
+        restoreCoroutine = null;
+    }
+
+    private IEnumerator RestoreLatestSketchWhenReady()
+    {
+        float deadline = Time.unscaledTime + Mathf.Max(1f, restoreTimeoutSeconds);
+
+        while (Time.unscaledTime < deadline)
+        {
+            ResolveReferences();
+            RefreshBindings();
+
+            if (ShouldSkipLatestRestore())
+                yield break;
+
+            if (!IsGraphSyncReadyForHistory())
+            {
+                yield return new WaitForSecondsRealtime(Mathf.Max(0.5f, restorePollSeconds));
+                continue;
+            }
+
+            LatestSketchDto latest = null;
+            yield return FetchLatestSketch(result => latest = result);
+
+            if (ShouldSkipLatestRestore())
+                yield break;
+
+            if (latest != null && !string.IsNullOrWhiteSpace(latest.imageUrl))
+            {
+                if (!string.Equals(lastAppliedImageUrl, latest.imageUrl, StringComparison.Ordinal))
+                    StartServerImageDownload(latest.imageUrl, latest.assetId);
+
+                if (broadcastDirectServerResults &&
+                    graphNetwork != null &&
+                    graphNetwork.IsRpcReady &&
+                    !string.Equals(lastBroadcastImageUrl, latest.imageUrl, StringComparison.Ordinal))
+                {
+                    lastBroadcastImageUrl = latest.imageUrl;
+                    graphNetwork.RequestGenerated2DImageSnapshot(
+                        latest.assetId,
+                        latest.mimeType,
+                        latest.imageUrl);
+                }
+
+                restoreCoroutine = null;
+                yield break;
+            }
+
+            yield return new WaitForSecondsRealtime(Mathf.Max(0.5f, restorePollSeconds));
+        }
+
+        restoreCoroutine = null;
+    }
+
+    private bool ShouldSkipLatestRestore()
+    {
+        ResolveReferences();
+
+        if (IsBusy)
+            return true;
+
+        if (generate2DController != null &&
+            !string.IsNullOrWhiteSpace(generate2DController.CurrentAssetId))
+            return true;
+
+        return false;
+    }
+
+    private bool IsGraphSyncReadyForHistory()
+    {
+        if (graphSyncClient == null ||
+            string.IsNullOrWhiteSpace(graphSyncClient.Host) ||
+            string.IsNullOrWhiteSpace(graphSyncClient.RoomId))
+            return false;
+
+        return graphSyncClient.IsConnected ||
+               !string.Equals(
+                   graphSyncClient.RoomId,
+                   DefaultSeedRoomId,
+                   StringComparison.OrdinalIgnoreCase);
+    }
+
+    private IEnumerator FetchLatestSketch(Action<LatestSketchDto> onDone)
+    {
+        onDone?.Invoke(null);
+
+        string url =
+            $"{ServerAddress.Http(graphSyncClient.Host)}/api/history/" +
+            UnityWebRequest.EscapeURL(graphSyncClient.RoomId);
+
+        using (UnityWebRequest request = UnityWebRequest.Get(url))
+        {
+            request.timeout = 15;
+            yield return request.SendWebRequest();
+
+            if (request.result != UnityWebRequest.Result.Success)
+            {
+                Debug.LogWarning(
+                    "[MvpGenerated2DSync] Failed to fetch latest 2D sketch: " +
+                    request.error +
+                    " (code=" +
+                    request.responseCode +
+                    ")");
+                yield break;
+            }
+
+            HistoryResponseDto response = null;
+            try
+            {
+                response = JsonUtility.FromJson<HistoryResponseDto>(
+                    request.downloadHandler.text);
+            }
+            catch (Exception exception)
+            {
+                Debug.LogWarning(
+                    "[MvpGenerated2DSync] Failed to parse latest 2D sketch: " +
+                    exception.Message);
+            }
+
+            List<GraphSnapshotDto> history = response?.result?.history;
+            if (history == null)
+                yield break;
+
+            CoreImageDto latestImage = null;
+            int latestVersion = int.MinValue;
+            foreach (GraphSnapshotDto snapshot in history)
+            {
+                if (snapshot?.core_2d_image == null ||
+                    string.IsNullOrWhiteSpace(snapshot.core_2d_image.image_url))
+                    continue;
+                if (snapshot.graph_version < latestVersion)
+                    continue;
+
+                latestVersion = snapshot.graph_version;
+                latestImage = snapshot.core_2d_image;
+            }
+
+            if (latestImage == null)
+                yield break;
+
+            onDone?.Invoke(new LatestSketchDto
+            {
+                assetId = latestImage.asset_id,
+                mimeType = latestImage.mime_type,
+                imageUrl = latestImage.image_url
+            });
+        }
+    }
+
     private void SetUiGenerating(bool generating, string message)
     {
         if (generateButton != null)
             generateButton.interactable = !generating;
         if (statusText != null && !string.IsNullOrEmpty(message))
             statusText.text = message;
+        if (classroomFlow != null && !string.IsNullOrEmpty(message))
+        {
+            Color color = generating
+                ? MvpStudentUiFactory.Cyan
+                : MvpStudentUiFactory.Mint;
+            classroomFlow.SetWorkspaceMessage(message, color);
+        }
     }
 
     private void HideSketchPlaceholder()
@@ -568,6 +781,14 @@ public class MvpGenerated2DSync : MonoBehaviour
                GetPrivateField<bool>(generate2DController, "_isGenerating");
     }
 
+    private void ApplyControllerAssetId(string assetId)
+    {
+        if (generate2DController == null || string.IsNullOrWhiteSpace(assetId))
+            return;
+
+        SetPrivateField(generate2DController, "_currentAssetId", assetId);
+    }
+
     private static T GetPrivateField<T>(object target, string fieldName)
     {
         if (target == null || string.IsNullOrEmpty(fieldName))
@@ -581,9 +802,21 @@ public class MvpGenerated2DSync : MonoBehaviour
         return value is T typed ? typed : default;
     }
 
+    private static void SetPrivateField(object target, string fieldName, object value)
+    {
+        if (target == null || string.IsNullOrEmpty(fieldName))
+            return;
+
+        FieldInfo field = target.GetType().GetField(fieldName, PrivateInstanceFlags);
+        if (field != null)
+            field.SetValue(target, value);
+    }
+
     private static Button FindSceneButton(params string[] names)
     {
         Button[] buttons = Resources.FindObjectsOfTypeAll<Button>();
+        Button inactiveMatch = null;
+
         foreach (Button button in buttons)
         {
             if (button == null || !button.gameObject.scene.IsValid())
@@ -591,12 +824,50 @@ public class MvpGenerated2DSync : MonoBehaviour
 
             foreach (string name in names)
             {
-                if (button.name == name)
+                if (button.name != name)
+                    continue;
+
+                if (button.gameObject.activeInHierarchy)
                     return button;
+                inactiveMatch ??= button;
             }
         }
 
-        return null;
+        return inactiveMatch;
+    }
+
+    private class LatestSketchDto
+    {
+        public string assetId;
+        public string mimeType;
+        public string imageUrl;
+    }
+
+    [Serializable]
+    private class HistoryResponseDto
+    {
+        public HistoryResultDto result;
+    }
+
+    [Serializable]
+    private class HistoryResultDto
+    {
+        public List<GraphSnapshotDto> history;
+    }
+
+    [Serializable]
+    private class GraphSnapshotDto
+    {
+        public int graph_version;
+        public CoreImageDto core_2d_image;
+    }
+
+    [Serializable]
+    private class CoreImageDto
+    {
+        public string asset_id;
+        public string mime_type;
+        public string image_url;
     }
 
     [Serializable]
