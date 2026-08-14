@@ -893,8 +893,43 @@ API 명세의 `GET /api/graph`(sub_graphs 중첩)로 서버 그래프를 받아 
 ### 남은 것
 
 - [ ] **[사용자] Unity 컴파일 확인 + 2D 생성 왕복 재검증.** 위 수정은 아직 에디터에서 컴파일되지 않았다.
-- [ ] **3D 생성 경로가 클라에 아예 없다.** 서버는 `POST /api/3d/generate {room_id,user_id,job_id,asset_id}` + WS `3D_GENERATED{asset_id,mime_type,model_url}` 로 준비됨(`03199d0`). 클라는 `MvpClassroomFlow.cs:1350` 의 `"Generate3D"` 문자열 하나뿐 — 요청·수신·모델 표시 전부 신규 구현 필요.
+- [x] ~~3D 생성 경로가 클라에 아예 없다.~~ **`Generate3DController.cs` 로 구현 완료.** 요청·WS 수신·glTFast GLB 로드까지 있다. 2026-08-15 서버 왕복 실측으로 끝까지 도는 것 확인.
 - [ ] **레퍼런스 노드 제약.** 서버 `846680f` 커밋 메시지: "Unity 상에서 레퍼런스 노드 자식은 생성하지 못하도록 해야 함". REFERENCE 노드에 자식 생성 UI 를 막아야 한다.
 - [ ] **`GET /api/graph` 전체 조회 스펙 확인**(`af0cd6a`). 콜드로드 경로가 새 응답 형식과 맞는지 미확인.
 - [ ] **`9fc276e` 의 asset + graph_snapshot 저장 형식 변경**이 클라에 영향 있는지 미확인.
 - [ ] **[사용자] MinIO 공개 주소.** `.env:18` 이 `http://localhost:9000` 으로 되돌아가 있다. 헤드셋 테스트 시 `http://<맥 LAN IP>:9100` + `tools/minio_forward.py` 필요(8/2 와 동일한 함정).
+
+## 2026-08-15 이미지 주소 + 회의실 입장 배치 (개발자3)
+
+### 이미지가 헤드셋에서 안 열리던 문제 — 해결
+
+생성된 2D 이미지는 MinIO(9000)가 직접 서빙하는데, ngrok 무료 계정은 고정 주소가 하나뿐이라 백엔드(8000)만 터널에 물려 있었다. 그래서 `image_url` 이 `http://localhost:9000/...` 로 내려가 헤드셋에서 열리지 않았다.
+
+- [x] `Caddyfile.tunnel` 추가 — `/nodexr-2d-assets/*` 는 MinIO, 나머지는 백엔드로 보내 한 주소로 합친다.
+- [x] `docker-compose.tunnel.yml` 에 `tunnel-proxy`(caddy) 서비스 추가, ngrok 이 `tunnel-proxy:80` 을 바라보게 변경.
+- [x] `.env` 의 `MINIO_PUBLIC_BASE_URL` 을 터널 주소로 변경.
+- [x] 검증: 터널로 API 200, 실제 생성 이미지 200 `image/jpeg` 433KB 수신, 새로 생성한 이미지의 `image_url` 이 터널 주소로 내려옴.
+- 서버 저장소(`_nodexr_backend_inspect`) 변경분이라 이 저장소에는 커밋되지 않는다.
+
+### 작업판만 위에 남고 사용자는 아래로 떨어지던 문제 — 해결
+
+헤드 트래킹이 붙기 전에 자리 배치와 작업판 고정이 둘 다 끝나버려서, 트래킹이 붙는 순간 눈높이만 내려가고 판은 그대로 남았다.
+
+처음엔 `MvpXrCanvasAnchor`(안내 패널용)를 고쳤는데 **그건 이 보드와 무관했다.** 씬을 열어 확인하니 보드는 `MainSketchPanel` 이고 앵커가 붙어 있지 않다. 실제 범인은 `MvpWorkspaceLayout.PositionMainSketchPanel()` 로, `Start()` 첫 프레임에 `카메라 위치 + 앞*1.55 + 위*(-0.10)` 로 놓고 `_workspacePoseInitialized = true` 로 영구 고정한다. 리그 배치는 코루틴으로 뒤늦게 끝나므로 보드만 "떨어지기 전" 높이에 남는다.
+
+- [x] `MvpWorkspaceLayout.RecenterWorkspacePose()` 추가 — 보드를 지금 눈 위치 기준으로 다시 놓는다.
+- [x] `MvpMeetingRoomPlayerController.StabilizeAssignedSeat` 끝에서 이걸 호출한다. **시간 창이 아니라 "자리가 확정됐다"는 사실에 맞춰** 놓으므로 트래킹이 얼마나 늦게 붙든 상관없다.
+- [x] 안전망: 눈 위치가 멎기 전에는 잠그지 않고, 확정 후에도 잠깐(8초)은 50cm 이상 점프를 따라간다. 문턱을 50cm 로 둔 건 트래킹 점프(1.5m 안팎)와 몸 기울이기(수십 cm)를 구분하기 위해서다.
+- [x] `MvpXrCanvasAnchor` 도 같은 방식으로 보강(안내 패널).
+- [x] 검증: 플레이 모드에서 눈을 ±1.6m 옮긴 뒤 재배치 → 두 방향 모두 보드가 눈높이 -0.10m 를 유지함.
+- [ ] **[사용자] 헤드셋 실기 확인.**
+
+### 3D 생성 실측 (2026-08-15)
+
+서버 왕복으로 끝까지 확인했다: 요청 `3D200` → Meshy 생성 → MinIO 저장 → 터널로 GLB 다운로드 200 `model/gltf-binary`.
+
+**다만 결과물이 삼각형 196만 개 / 81MB 로 나왔다.** Meshy 요청에 리메시 옵션을 하나도 안 넘겨 원본 밀도가 그대로 온 것이다. Quest 가 씬 전체로 감당하는 양을 모델 하나가 다 쓰는 수준이고, ngrok 무료 월 1GB 로는 12개만 받으면 막힌다.
+
+- [x] 서버 `MESHY_TARGET_POLYCOUNT=30000` + `should_remesh` 추가 → **4.18MB / 삼각형 29,546개** (19배 감소). 서버 저장소 커밋 `d9d6c30`.
+- Draco 압축은 넣지 않았다. 줄인 뒤 남은 4.18MB 중 2.85MB 가 텍스처라 지오메트리 압축으로는 1MB 남짓밖에 못 줄이는데, Unity 에 네이티브 Draco 패키지를 추가하고 Quest 빌드를 다시 검증해야 한다. 실익 없음.
+- [ ] **[사용자] 헤드셋에서 3D 모델 표시 확인.** 서버까지만 검증했고 실기에서 띄워보진 않았다.
