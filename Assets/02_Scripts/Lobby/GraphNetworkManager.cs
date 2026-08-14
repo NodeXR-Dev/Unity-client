@@ -35,6 +35,7 @@ public class GraphNetworkManager : NetworkBehaviour
     public event Action<int, string, PlayerRef> Generated3DStartReceived;
     public event Action<PlayerRef> Generated3DStartRejected;
     public event Action<int> Generated3DFinishedReceived;
+    public event Action<PlayerRef> ReportPanelShowReceived;
 
     private readonly Dictionary<string, PlayerRef> lockCache = new Dictionary<string, PlayerRef>();
     private bool generated2DInProgress;
@@ -493,6 +494,17 @@ public class GraphNetworkManager : NetworkBehaviour
             RPC_RequestGenerated3DFinish(version);
     }
 
+    public void RequestReportPanelShow()
+    {
+        if (!IsReadyForRpc)
+            return;
+
+        if (CanBroadcast)
+            RPC_BroadcastReportPanelShow(Runner.LocalPlayer);
+        else
+            RPC_RequestReportPanelShow();
+    }
+
     [Rpc(RpcSources.All, RpcTargets.StateAuthority)]
     private void RPC_RequestLockNode(string nodeId, RpcInfo info = default)
     {
@@ -782,6 +794,18 @@ public class GraphNetworkManager : NetworkBehaviour
     private void RPC_BroadcastGenerated3DFinish(int version)
     {
         Generated3DFinishedReceived?.Invoke(version);
+    }
+
+    [Rpc(RpcSources.All, RpcTargets.StateAuthority)]
+    private void RPC_RequestReportPanelShow(RpcInfo info = default)
+    {
+        RPC_BroadcastReportPanelShow(GetRequester(info));
+    }
+
+    [Rpc(RpcSources.StateAuthority, RpcTargets.All)]
+    private void RPC_BroadcastReportPanelShow(PlayerRef requester)
+    {
+        ReportPanelShowReceived?.Invoke(requester);
     }
 
     private void ApplyCreateNode(
