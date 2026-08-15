@@ -224,7 +224,19 @@ public class MvpGenerated2DSync : MonoBehaviour
             !graphNetwork.IsRpcReady ||
             IsBusy ||
             string.Equals(lastBroadcastImageUrl, imgUrl, StringComparison.Ordinal))
+        {
+            // 왜 남에게 안 보내는지 남긴다. "내 화면에만 이미지가 뜬다"를
+            // 실기에서 추적하려면 이 지점의 판단이 필요하다.
+            Debug.LogWarning(
+                "[MvpGenerated2DSync] 2D 결과를 방에 알리지 않았습니다 — " +
+                "broadcast=" + broadcastDirectServerResults +
+                " graphNetwork=" + (graphNetwork != null) +
+                " rpcReady=" + (graphNetwork != null && graphNetwork.IsRpcReady) +
+                " busy=" + IsBusy +
+                " 같은주소=" + string.Equals(
+                    lastBroadcastImageUrl, imgUrl, StringComparison.Ordinal));
             return;
+        }
 
         lastBroadcastImageUrl = imgUrl;
         graphNetwork.RequestGenerated2DImageSnapshot(
@@ -239,7 +251,10 @@ public class MvpGenerated2DSync : MonoBehaviour
         string mimeType,
         string imgUrl)
     {
-        if (activeVersion > 0 && version != activeVersion)
+        // version 0 은 "지금 방의 그림은 이것"이라는 스냅샷이라 언제나 받는다.
+        // 예전에는 생성 중인 사람(activeVersion > 0)이 스냅샷을 전부 버려서,
+        // 늦게 도착한 진짜 이미지를 못 받고 목업이 남았다.
+        if (version > 0 && activeVersion > 0 && version != activeVersion)
             return;
 
         StopRequestTimeout();
