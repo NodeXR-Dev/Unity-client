@@ -237,25 +237,64 @@ public class MvpNetworkSession : MonoBehaviour, INetworkRunnerCallbacks
         }
 
         // 3) GNM(스폰/원격 복제) 준비되면 로컬→네트워크 브리지 바인딩·활성화
-        GraphNetworkManager gnm = null;
-        t = 0f;
-        while (t < 8f)
-        {
-            gnm = FindFirstObjectByType<GraphNetworkManager>();
-            if (gnm != null) break;
-            t += Time.deltaTime;
-            yield return null;
-        }
+        //
+        // 예전에는 8초만 기다리고 포기했다. 그런데 마스터는 자기가 직접 스폰하므로
+        // 항상 성공하는 반면, 다른 참가자는 마스터가 씬 로드·아바타 스폰을 마치고
+        // GNM 을 스폰해 복제해 줄 때까지 기다려야 한다. Quest 에서 이 시간이 8초를
+        // 넘으면 그 사람만 브리지가 꺼진 채로 남고, 그가 만든 파트·노드·연결은
+        // 아무에게도 전달되지 않는다(받기만 한다).
+        //   실기 증상: "방장이 만든 건 모두에게 보이는데 방장이 아닌 사람이 만든 건
+        //   아무에게도 안 보인다"
+        // 그래서 포기하지 않고, 세션이 도는 동안 계속 지켜보다가 나타나면 붙인다.
+        yield return WatchGraphNetworkAndBind();
+    }
 
-        if (gnm != null && _bridge != null)
+    private IEnumerator WatchGraphNetworkAndBind()
+    {
+        GraphNetworkManager bound = null;
+        float nextNotice = 0f;
+
+        while (_runner != null && _runner.IsRunning)
         {
-            if (_graphManager == null)
-                _graphManager = FindFirstObjectByType<GraphManager>();
-            _bridge.Bind(_graphManager, gnm);
-            _bridge.SetActive(true);
-            BindNetworkNotices(gnm);
-            _sessionReadyTime = Time.unscaledTime;
-            Debug.Log("[MvpNetworkSession] 그래프 네트워크 브리지 활성화");
+            GraphNetworkManager gnm = FindFirstObjectByType<GraphNetworkManager>();
+
+            // 아직 안 왔으면 계속 기다린다(마스터가 늦게 스폰할 수 있다).
+            if (gnm == null)
+            {
+                if (bound != null)
+                {
+                    // 있던 것이 사라졌다 — 다시 붙일 때까지 내보내지 않는다.
+                    _bridge?.SetActive(false);
+                    bound = null;
+                    Debug.LogWarning(
+                        "[MvpNetworkSession] 그래프 네트워크 오브젝트가 사라져 브리지를 껐습니다.");
+                }
+                if (Time.unscaledTime >= nextNotice)
+                {
+                    nextNotice = Time.unscaledTime + 5f;
+                    Debug.Log(
+                        "[MvpNetworkSession] 그래프 네트워크 오브젝트를 기다리는 중입니다.");
+                }
+                yield return null;
+                continue;
+            }
+
+            // 새로 왔거나 교체됐으면 붙인다.
+            if (gnm != bound && _bridge != null)
+            {
+                if (_graphManager == null)
+                    _graphManager = FindFirstObjectByType<GraphManager>();
+                _bridge.Bind(_graphManager, gnm);
+                _bridge.SetActive(true);
+                BindNetworkNotices(gnm);
+                _sessionReadyTime = Time.unscaledTime;
+                bound = gnm;
+                Debug.Log(
+                    "[MvpNetworkSession] 그래프 네트워크 브리지 활성화" +
+                    (_runner.IsSharedModeMasterClient ? " (방장)" : " (참가자)"));
+            }
+
+            yield return null;
         }
     }
 

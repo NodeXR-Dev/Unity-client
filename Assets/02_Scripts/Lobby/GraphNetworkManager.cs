@@ -980,6 +980,11 @@ public class GraphNetworkManager : NetworkBehaviour
                     changed |= EnsurePropertyParentEdge(safeParentNodeId, safeNodeId);
             }
 
+            // 이 노드를 기다리던 연결이 있으면 지금 붙인다.
+            // (서로 다른 참가자가 보낸 노드와 엣지는 도착 순서가 보장되지 않는다)
+            if (nodeCreated)
+                changed |= FlushPendingEdges();
+
             RenderIfChanged(changed);
             if (nodeCreated)
                 RemoteNodeCreated?.Invoke(node.node_id, Safe(createdBy));
@@ -1076,6 +1081,13 @@ public class GraphNetworkManager : NetworkBehaviour
         finally { _remoteApplyDepth--; }
     }
 
+    // 아직 못 붙인 엣지. 양쪽 노드가 다 와야 AddEdge 가 성공하는데, 서로 다른
+    // 참가자가 보낸 경우에는 도착 순서가 보장되지 않는다(A 가 만든 PART 보다
+    // B 가 만든 연결이 먼저 올 수 있다). 예전에는 그때 엣지가 그냥 사라졌다.
+    // 노드가 도착할 때마다 여기 있는 것들을 다시 시도한다.
+    private readonly List<EdgeData> pendingEdges = new List<EdgeData>();
+    private const int MaxPendingEdges = 256;
+
     private void ApplyCreateEdge(string edgeId, string fromNodeId, string toNodeId, string edgeType)
     {
         _remoteApplyDepth++;
@@ -1092,9 +1104,59 @@ public class GraphNetworkManager : NetworkBehaviour
             };
 
             bool changed = graphManager.AddEdge(edge);
+            if (!changed && graphManager.GetEdge(edge.edge_id) == null)
+                RememberPendingEdge(edge);
+
             RenderIfChanged(changed);
         }
         finally { _remoteApplyDepth--; }
+    }
+
+    private void RememberPendingEdge(EdgeData edge)
+    {
+        if (edge == null) return;
+
+        foreach (EdgeData pending in pendingEdges)
+        {
+            if (pending != null && pending.edge_id == edge.edge_id)
+                return;
+        }
+
+        if (pendingEdges.Count >= MaxPendingEdges)
+            pendingEdges.RemoveAt(0);
+
+        pendingEdges.Add(edge);
+    }
+
+    // 노드가 새로 들어온 뒤 호출한다. 붙는 것만 붙이고 나머지는 남겨 둔다.
+    private bool FlushPendingEdges()
+    {
+        if (pendingEdges.Count == 0 || graphManager == null)
+            return false;
+
+        bool changed = false;
+        for (int i = pendingEdges.Count - 1; i >= 0; i--)
+        {
+            EdgeData edge = pendingEdges[i];
+            if (edge == null)
+            {
+                pendingEdges.RemoveAt(i);
+                continue;
+            }
+
+            if (graphManager.GetEdge(edge.edge_id) != null)
+            {
+                pendingEdges.RemoveAt(i);
+                continue;
+            }
+
+            if (graphManager.AddEdge(edge))
+            {
+                pendingEdges.RemoveAt(i);
+                changed = true;
+            }
+        }
+        return changed;
     }
 
     private void ApplyDeleteEdge(string edgeId)
@@ -1207,12 +1269,26 @@ public class GraphNetworkManager : NetworkBehaviour
         string mimeType,
         string imgUrl)
     {
-        if (!HasStateAuthority || !IsCurrentGenerated2DVersion(version))
+        if (!HasStateAuthority)
             return;
 
-        generated2DInProgress = false;
+        // 버전이 안 맞아도 이미지를 버리지 않는다.
+        //
+        // 예전에는 IsCurrentGenerated2DVersion 이 false 면 그냥 return 했다.
+        // 그런데 그 전에 Finish 가 한 번이라도 들어오면(컨트롤러가 생성을
+        // 시작하지 못했거나 타임아웃) generated2DInProgress 가 false 가 되어,
+        // 뒤늦게 도착한 진짜 이미지가 조용히 폐기됐다.
+        // 그 결과 요청한 사람만(자기 WS 로 따로 받으므로) 진짜 그림을 보고
+        // 나머지는 시작할 때 띄운 목업이 그대로 남았다.
+        //   실기 증상: "만든 사람한테만 보이고 나머지는 목업"
+        //
+        // 진행 중이던 건이면 그 버전으로, 아니면 스냅샷(0)으로 알린다.
+        bool matchesCurrent = IsCurrentGenerated2DVersion(version);
+        if (matchesCurrent)
+            generated2DInProgress = false;
+
         RPC_BroadcastGenerated2DServerImage(
-            version,
+            matchesCurrent ? version : 0,
             Safe(assetId),
             Safe(mimeType),
             Safe(imgUrl));
