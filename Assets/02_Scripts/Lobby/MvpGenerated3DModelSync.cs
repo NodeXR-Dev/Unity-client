@@ -4,6 +4,7 @@ using System.Reflection;
 using Fusion;
 using TMPro;
 using UnityEngine;
+using UnityEngine.Networking;
 
 /// <summary>
 /// 서버(Meshy)가 만든 GLB 를 방 전체가 같이 보게 만든다.
@@ -34,12 +35,16 @@ public class MvpGenerated3DModelSync : MonoBehaviour
     [Header("Options")]
     [SerializeField] private bool autoFindReferences = true;
     [SerializeField] private bool broadcastDirectServerResults = true;
+    [SerializeField] private bool restoreLatestModelOnStart = true;
+    [SerializeField] private float restoreTimeoutSeconds = 60f;
+    [SerializeField] private float restorePollSeconds = 3f;
 
     private GraphNetworkManager subscribedGraphNetwork;
     private GraphSyncClient subscribedGraphSyncClient;
 
     private float nextResolveTime;
     private string lastBroadcastModelUrl;
+    private Coroutine restoreCoroutine;
 
     private void OnEnable()
     {
@@ -52,6 +57,7 @@ public class MvpGenerated3DModelSync : MonoBehaviour
         yield return null;
         ResolveReferences();
         RefreshBindings();
+        StartLatestModelRestore();
     }
 
     private void Update()
@@ -68,6 +74,134 @@ public class MvpGenerated3DModelSync : MonoBehaviour
     {
         UnbindGraphNetwork();
         UnbindGraphSyncClient();
+        StopLatestModelRestore();
+    }
+
+    // ── 놓친 3D 결과 따라잡기 ────────────────────────────────────────
+    //
+    // 3D 는 Meshy 때문에 1~2분이 걸린다. 그 사이 WS 가 끊기면 서버가 완료를
+    // 보낼 곳이 없어 결과가 그대로 사라진다.
+    // (실측 2026-08-15: 완료 6초 전 ws_closed → ws_send_to_user_skip → 유실)
+    //
+    // 생성물 자체는 서버에 남으므로 방에 들어올 때 한 번 확인한다.
+    // 앱을 다시 켠 경우와 늦게 합류한 참가자도 같이 해결된다.
+
+    private void StartLatestModelRestore()
+    {
+        if (!restoreLatestModelOnStart || restoreCoroutine != null)
+            return;
+
+        restoreCoroutine = StartCoroutine(RestoreLatestModelWhenReady());
+    }
+
+    private void StopLatestModelRestore()
+    {
+        if (restoreCoroutine == null)
+            return;
+
+        StopCoroutine(restoreCoroutine);
+        restoreCoroutine = null;
+    }
+
+    private IEnumerator RestoreLatestModelWhenReady()
+    {
+        float deadline = Time.unscaledTime + Mathf.Max(5f, restoreTimeoutSeconds);
+
+        while (Time.unscaledTime < deadline)
+        {
+            ResolveReferences();
+
+            // 이미 모델이 떠 있으면 건드리지 않는다(내가 방금 만든 경우).
+            if (generate3DController != null && generate3DController.HasModel)
+                break;
+
+            if (graphSyncClient == null ||
+                string.IsNullOrWhiteSpace(graphSyncClient.Host) ||
+                string.IsNullOrWhiteSpace(graphSyncClient.RoomId))
+            {
+                yield return new WaitForSecondsRealtime(
+                    Mathf.Max(0.5f, restorePollSeconds));
+                continue;
+            }
+
+            string url =
+                $"{ServerAddress.Http(graphSyncClient.Host)}/api/3d/latest/" +
+                UnityWebRequest.EscapeURL(graphSyncClient.RoomId);
+
+            using (UnityWebRequest request = UnityWebRequest.Get(url))
+            {
+                request.timeout = 15;
+                yield return request.SendWebRequest();
+
+                if (request.result != UnityWebRequest.Result.Success)
+                {
+                    Debug.LogWarning(
+                        "[MvpGenerated3DModelSync] 최신 3D 조회 실패: " +
+                        request.error + " (code=" + request.responseCode + ")");
+                    yield return new WaitForSecondsRealtime(
+                        Mathf.Max(0.5f, restorePollSeconds));
+                    continue;
+                }
+
+                string modelUrl = null;
+                string assetId = null;
+                try
+                {
+                    LatestModelResponseDto response =
+                        JsonUtility.FromJson<LatestModelResponseDto>(
+                            request.downloadHandler.text);
+                    if (response?.result != null)
+                    {
+                        modelUrl = response.result.model_url;
+                        assetId = response.result.asset_id;
+                    }
+                }
+                catch (Exception exception)
+                {
+                    Debug.LogWarning(
+                        "[MvpGenerated3DModelSync] 최신 3D 응답 해석 실패: " +
+                        exception.Message);
+                }
+
+                if (!string.IsNullOrWhiteSpace(modelUrl))
+                {
+                    Debug.Log(
+                        "[MvpGenerated3DModelSync] 놓친 3D 결과를 서버에서 받아 띄웁니다.");
+                    HandleGenerated3DModel(0, assetId, string.Empty, modelUrl);
+
+                    // 같은 방 참가자에게도 알려 늦게 들어온 사람까지 맞춘다.
+                    if (broadcastDirectServerResults &&
+                        graphNetwork != null &&
+                        graphNetwork.IsRpcReady)
+                    {
+                        lastBroadcastModelUrl = modelUrl;
+                        graphNetwork.RequestGenerated3DModelSnapshot(
+                            assetId, string.Empty, modelUrl);
+                    }
+                    break;
+                }
+            }
+
+            // 아직 없으면(생성 중일 수 있다) 잠시 뒤 다시 본다.
+            yield return new WaitForSecondsRealtime(
+                Mathf.Max(0.5f, restorePollSeconds));
+        }
+
+        restoreCoroutine = null;
+    }
+
+    [Serializable]
+    private class LatestModelResponseDto
+    {
+        public LatestModelResultDto result;
+    }
+
+    [Serializable]
+    private class LatestModelResultDto
+    {
+        public string asset_id;
+        public string model_url;
+        public string mime_type;
     }
 
     /// <summary>
@@ -112,6 +246,15 @@ public class MvpGenerated3DModelSync : MonoBehaviour
             Debug.LogWarning(
                 "[MvpGenerated3DModelSync] Generate3DController 를 찾지 못해 공유된 3D 모델을 띄우지 못했습니다.");
             return;
+        }
+
+        // 받침대는 요청한 사람 쪽에서만 세워졌다(MvpClassroomFlow 가 로컬로 만든다).
+        // 받는 쪽도 같은 자리에 세워 두지 않으면 모델이 엉뚱한 곳에 붙는다.
+        if (classroomFlow != null)
+        {
+            Transform stage = classroomFlow.EnsureServerModelStage();
+            if (stage != null)
+                generate3DController.SetModelParent(stage);
         }
 
         SetStatus("3D 모델을 불러오는 중...");

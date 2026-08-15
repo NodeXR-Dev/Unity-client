@@ -1860,7 +1860,9 @@ public class MvpClassroomFlow : MonoBehaviour
     //
     // 자리는 mock 로켓(MvpRocket3DStage)과 동일하게 메인 보드 기준으로 잡는다. 카메라 기준으로
     // 두면 XR 에서 Camera.main 좌표가 실제 시점과 달라 시야 밖으로 나간다(실측 y=-1.46).
-    private Transform EnsureServerModelStage()
+    // 남이 만든 3D 가 공유돼 올 때 받는 쪽도 같은 자리에 받침을 세워야 하므로
+    // MvpGenerated3DModelSync 가 호출할 수 있게 공개한다.
+    public Transform EnsureServerModelStage()
     {
         if (_serverModelStage != null)
         {

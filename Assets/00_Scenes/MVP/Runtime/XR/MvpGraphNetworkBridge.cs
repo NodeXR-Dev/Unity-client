@@ -48,6 +48,9 @@ public class MvpGraphNetworkBridge : MonoBehaviour
         _graph.OnNodeRekeyed += HandleNodeRekeyed;
         _graph.OnEdgeRekeyed += HandleEdgeRekeyed;
         _graph.OnNodeActiveChanged += HandleNodeActiveChanged;
+        _graph.OnLocalNodeAdded += HandleLocalNodeAdded;
+        _graph.OnLocalNodeTextChanged += HandleLocalNodeTextChanged;
+        _graph.OnLocalEdgeAdded += HandleLocalEdgeAdded;
         _subscribed = true;
     }
 
@@ -63,6 +66,9 @@ public class MvpGraphNetworkBridge : MonoBehaviour
         _graph.OnNodeRekeyed -= HandleNodeRekeyed;
         _graph.OnEdgeRekeyed -= HandleEdgeRekeyed;
         _graph.OnNodeActiveChanged -= HandleNodeActiveChanged;
+        _graph.OnLocalNodeAdded -= HandleLocalNodeAdded;
+        _graph.OnLocalNodeTextChanged -= HandleLocalNodeTextChanged;
+        _graph.OnLocalEdgeAdded -= HandleLocalEdgeAdded;
         _subscribed = false;
     }
 
@@ -137,5 +143,36 @@ public class MvpGraphNetworkBridge : MonoBehaviour
     {
         if (!ShouldForward()) return;
         _network.RequestSetNodeActive(nodeId, active);
+    }
+
+    // ── 서버 등록 여부와 무관한 로컬 변경 ────────────────────────────
+    //
+    // 위의 On*Created 는 "서버에 보낼 것"이라 PART 는 아예 발행되지 않고,
+    // 자식 PROPERTY 는 부모가 서버 미등록이면 보류된다. 그 때문에 파트와
+    // 하위 노드가 상대 화면에 끝내 안 나타났다.
+    //
+    // 같은 노드를 두 경로로 보내게 되는데, 받는 쪽 ApplyCreateNode 가
+    // AddNode 실패(이미 존재)로 흡수하므로 중복은 문제가 되지 않는다.
+
+    private void HandleLocalNodeAdded(NodeData node)
+    {
+        if (!ShouldForward() || node == null) return;
+        _network.RequestCreateNode(node, node.parent_node_id ?? "");
+    }
+
+    private void HandleLocalNodeTextChanged(NodeData node)
+    {
+        if (!ShouldForward() || node == null) return;
+
+        // 상대가 아직 이 노드를 모를 수 있다(생성 시점에 세션이 아직 안 붙었던 경우).
+        // 생성부터 다시 보내면 받는 쪽에서 알아서 흡수한다.
+        _network.RequestCreateNode(node, node.parent_node_id ?? "");
+        _network.RequestUpdateNodeText(node.node_id, node.label, node.node_text);
+    }
+
+    private void HandleLocalEdgeAdded(EdgeData edge)
+    {
+        if (!ShouldForward() || edge == null) return;
+        _network.RequestCreateEdge(edge);
     }
 }

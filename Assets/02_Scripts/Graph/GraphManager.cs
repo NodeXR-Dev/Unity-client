@@ -102,6 +102,26 @@ public class GraphManager : MonoBehaviour
     // 브리지가 Fusion 으로 전파해 다른 참가자 화면의 초록선/흐림도 함께 바뀐다.
     public event Action<string, bool> OnNodeActiveChanged;
 
+    // ── 같은 방 참가자에게 보내기 위한 신호 ──────────────────────────
+    //
+    // 위의 OnNodeCreated / OnEdgeCreated 는 "서버에 보낼 것"을 뜻한다. 그래서
+    // 서버 사정으로 발행되지 않는 경우가 있다.
+    //   - PART 노드는 REST 로 따로 등록하므로 OnNodeCreated 를 아예 쏘지 않는다.
+    //   - 자식 PROPERTY 는 부모가 서버 미등록이면 발행을 보류한다.
+    // 그런데 같은 방 참가자에게는 서버 등록 여부와 상관없이 보여야 한다.
+    // (실기 확인: 파트도 하위 노드도 상대 화면에 끝내 안 나타났다)
+    //
+    // 그래서 로컬에서 그래프가 바뀌면 조건 없이 발행하는 신호를 따로 둔다.
+    // 원격 적용분은 브리지가 GraphNetworkManager.IsApplyingRemote 로 걸러낸다.
+    //
+    // AddNode/AddEdge 가 아니라 "생성이 완전히 끝난 지점"에서 발행한다.
+    // AddNode 직후에 발행하면, 뒤이은 AddEdge 가 규칙 위반으로 실패해 노드를
+    // 되돌릴 때(RequestCreatePropertyNode) 상대에게 유령 노드가 남는다.
+    // 서버 그래프 일괄 로드가 AddNode 를 직접 쓰는 것도 여기서 함께 걸러진다.
+    public event Action<NodeData> OnLocalNodeAdded;
+    public event Action<NodeData> OnLocalNodeTextChanged;
+    public event Action<EdgeData> OnLocalEdgeAdded;
+
     // ─────────────────────────────────────────────
     // 내부 상태
     // ─────────────────────────────────────────────
@@ -586,6 +606,9 @@ public class GraphManager : MonoBehaviour
         }
 
         ReflowAllSubtrees();
+        // 노드와 부모 엣지가 모두 자리를 잡은 뒤에 알린다(순서도 이대로 나가야 한다).
+        OnLocalNodeAdded?.Invoke(newNode);
+        OnLocalEdgeAdded?.Invoke(edge);
         return newNode.node_id;
     }
 
@@ -613,6 +636,7 @@ public class GraphManager : MonoBehaviour
             SpawnNodeView(newNode);
 
         ReflowAllSubtrees();
+        OnLocalNodeAdded?.Invoke(newNode);
         return newNode.node_id;
     }
 
@@ -639,6 +663,10 @@ public class GraphManager : MonoBehaviour
 
         node.label     = t;
         node.node_text = t;
+
+        // 아래 분기들은 서버 사정으로 중간에 return 할 수 있다(부모 미등록, ACK 대기 등).
+        // 같은 방 참가자에게는 그와 무관하게 글자가 보여야 하므로 여기서 먼저 알린다.
+        OnLocalNodeTextChanged?.Invoke(node);
 
         if (_serverKnownNodeIds.Contains(nodeId))
         {
@@ -882,6 +910,9 @@ public class GraphManager : MonoBehaviour
         if (locallyIssued)
             OnLocalPartNodeCreated?.Invoke(node.node_id, label, isGlobal, node.Position);
 
+        // PART 는 서버 등록 경로가 따로라 OnNodeCreated 를 쏘지 않는다.
+        // 그래서 이걸 알리지 않으면 파트가 상대 화면에 영영 안 생긴다.
+        OnLocalNodeAdded?.Invoke(node);
         return node.node_id;
     }
 
@@ -896,6 +927,7 @@ public class GraphManager : MonoBehaviour
         if (!AddEdge(edge)) return false;
         SpawnEdgeView(edge);
         OnEdgeCreated?.Invoke(edge);
+        OnLocalEdgeAdded?.Invoke(edge);
         return true;
     }
 

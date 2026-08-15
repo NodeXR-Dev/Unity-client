@@ -939,6 +939,33 @@ public class GraphNetworkManager : NetworkBehaviour
             bool changed = nodeCreated;
 
             NodeData appliedNode = nodeCreated ? node : graphManager.GetNode(safeNodeId);
+
+            // 이미 아는 노드로 다시 들어온 경우에도 글자는 반영한다.
+            // 보내는 쪽은 글자가 정해질 때 생성부터 다시 보내는데(상대가 아직
+            // 이 노드를 모를 수 있으므로), 여기서 흡수만 하고 끝내면 글자가
+            // 영영 안 붙는다. 텍스트 전용 RPC 는 잠금이 필요해 방금 만든
+            // 노드의 첫 글자가 막히는 경우가 있어 이 경로가 필요하다.
+            if (!nodeCreated && appliedNode != null)
+            {
+                string incomingLabel = Safe(label);
+                string incomingText = string.IsNullOrEmpty(description)
+                    ? incomingLabel
+                    : Safe(description);
+
+                if (!string.IsNullOrWhiteSpace(incomingLabel) &&
+                    appliedNode.label != incomingLabel)
+                {
+                    appliedNode.label = incomingLabel;
+                    changed = true;
+                }
+                if (!string.IsNullOrWhiteSpace(incomingText) &&
+                    appliedNode.node_text != incomingText)
+                {
+                    appliedNode.node_text = incomingText;
+                    changed = true;
+                }
+            }
+
             if (appliedNode != null && !string.IsNullOrWhiteSpace(safeParentNodeId))
             {
                 appliedNode.parent_node_id = safeParentNodeId;
