@@ -303,6 +303,8 @@ public class GraphSyncClient : MonoBehaviour
                 return;
             }
             _graphManager.ApplyServerNodeId(result.job_id, result.node_id);
+            // 이 노드를 기다리느라 못 보낸 연결이 있으면 지금 보낸다.
+            FlushPendingEdges();
         }
         else
         {
@@ -450,6 +452,45 @@ public class GraphSyncClient : MonoBehaviour
     // 현재 서버 저장 표준은 반대인 PART → PROPERTY/REFERENCE이므로 WS 경계에서만 방향을 뒤집는다.
     // 서버 snapshot 수신 시에는 GraphSnapshotDto가 다시 로컬 표준으로 정규화한다.
     // 양 끝 노드가 서버-known 이 아니면 서버가 NODE404 → 송신 skip(로그).
+    // 양 끝 노드가 아직 서버-known 이 아니라 못 보낸 연결.
+    //
+    // 예전에는 그냥 버렸다. 그래서 노드가 나중에 등록돼도 그 연결은 영영 서버에
+    // 올라가지 않았고, 서버 edges 테이블이 빈 채로 남아 2D 생성이 그 연결을
+    // 반영하지 못했다(실측 2026-08-15 room f0d811f4: 연결을 걸었는데 edges 0건).
+    // 노드 ACK 가 올 때마다 다시 시도한다.
+    private readonly List<EdgeData> _pendingEdges = new List<EdgeData>();
+    private const int MaxPendingEdges = 128;
+
+    private void FlushPendingEdges()
+    {
+        if (_pendingEdges.Count == 0 || _graphManager == null)
+            return;
+
+        List<EdgeData> ready = new List<EdgeData>();
+        for (int i = _pendingEdges.Count - 1; i >= 0; i--)
+        {
+            EdgeData edge = _pendingEdges[i];
+            if (edge == null)
+            {
+                _pendingEdges.RemoveAt(i);
+                continue;
+            }
+            if (_graphManager.IsServerKnown(edge.from_node_id) &&
+                _graphManager.IsServerKnown(edge.to_node_id))
+            {
+                _pendingEdges.RemoveAt(i);
+                ready.Add(edge);
+            }
+        }
+
+        if (ready.Count == 0)
+            return;
+
+        Debug.Log($"[GraphSyncClient] 보류했던 연결 {ready.Count}건을 이제 보냅니다.");
+        for (int i = 0; i < ready.Count; i++)
+            HandleEdgeCreated(ready[i]);
+    }
+
     private void HandleEdgeCreated(EdgeData edge)
     {
         if (edge == null) return;
@@ -457,7 +498,21 @@ public class GraphSyncClient : MonoBehaviour
         if (_graphManager != null &&
             (!_graphManager.IsServerKnown(edge.from_node_id) || !_graphManager.IsServerKnown(edge.to_node_id)))
         {
-            Debug.LogWarning($"[GraphSyncClient] EDGE_CREATE 송신 skip: 양 끝 노드가 서버-known 이 아닙니다. from={edge.from_node_id} to={edge.to_node_id}");
+            bool known = false;
+            foreach (EdgeData pending in _pendingEdges)
+            {
+                if (pending != null && pending.edge_id == edge.edge_id) { known = true; break; }
+            }
+            if (!known)
+            {
+                if (_pendingEdges.Count >= MaxPendingEdges)
+                    _pendingEdges.RemoveAt(0);
+                _pendingEdges.Add(edge);
+            }
+
+            Debug.LogWarning(
+                $"[GraphSyncClient] EDGE_CREATE 보류: 양 끝 노드가 아직 서버-known 이 아닙니다. " +
+                $"from={edge.from_node_id} to={edge.to_node_id} 대기 {_pendingEdges.Count}건");
             return;
         }
 

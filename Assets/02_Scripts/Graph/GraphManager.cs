@@ -834,6 +834,18 @@ public class GraphManager : MonoBehaviour
         Debug.Log($"[GraphManager] ApplyServerNodeId: job_id={jobId} → node_id={serverNodeId}");
         OnNodeRekeyed?.Invoke(jobId, serverNodeId, serverNodeText);
 
+        // 메인그래프 UI(PART/ALL 포트)를 다시 만들게 한다.
+        //
+        // 여기서 노드 id 와 엣지의 from/to 는 서버 id 로 바뀌지만, 포트는
+        // MainSketchView.Refresh 가 만들고 그건 OnGraphChanged 로만 돈다.
+        // 이 신호가 없으면 포트는 옛 id 를 그대로 들고 있어, PROPERTY→PART
+        // 연결선을 그릴 때 포트를 찾지 못한다(선은 매 프레임 노드뷰와 포트를
+        // id 로 맞춰 긋는다).
+        //   실기 증상: 노드는 보이는데 그 노드에서 파트로 가는 선만 안 보인다.
+        //   특히 다른 참가자가 만든 파트에서 나타난다 — 그쪽은 로컬 id 로 먼저
+        //   받고 나중에 rekey 를 받기 때문이다.
+        OnGraphChanged?.Invoke();
+
         // [2026-08-01] ACK 이전의 이동은 RequestMoveNode 에서 보류됐다(서버 미등록 → NODE404).
         //   이제 서버-known 이 됐으므로 현재 위치를 한 번 동기화한다.
         //   (NODE_CREATE 는 생성 시점 위치로 저장되므로, 그 뒤 옮긴 위치가 서버에 반영되지 않는 문제 보정.)
