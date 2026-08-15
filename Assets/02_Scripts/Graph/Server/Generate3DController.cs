@@ -94,6 +94,33 @@ public class Generate3DController : MonoBehaviour
         _modelParent = parent;
     }
 
+    // 마지막으로 화면에 올린 GLB 주소. 같은 주소를 다시 받으면 무시한다.
+    private string _lastShownModelUrl;
+
+    /// <summary>
+    /// 남이 만든 모델을 그대로 띄운다.
+    /// HandleModelGenerated 는 "내가 요청한 건"(_pendingJobId)만 통과시키므로,
+    /// 다른 참가자의 결과를 반영하려면 이 진입점이 따로 필요하다.
+    /// 서버에 다시 요청하지 않고 받은 주소를 내려받기만 한다(중복 과금 없음).
+    /// </summary>
+    public void ShowSharedModel(string modelUrl, string assetId = null)
+    {
+        if (string.IsNullOrWhiteSpace(modelUrl))
+            return;
+
+        if (string.Equals(_lastShownModelUrl, modelUrl, System.StringComparison.Ordinal))
+            return;
+
+        if (!string.IsNullOrEmpty(assetId))
+            _modelUrlBySourceAsset[assetId] = modelUrl;
+
+        _lastShownModelUrl = modelUrl;
+        StopGenerationTimeout();
+        _pendingJobId = null;
+        SetStatus("3D 모델을 불러오는 중...");
+        StartCoroutine(LoadAndShow(modelUrl));
+    }
+
     // ─────────────────────────────────────────────
     // 생명주기 / 구독
     // ─────────────────────────────────────────────
@@ -269,6 +296,9 @@ public class Generate3DController : MonoBehaviour
         // 원본 2D → GLB 매핑을 남겨 다음 요청 때 API 를 건너뛴다.
         if (!string.IsNullOrEmpty(_pendingSourceAssetId))
             _modelUrlBySourceAsset[_pendingSourceAssetId] = result.ModelUrl;
+
+        // 공유 경로로 같은 주소가 되돌아와도 다시 내려받지 않도록 남겨 둔다.
+        _lastShownModelUrl = result.ModelUrl;
 
         SetStatus("3D 모델을 불러오는 중...");
         StartCoroutine(LoadAndShow(result.ModelUrl));
