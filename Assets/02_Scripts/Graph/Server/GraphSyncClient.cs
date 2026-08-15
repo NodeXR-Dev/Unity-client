@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Text;
 using Meta.Net.NativeWebSocket;   // Meta XR Voice SDK 번들 (autoReferenced). 별도 패키지 추가 시 GUID 충돌.
 using UnityEngine;
@@ -162,7 +163,10 @@ public class GraphSyncClient : MonoBehaviour
         _socket = new WebSocket(url);
 
         _socket.OnOpen += () =>
+        {
             Debug.Log($"[GraphSyncClient] WS 열림 → {url}");
+            FlushOutbox();
+        };
 
         _socket.OnError += (err) =>
             Debug.LogError($"[GraphSyncClient] WS 오류: {err}");
@@ -504,6 +508,19 @@ public class GraphSyncClient : MonoBehaviour
     // 송신 공통
     // ─────────────────────────────────────────────
 
+    // 소켓이 닫혀 있는 동안 못 보낸 메시지. 열리면 순서대로 내보낸다.
+    //
+    // 예전에는 그냥 버렸다. 그런데 NODE_CREATE 는 GraphManager 가 이미
+    // _pendingCreateNodeIds 에 넣은 뒤라 재요청이 영구히 막힌다.
+    //   → 그 노드는 서버에 영영 등록되지 않고(_serverKnownNodeIds 미포함),
+    //     자식 노드도 "부모가 서버 미등록"으로 전부 보류되며,
+    //     그 노드를 실은 연결로 2D 를 만들면 서버가 노드를 못 찾아 생성이 죽는다.
+    //   실측 2026-08-15: 연결이 가리킨 PROPERTY 가 nodes 테이블에 없어
+    //   "Input Snapshot에서 생성 Connection의 Node를 찾을 수 없습니다" 로 실패,
+    //   사용자 화면에는 목업만 남았다.
+    private readonly List<string> _outbox = new List<string>();
+    private const int MaxOutbox = 128;
+
     private void Send(string eventType, string json)
     {
         if (!_sendToServer)
@@ -513,11 +530,29 @@ public class GraphSyncClient : MonoBehaviour
         }
         if (_socket == null || _socket.State != WebSocketState.Open)
         {
-            Debug.LogWarning($"[GraphSyncClient] 송신 skip({eventType}): 소켓이 열려있지 않음(State={_socket?.State}).");
+            if (_outbox.Count >= MaxOutbox)
+                _outbox.RemoveAt(0);
+            _outbox.Add(json);
+            Debug.LogWarning(
+                $"[GraphSyncClient] 송신 보류({eventType}): 소켓이 열려있지 않음(State={_socket?.State}). " +
+                $"연결되면 보냅니다. 대기 {_outbox.Count}건");
             return;
         }
         Debug.Log($"[GraphSyncClient] 송신 {eventType}: {json}");
         _ = _socket.SendText(json);
+    }
+
+    private void FlushOutbox()
+    {
+        if (_outbox.Count == 0)
+            return;
+        if (_socket == null || _socket.State != WebSocketState.Open)
+            return;
+
+        Debug.Log($"[GraphSyncClient] 보류했던 {_outbox.Count}건을 보냅니다.");
+        for (int i = 0; i < _outbox.Count; i++)
+            _ = _socket.SendText(_outbox[i]);
+        _outbox.Clear();
     }
 
     // ─────────────────────────────────────────────

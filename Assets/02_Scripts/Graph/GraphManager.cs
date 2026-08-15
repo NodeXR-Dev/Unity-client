@@ -140,6 +140,14 @@ public class GraphManager : MonoBehaviour
     // (ACK 전 텍스트를 바꿔 재제출하면 서버에 노드가 이중 생성되는 것 방지). ApplyServerNodeId 성공 또는 RemoveNode 시 해제.
     private readonly HashSet<string> _pendingCreateNodeIds = new HashSet<string>();
 
+    // NODE_CREATE 를 언제 보냈는지. ACK 가 오면 _pendingCreateNodeIds 에서 빠지지만,
+    // 소켓이 끊겨 있었거나 응답이 유실되면 영영 남아 그 노드를 다시는 못 보낸다.
+    // (그 노드는 서버 미등록으로 남고, 자식과 연결까지 줄줄이 막힌다)
+    // 그래서 일정 시간이 지나도 등록이 안 되면 재요청을 허용한다.
+    private readonly Dictionary<string, float> _pendingCreateSentAt =
+        new Dictionary<string, float>();
+    private const float PendingCreateRetrySeconds = 12f;
+
     // Reflow 후 위치 변화가 이 값(제곱거리) 미만이면 이동으로 보지 않는다(불필요한 NODE_MOVE 억제).
     private const float ReflowMoveEpsilonSqr = 0.001f * 0.001f;
 
@@ -311,6 +319,7 @@ public class GraphManager : MonoBehaviour
         _graphData.nodes.RemoveAll(n => n.node_id == nodeId);
         _serverKnownNodeIds.Remove(nodeId);
         _pendingCreateNodeIds.Remove(nodeId);
+        _pendingCreateSentAt.Remove(nodeId);
         return true;
     }
 
@@ -676,10 +685,25 @@ public class GraphManager : MonoBehaviour
         }
 
         // 이미 생성 요청이 진행 중이면(ACK 대기) 중복 발행 금지 — 로컬 텍스트만 갱신된 채 유지한다.
+        // 다만 ACK 가 한참 안 오면(소켓이 끊겨 송신이 버려졌거나 응답 유실) 다시 보낸다.
+        // 그러지 않으면 그 노드는 영영 서버에 등록되지 않고, 자식과 연결까지 줄줄이 막힌다.
         if (_pendingCreateNodeIds.Contains(nodeId))
         {
-            Debug.Log($"[GraphManager] NODE_CREATE 재요청 무시: 이미 생성 진행 중(ACK 대기). node_id={nodeId}");
-            return;
+            float sentAt;
+            bool stale =
+                !_pendingCreateSentAt.TryGetValue(nodeId, out sentAt) ||
+                Time.unscaledTime - sentAt >= PendingCreateRetrySeconds;
+
+            if (!stale)
+            {
+                Debug.Log($"[GraphManager] NODE_CREATE 재요청 무시: 이미 생성 진행 중(ACK 대기). node_id={nodeId}");
+                return;
+            }
+
+            Debug.LogWarning(
+                $"[GraphManager] NODE_CREATE ACK 가 {PendingCreateRetrySeconds}초 넘게 오지 않아 다시 보냅니다. node_id={nodeId}");
+            _pendingCreateNodeIds.Remove(nodeId);
+            _pendingCreateSentAt.Remove(nodeId);
         }
 
         // 첫 제출 → 서버에 직접 생성. 부모는 이 노드의 PROPERTY 부모(루트면 없음).
@@ -695,6 +719,7 @@ public class GraphManager : MonoBehaviour
             //   전부 [NODE404] 로 거부됐다(퀘스트 실기 확인 — 주먹 제스처로 만든 루트 PROPERTY).
             //   서버가 해당 REST 를 추가하면 OnSubGraphRequested / SubmitRootNodeWithSubGraph 경로를 되살리면 된다.
             _pendingCreateNodeIds.Add(nodeId);
+            _pendingCreateSentAt[nodeId] = Time.unscaledTime;
             OnNodeCreated?.Invoke(nodeId, t, "", "", node.Position);
             return;
         }
@@ -707,6 +732,7 @@ public class GraphManager : MonoBehaviour
         // 자식 노드: 로컬 id 를 job_id 로 실어 NODE_CREATE 발행(서버가 node_id 발급). sub_graph_id 는 서버가 부모에서 유도하므로 빈 값.
         // 서버-known 표시/"+"(자식 추가) 활성화는 여기서 하지 않고 ACK(ApplyServerNodeId)에서 처리한다(낙관적 선반영 금지).
         _pendingCreateNodeIds.Add(nodeId);
+        _pendingCreateSentAt[nodeId] = Time.unscaledTime;
         OnNodeCreated?.Invoke(nodeId, t, parentId, "", node.Position);
     }
 
@@ -786,6 +812,7 @@ public class GraphManager : MonoBehaviour
         _serverKnownNodeIds.Remove(jobId);
         _serverKnownNodeIds.Add(serverNodeId);
         _pendingCreateNodeIds.Remove(jobId);
+        _pendingCreateSentAt.Remove(jobId);
 
         // 3) NodeView 맵 키 이동 + 재바인드
         if (_nodeViewMap.TryGetValue(jobId, out NodeView view))
