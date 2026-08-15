@@ -35,6 +35,8 @@ public class GraphNetworkManager : NetworkBehaviour
     public event Action<int, string, PlayerRef> Generated3DStartReceived;
     public event Action<PlayerRef> Generated3DStartRejected;
     public event Action<int> Generated3DFinishedReceived;
+    // 완성된 GLB 주소. 2D 의 Generated2DServerImageReceived 와 같은 역할이다.
+    public event Action<int, string, string, string> Generated3DModelReceived;
     public event Action<PlayerRef> ReportPanelShowReceived;
 
     private readonly Dictionary<string, PlayerRef> lockCache = new Dictionary<string, PlayerRef>();
@@ -494,6 +496,58 @@ public class GraphNetworkManager : NetworkBehaviour
             RPC_RequestGenerated3DFinish(version);
     }
 
+    /// <summary>
+    /// 내가 요청해서 완성된 GLB 주소를 방 전체에 알린다.
+    /// 이게 없으면 3D 는 "누가 시작했다/끝났다" 만 오가고 결과물은 만든 사람만 본다.
+    /// </summary>
+    public void RequestGenerated3DModel(
+        int version,
+        string assetId,
+        string mimeType,
+        string modelUrl)
+    {
+        if (!IsReadyForRpc || string.IsNullOrWhiteSpace(modelUrl))
+            return;
+
+        if (CanBroadcast)
+            FinishGenerated3DWithModelAsAuthority(
+                version,
+                Safe(assetId),
+                Safe(mimeType),
+                Safe(modelUrl));
+        else
+            RPC_RequestGenerated3DModel(
+                version,
+                Safe(assetId),
+                Safe(mimeType),
+                Safe(modelUrl));
+    }
+
+    /// <summary>
+    /// 생성 절차를 거치지 않고 이미 알고 있는 GLB 주소를 공유한다
+    /// (늦게 들어온 사람에게 현재 모델을 맞춰 줄 때).
+    /// </summary>
+    public void RequestGenerated3DModelSnapshot(
+        string assetId,
+        string mimeType,
+        string modelUrl)
+    {
+        if (!IsReadyForRpc || string.IsNullOrWhiteSpace(modelUrl))
+            return;
+
+        if (CanBroadcast)
+            RPC_BroadcastGenerated3DModel(
+                0,
+                Safe(assetId),
+                Safe(mimeType),
+                Safe(modelUrl));
+        else
+            RPC_RequestGenerated3DModelSnapshot(
+                Safe(assetId),
+                Safe(mimeType),
+                Safe(modelUrl));
+    }
+
     public void RequestReportPanelShow()
     {
         if (!IsReadyForRpc)
@@ -794,6 +848,46 @@ public class GraphNetworkManager : NetworkBehaviour
     private void RPC_BroadcastGenerated3DFinish(int version)
     {
         Generated3DFinishedReceived?.Invoke(version);
+    }
+
+    [Rpc(RpcSources.All, RpcTargets.StateAuthority)]
+    private void RPC_RequestGenerated3DModel(
+        int version,
+        string assetId,
+        string mimeType,
+        string modelUrl)
+    {
+        FinishGenerated3DWithModelAsAuthority(version, assetId, mimeType, modelUrl);
+    }
+
+    [Rpc(RpcSources.All, RpcTargets.StateAuthority)]
+    private void RPC_RequestGenerated3DModelSnapshot(
+        string assetId,
+        string mimeType,
+        string modelUrl)
+    {
+        if (!HasStateAuthority || string.IsNullOrWhiteSpace(modelUrl))
+            return;
+
+        RPC_BroadcastGenerated3DModel(
+            0,
+            Safe(assetId),
+            Safe(mimeType),
+            Safe(modelUrl));
+    }
+
+    [Rpc(RpcSources.StateAuthority, RpcTargets.All)]
+    private void RPC_BroadcastGenerated3DModel(
+        int version,
+        string assetId,
+        string mimeType,
+        string modelUrl)
+    {
+        Generated3DModelReceived?.Invoke(
+            version,
+            Safe(assetId),
+            Safe(mimeType),
+            Safe(modelUrl));
     }
 
     [Rpc(RpcSources.All, RpcTargets.StateAuthority)]
@@ -1141,6 +1235,23 @@ public class GraphNetworkManager : NetworkBehaviour
             generated3DVersion,
             Safe(designJson),
             safeRequester);
+    }
+
+    private void FinishGenerated3DWithModelAsAuthority(
+        int version,
+        string assetId,
+        string mimeType,
+        string modelUrl)
+    {
+        if (!HasStateAuthority || !IsCurrentGenerated3DVersion(version))
+            return;
+
+        generated3DInProgress = false;
+        RPC_BroadcastGenerated3DModel(
+            version,
+            Safe(assetId),
+            Safe(mimeType),
+            Safe(modelUrl));
     }
 
     private void FinishGenerated3DAsAuthority(int version)
