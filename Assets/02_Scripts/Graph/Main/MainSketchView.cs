@@ -55,6 +55,13 @@ public class MainSketchView : MonoBehaviour
         if (_graphManager == null || _subscribed) return;
         _graphManager.OnGraphChanged += Refresh;
         _subscribed = true;
+
+        // 꺼져 있는 동안의 변경은 통지를 못 받는다. 다른 참가자가 만든 PART 가
+        // 작업판이 닫혀 있을 때 도착하면, 판을 열어도 포트가 생기지 않아
+        // 그 PART 로 향하는 연결선이 영영 그려지지 않았다
+        // (선은 NodeView 와 PART 포트가 둘 다 있어야 그려진다).
+        // 그래서 켜질 때 현재 그래프로 한 번 맞춘다.
+        Refresh();
     }
 
     private void OnDisable()
