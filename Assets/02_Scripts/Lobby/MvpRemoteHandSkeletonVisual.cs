@@ -23,20 +23,39 @@ public class MvpRemoteHandSkeletonVisual : MonoBehaviour
     [SerializeField, Min(0.01f)] private float followSpeed = 28f;
     [SerializeField] private Color handColor = new Color(0.58f, 0.58f, 0.58f, 0.92f);
 
+    [Header("Rigged Hand Visual")]
+    [SerializeField] private bool preferRiggedHandVisual = true;
+    [SerializeField] private GameObject leftRiggedHandPrefab;
+    [SerializeField] private GameObject rightRiggedHandPrefab;
+    [SerializeField] private bool showSkeletonFallback = true;
+    [SerializeField] private bool logRiggedFallbackWarning = true;
+
     private MvpHandSkeletonSync sync;
     private Transform root;
+    private Transform riggedRoot;
     private Transform[,] joints;
     private Transform[,] bones;
     private Material material;
+    private MvpRiggedHandVisualDriver leftRiggedDriver;
+    private MvpRiggedHandVisualDriver rightRiggedDriver;
     private int lastRevision = -1;
+    private bool warnedRiggedFallback;
+
+    private bool HasRiggedVisuals =>
+        leftRiggedDriver != null &&
+        rightRiggedDriver != null &&
+        leftRiggedDriver.IsReady &&
+        rightRiggedDriver.IsReady;
 
     public bool IsShowingRemoteHands { get; private set; }
 
     private void Awake()
     {
         sync = GetComponent<MvpHandSkeletonSync>();
+        BuildRiggedVisuals();
         BuildVisuals();
         SetAllVisible(false);
+        SetRiggedVisible(false);
     }
 
     private void LateUpdate()
@@ -44,6 +63,7 @@ public class MvpRemoteHandSkeletonVisual : MonoBehaviour
         if (sync == null || sync.Object == null || sync.Object.HasInputAuthority)
         {
             SetAllVisible(false);
+            SetRiggedVisible(false);
             IsShowingRemoteHands = false;
             return;
         }
@@ -51,9 +71,71 @@ public class MvpRemoteHandSkeletonVisual : MonoBehaviour
         bool force = sync.PoseRevision != lastRevision;
         lastRevision = sync.PoseRevision;
 
+        if (preferRiggedHandVisual && HasRiggedVisuals)
+        {
+            SetAllVisible(false);
+            SetRiggedVisible(true);
+            leftRiggedDriver.ApplyPose(sync, true, force);
+            rightRiggedDriver.ApplyPose(sync, false, force);
+            IsShowingRemoteHands =
+                sync.IsHandTracked(true) ||
+                sync.IsHandTracked(false);
+            return;
+        }
+
+        SetRiggedVisible(false);
+        if (!showSkeletonFallback)
+        {
+            SetAllVisible(false);
+            IsShowingRemoteHands = false;
+            return;
+        }
+
         UpdateHand(0, true, force);
         UpdateHand(1, false, force);
         IsShowingRemoteHands = sync.IsHandTracked(true) || sync.IsHandTracked(false);
+    }
+
+    private void OnDestroy()
+    {
+        if (material == null)
+            return;
+
+        if (Application.isPlaying)
+            Destroy(material);
+        else
+            DestroyImmediate(material);
+    }
+
+    private void BuildRiggedVisuals()
+    {
+        if (leftRiggedDriver != null || rightRiggedDriver != null)
+        {
+            return;
+        }
+
+        riggedRoot = new GameObject("MvpRemoteRiggedHandVisual").transform;
+        riggedRoot.SetParent(transform, false);
+
+        GameObject left = new GameObject("LeftRiggedHandDriver");
+        left.transform.SetParent(riggedRoot, false);
+        leftRiggedDriver = left.AddComponent<MvpRiggedHandVisualDriver>();
+        leftRiggedDriver.Initialize(
+            leftRiggedHandPrefab,
+            true,
+            left.transform,
+            followSpeed);
+
+        GameObject right = new GameObject("RightRiggedHandDriver");
+        right.transform.SetParent(riggedRoot, false);
+        rightRiggedDriver = right.AddComponent<MvpRiggedHandVisualDriver>();
+        rightRiggedDriver.Initialize(
+            rightRiggedHandPrefab,
+            false,
+            right.transform,
+            followSpeed);
+
+        WarnIfRiggedFallbackNeeded();
     }
 
     private void BuildVisuals()
@@ -187,6 +269,49 @@ public class MvpRemoteHandSkeletonVisual : MonoBehaviour
         {
             IsShowingRemoteHands = false;
         }
+    }
+
+    private void SetRiggedVisible(bool visible)
+    {
+        if (riggedRoot != null && riggedRoot.gameObject.activeSelf != visible)
+        {
+            riggedRoot.gameObject.SetActive(visible);
+        }
+
+        if (leftRiggedDriver != null)
+        {
+            leftRiggedDriver.SetVisible(visible);
+        }
+
+        if (rightRiggedDriver != null)
+        {
+            rightRiggedDriver.SetVisible(visible);
+        }
+    }
+
+    private void WarnIfRiggedFallbackNeeded()
+    {
+        if (!logRiggedFallbackWarning ||
+            warnedRiggedFallback ||
+            !preferRiggedHandVisual ||
+            HasRiggedVisuals)
+        {
+            return;
+        }
+
+        warnedRiggedFallback = true;
+        string leftReason = leftRiggedDriver != null
+            ? leftRiggedDriver.LastFailureReason
+            : "Left rigged driver was not created.";
+        string rightReason = rightRiggedDriver != null
+            ? rightRiggedDriver.LastFailureReason
+            : "Right rigged driver was not created.";
+
+        Debug.LogWarning(
+            "MVP remote rigged hand visual is not ready. " +
+            "Skeleton fallback will be used if enabled. " +
+            $"Left: {leftReason} Right: {rightReason}",
+            this);
     }
 
     private void SetHandVisible(int handIndex, bool visible)

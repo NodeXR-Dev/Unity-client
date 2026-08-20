@@ -1,0 +1,147 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!1001 &1203406529020944788
+PrefabInstance:
+  m_ObjectHideFlags: 0
+  serializedVersion: 2
+  m_Modification:
+    serializedVersion: 3
+    m_TransformParent: {fileID: 0}
+    m_Modifications:
+    - target: {fileID: -8901396100271531331, guid: 7b97e08b0800e8546973d5a4d9adb582, type: 3}
+      propertyPath: m_Name
+      value: f_ring.01.L
+      objectReference: {fileID: 0}
+    - target: {fileID: -8721996757432777277, guid: 7b97e08b0800e8546973d5a4d9adb582, type: 3}
+      propertyPath: m_Name
+      value: palm.01.L
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: 7b97e08b0800e8546973d5a4d9adb582, type: 3}
+      propertyPath: m_LocalScale.x
+      value: -1
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: 7b97e08b0800e8546973d5a4d9adb582, type: 3}
+      propertyPath: m_LocalPosition.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: 7b97e08b0800e8546973d5a4d9adb582, type: 3}
+      propertyPath: m_LocalPosition.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: 7b97e08b0800e8546973d5a4d9adb582, type: 3}
+      propertyPath: m_LocalPosition.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: 7b97e08b0800e8546973d5a4d9adb582, type: 3}
+      propertyPath: m_LocalRotation.w
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: 7b97e08b0800e8546973d5a4d9adb582, type: 3}
+      propertyPath: m_LocalRotation.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: 7b97e08b0800e8546973d5a4d9adb582, type: 3}
+      propertyPath: m_LocalRotation.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: 7b97e08b0800e8546973d5a4d9adb582, type: 3}
+      propertyPath: m_LocalRotation.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: 7b97e08b0800e8546973d5a4d9adb582, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: 7b97e08b0800e8546973d5a4d9adb582, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: 7b97e08b0800e8546973d5a4d9adb582, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: -8346911766109123234, guid: 7b97e08b0800e8546973d5a4d9adb582, type: 3}
+      propertyPath: m_Name
+      value: f_pinky.02.L
+      objectReference: {fileID: 0}
+    - target: {fileID: -8023392688160825602, guid: 7b97e08b0800e8546973d5a4d9adb582, type: 3}
+      propertyPath: m_Name
+      value: f_index.02.L
+      objectReference: {fileID: 0}
+    - target: {fileID: -7730064390616463265, guid: 7b97e08b0800e8546973d5a4d9adb582, type: 3}
+      propertyPath: m_Name
+      value: palm.03.L
+      objectReference: {fileID: 0}
+    - target: {fileID: -6004347730333677530, guid: 7b97e08b0800e8546973d5a4d9adb582, type: 3}
+      propertyPath: m_Name
+      value: thumb.01.L
+      objectReference: {fileID: 0}
+    - target: {fileID: -5740118723957662654, guid: 7b97e08b0800e8546973d5a4d9adb582, type: 3}
+      propertyPath: m_Name
+      value: thumb.02.L
+      objectReference: {fileID: 0}
+    - target: {fileID: -2494904574291401603, guid: 7b97e08b0800e8546973d5a4d9adb582, type: 3}
+      propertyPath: m_Name
+      value: f_index.01.L
+      objectReference: {fileID: 0}
+    - target: {fileID: -1388719440224806745, guid: 7b97e08b0800e8546973d5a4d9adb582, type: 3}
+      propertyPath: m_Name
+      value: hand.L
+      objectReference: {fileID: 0}
+    - target: {fileID: 153278853005155816, guid: 7b97e08b0800e8546973d5a4d9adb582, type: 3}
+      propertyPath: m_Name
+      value: f_ring.03.L
+      objectReference: {fileID: 0}
+    - target: {fileID: 319019990101499891, guid: 7b97e08b0800e8546973d5a4d9adb582, type: 3}
+      propertyPath: m_Name
+      value: palm.02.L
+      objectReference: {fileID: 0}
+    - target: {fileID: 527134746875637817, guid: 7b97e08b0800e8546973d5a4d9adb582, type: 3}
+      propertyPath: m_Name
+      value: f_pinky.03.L
+      objectReference: {fileID: 0}
+    - target: {fileID: 919132149155446097, guid: 7b97e08b0800e8546973d5a4d9adb582, type: 3}
+      propertyPath: m_Name
+      value: VRStylizedHand_Left_Mapped
+      objectReference: {fileID: 0}
+    - target: {fileID: 1344907271740426240, guid: 7b97e08b0800e8546973d5a4d9adb582, type: 3}
+      propertyPath: m_Name
+      value: f_index.03.L
+      objectReference: {fileID: 0}
+    - target: {fileID: 3253851969397342832, guid: 7b97e08b0800e8546973d5a4d9adb582, type: 3}
+      propertyPath: m_Name
+      value: f_ring.02.L
+      objectReference: {fileID: 0}
+    - target: {fileID: 3687193975365239492, guid: 7b97e08b0800e8546973d5a4d9adb582, type: 3}
+      propertyPath: m_Name
+      value: palm.04.L
+      objectReference: {fileID: 0}
+    - target: {fileID: 6487798297784718381, guid: 7b97e08b0800e8546973d5a4d9adb582, type: 3}
+      propertyPath: m_Name
+      value: thumb.03.L
+      objectReference: {fileID: 0}
+    - target: {fileID: 6857378099421953595, guid: 7b97e08b0800e8546973d5a4d9adb582, type: 3}
+      propertyPath: m_Name
+      value: f_middle.02.L
+      objectReference: {fileID: 0}
+    - target: {fileID: 7163322281717950304, guid: 7b97e08b0800e8546973d5a4d9adb582, type: 3}
+      propertyPath: 'm_Materials.Array.data[0]'
+      value: 
+      objectReference: {fileID: 2100000, guid: 8843bebf56e5808469f5ab30ae355a6d, type: 2}
+    - target: {fileID: 7412583879055550034, guid: 7b97e08b0800e8546973d5a4d9adb582, type: 3}
+      propertyPath: m_Name
+      value: f_middle.01.L
+      objectReference: {fileID: 0}
+    - target: {fileID: 7536193520428004907, guid: 7b97e08b0800e8546973d5a4d9adb582, type: 3}
+      propertyPath: m_Name
+      value: f_pinky.01.L
+      objectReference: {fileID: 0}
+    - target: {fileID: 8560547212547568175, guid: 7b97e08b0800e8546973d5a4d9adb582, type: 3}
+      propertyPath: m_Name
+      value: f_middle.03.L
+      objectReference: {fileID: 0}
+    m_RemovedComponents: []
+    m_RemovedGameObjects: []
+    m_AddedGameObjects: []
+    m_AddedComponents: []
+  m_SourcePrefab: {fileID: 100100000, guid: 7b97e08b0800e8546973d5a4d9adb582, type: 3}
