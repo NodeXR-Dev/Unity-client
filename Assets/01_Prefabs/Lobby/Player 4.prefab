@@ -1162,6 +1162,11 @@ MonoBehaviour:
   boneRadius: 0.007
   followSpeed: 28
   handColor: {r: 0.58, g: 0.58, b: 0.58, a: 0.92}
+  preferRiggedHandVisual: 1
+  leftRiggedHandPrefab: {fileID: 2049755813410561221, guid: 319be39b53e8d9043a75dc677a34c7e4, type: 3}
+  rightRiggedHandPrefab: {fileID: 5575710067940186177, guid: c7f72faf14d7b81458b70eeebe42bdec, type: 3}
+  showSkeletonFallback: 1
+  logRiggedFallbackWarning: 1
 --- !u!114 &3567302812849844629
 MonoBehaviour:
   m_ObjectHideFlags: 0
