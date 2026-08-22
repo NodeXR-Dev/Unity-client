@@ -49,7 +49,6 @@ public class MvpGenerated2DSync : MonoBehaviour
     private Coroutine requestTimeoutCoroutine;
     private Coroutine downloadCoroutine;
     private Coroutine restoreCoroutine;
-    private Texture2D mockTexture;
     private Texture2D downloadedTexture;
     private string lastAppliedImageUrl;
     private string lastBroadcastImageUrl;
@@ -79,8 +78,11 @@ public class MvpGenerated2DSync : MonoBehaviour
             RefreshBindings();
         }
 
-        if (IsBusy && generateButton != null && generateButton.interactable)
-            generateButton.interactable = false;
+        // 2D 이미지를 만드는 동안에는 생성 버튼만 잠근다.
+        //   중앙 이미지는 건드리지 않는다 — 새 그림이 도착할 때까지 직전 결과가 그대로 보인다.
+        bool generating = IsBusy || IsControllerGenerating();
+        if (generateButton != null && generateButton.interactable == generating)
+            generateButton.interactable = !generating;
     }
 
     private void OnDisable()
@@ -98,8 +100,6 @@ public class MvpGenerated2DSync : MonoBehaviour
 
     private void OnDestroy()
     {
-        if (mockTexture != null)
-            Destroy(mockTexture);
         if (downloadedTexture != null)
             Destroy(downloadedTexture);
     }
@@ -135,18 +135,17 @@ public class MvpGenerated2DSync : MonoBehaviour
         if (IsBusy)
             return;
 
-        MvpRocketDesign design = GetCurrentDesign();
-        ApplyMockImage(design);
-
         if (graphSyncClient != null &&
             graphSyncClient.IsConnected &&
             generate2DController != null)
         {
+            SetUiGenerating(true, "2D 이미지를 생성 중입니다.");
             generate2DController.RequestGenerateGraphAll();
         }
         else
         {
-            SetUiGenerating(false, "2D 목 이미지가 표시되었습니다.");
+            SetUiGenerating(
+                false, "서버에 연결되어 있지 않아 2D 이미지를 만들 수 없습니다.");
         }
     }
 
@@ -165,8 +164,6 @@ public class MvpGenerated2DSync : MonoBehaviour
             localRequester
                 ? "내 2D 이미지를 생성 중입니다."
                 : "다른 사용자가 2D 이미지를 생성 중입니다.");
-
-        ApplyMockImage(DesignFromJson(designJson));
 
         if (!localRequester)
             return;
@@ -434,47 +431,6 @@ public class MvpGenerated2DSync : MonoBehaviour
         return new MvpRocketDesign { accentIndex = variant };
     }
 
-    private static MvpRocketDesign DesignFromJson(string json)
-    {
-        if (string.IsNullOrWhiteSpace(json))
-            return new MvpRocketDesign();
-
-        try
-        {
-            DesignDto dto = JsonUtility.FromJson<DesignDto>(json);
-            return dto != null ? dto.ToDesign() : new MvpRocketDesign();
-        }
-        catch (Exception exception)
-        {
-            Debug.LogWarning("[MvpGenerated2DSync] Failed to parse design json: " + exception.Message);
-            return new MvpRocketDesign();
-        }
-    }
-
-    private void ApplyMockImage(MvpRocketDesign design)
-    {
-        ResolveReferences();
-        if (centerImage == null)
-            return;
-
-        Texture2D nextMock = MvpFallbackSketchGenerator.CreateWaterRocketSketch(design);
-        Texture oldTexture = centerImage.texture;
-        centerImage.texture = nextMock;
-        centerImage.enabled = true;
-        centerImage.color = Color.white;
-        HideSketchPlaceholder();
-
-        if (mockTexture != null && mockTexture != nextMock)
-            Destroy(mockTexture);
-        mockTexture = nextMock;
-
-        if (oldTexture == downloadedTexture)
-        {
-            Destroy(downloadedTexture);
-            downloadedTexture = null;
-        }
-    }
-
     private void StartServerImageDownload(string imgUrl, string assetId = "")
     {
         if (downloadCoroutine != null)
@@ -536,12 +492,6 @@ public class MvpGenerated2DSync : MonoBehaviour
         if (downloadedTexture != null && downloadedTexture != texture)
             Destroy(downloadedTexture);
         downloadedTexture = texture;
-
-        if (mockTexture != null)
-        {
-            Destroy(mockTexture);
-            mockTexture = null;
-        }
     }
 
     private string ResolveImageUrl(string imgUrl)
@@ -792,8 +742,7 @@ public class MvpGenerated2DSync : MonoBehaviour
 
     private bool IsControllerGenerating()
     {
-        return generate2DController != null &&
-               GetPrivateField<bool>(generate2DController, "_isGenerating");
+        return generate2DController != null && generate2DController.IsGenerating;
     }
 
     private void ApplyControllerAssetId(string assetId)
