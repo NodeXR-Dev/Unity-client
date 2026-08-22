@@ -1862,6 +1862,34 @@ public class MvpClassroomFlow : MonoBehaviour
     // 두면 XR 에서 Camera.main 좌표가 실제 시점과 달라 시야 밖으로 나간다(실측 y=-1.46).
     // 남이 만든 3D 가 공유돼 올 때 받는 쪽도 같은 자리에 받침을 세워야 하므로
     // MvpGenerated3DModelSync 가 호출할 수 있게 공개한다.
+    // 3D 결과물을 바닥에서 이만큼 띄운다.
+    private const float ServerStageHeightAboveFloor = 0.5f;
+
+    /// <summary>
+    /// 회의실 바닥 높이(월드 Y)를 구한다.
+    /// 1) 그 자리 위에서 아래로 쏴서 실제 바닥을 찾고,
+    /// 2) 안 되면 플레이어 배치가 쓰는 바닥 값을 쓰고,
+    /// 3) 그것도 없으면 눈높이에서 역산한다.
+    /// </summary>
+    private float ResolveFloorY(Vector3 spot)
+    {
+        Vector3 from = spot + Vector3.up * 3f;
+        if (Physics.Raycast(from, Vector3.down, out RaycastHit hit, 12f,
+                ~0, QueryTriggerInteraction.Ignore))
+            return hit.point.y;
+
+        MvpMeetingRoomPlayerController player =
+            FindFirstObjectByType<MvpMeetingRoomPlayerController>();
+        if (player != null)
+            return player.FloorY;
+
+        Camera cam = Camera.main;
+        if (cam != null)
+            return cam.transform.position.y - 1.55f;
+
+        return spot.y;
+    }
+
     public Transform EnsureServerModelStage()
     {
         if (_serverModelStage != null)
@@ -1879,11 +1907,15 @@ public class MvpClassroomFlow : MonoBehaviour
                 : null;
         if (board != null)
         {
-            go.transform.position =
+            // 가로 자리는 보드 기준으로 잡되, 높이는 바닥에서 잰다.
+            // 예전에는 보드 높이(눈높이)에 붙여 모델이 너무 높이 떴다.
+            Vector3 spot =
                 board.position +
                 board.right * 0.55f -
-                board.forward * 0.38f +
-                Vector3.up * 0.05f;
+                board.forward * 0.38f;
+            spot.y = ResolveFloorY(spot) + ServerStageHeightAboveFloor;
+
+            go.transform.position = spot;
             go.transform.rotation =
                 Quaternion.LookRotation(board.forward, Vector3.up);
             // 보드에 붙여둔다. '내 자리 설정'으로 워크스페이스를 다시 배치하면 보드가 움직이는데,
@@ -1899,8 +1931,11 @@ public class MvpClassroomFlow : MonoBehaviour
                     cam.transform.forward, Vector3.up).normalized;
                 if (forward.sqrMagnitude < 0.001f)
                     forward = Vector3.forward;
-                go.transform.position =
-                    cam.transform.position + forward * 1.05f - Vector3.up * 0.28f;
+                Vector3 spot =
+                    cam.transform.position + forward * 1.05f;
+                spot.y = ResolveFloorY(spot) + ServerStageHeightAboveFloor;
+
+                go.transform.position = spot;
                 go.transform.rotation = Quaternion.LookRotation(forward, Vector3.up);
             }
         }

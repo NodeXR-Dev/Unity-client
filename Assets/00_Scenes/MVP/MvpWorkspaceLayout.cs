@@ -129,6 +129,15 @@ public class MvpWorkspaceLayout : MonoBehaviour
 
     private void LateUpdate()
     {
+        BindNetwork();
+        // 아직 못 보낸 자리가 있으면 준비될 때까지 이따금 다시 시도한다.
+        // 매 프레임 돌리면 오브젝트 탐색 비용이 헤드셋에서 그대로 부담이 된다.
+        if (_posePendingShare && Time.unscaledTime >= _nextPendingShareTime)
+        {
+            _nextPendingShareTime = Time.unscaledTime + 0.5f;
+            SharePoseWithRoom();
+        }
+
         Camera activeCamera = FindActiveViewCamera();
         if (activeCamera != null && activeCamera != _camera)
         {
@@ -226,6 +235,97 @@ public class MvpWorkspaceLayout : MonoBehaviour
     {
         if (_graphManager != null)
             _graphManager.OnGraphChanged -= HandleGraphChanged;
+        UnbindNetwork();
+    }
+
+    // ── 작업판 위치를 방 전체가 같은 자리로 맞춘다 ──────────────────
+    //
+    // 보드는 각자 자기 카메라 앞에 놓이므로 사람마다 다른 자리에 떠 있었다.
+    // 같은 회의실에서 같은 판을 보고 가리켜야 하므로 위치를 공유한다.
+    // 3D 받침대는 보드의 자식이라(MvpClassroomFlow.EnsureServerModelStage 가
+    // SetParent(board)) 보드만 맞추면 함께 따라온다.
+
+    private GraphNetworkManager _subscribedNetwork;
+    private bool _applyingRemotePose;
+    private float _nextNetworkBindTime;
+
+    // 위치가 확정될 때 아직 네트워크가 안 붙어 있을 수 있다(GraphNetworkManager 는
+    // 세션이 뜬 뒤에 스폰된다). 그때 그냥 넘기면 내 자리는 아무에게도 안 알려진다.
+    // 보낼 때까지 들고 있다가 준비되면 보낸다.
+    private bool _posePendingShare;
+    private float _nextPendingShareTime;
+
+    private void BindNetwork()
+    {
+        if (Time.unscaledTime < _nextNetworkBindTime)
+            return;
+        _nextNetworkBindTime = Time.unscaledTime + 1f;
+
+        GraphNetworkManager network = FindFirstObjectByType<GraphNetworkManager>();
+        if (network == _subscribedNetwork)
+            return;
+
+        UnbindNetwork();
+        _subscribedNetwork = network;
+        if (_subscribedNetwork != null)
+            _subscribedNetwork.WorkspacePoseReceived += HandleWorkspacePoseReceived;
+    }
+
+    private void UnbindNetwork()
+    {
+        if (_subscribedNetwork == null)
+            return;
+        _subscribedNetwork.WorkspacePoseReceived -= HandleWorkspacePoseReceived;
+        _subscribedNetwork = null;
+    }
+
+    private void HandleWorkspacePoseReceived(
+        Vector3 position,
+        Quaternion rotation,
+        float scale)
+    {
+        if (_mainSketchPanel == null || _onDesk)
+            return;
+
+        _applyingRemotePose = true;
+        try
+        {
+            _mainSketchPanel.SetPositionAndRotation(position, rotation);
+            if (scale > 0f)
+                _mainSketchPanel.localScale = Vector3.one * scale;
+
+            // 받은 자리를 로컬 배치 로직이 다시 덮지 않도록 확정 처리한다.
+            _workspacePoseInitialized = true;
+            _hasPoseSample = true;
+            _lastPoseSample = _camera != null
+                ? _camera.transform.position
+                : _lastPoseSample;
+            _lockedEyePosition = _lastPoseSample;
+            _poseFollowDeadline = 0f;
+            _posePendingShare = false;
+        }
+        finally { _applyingRemotePose = false; }
+    }
+
+    private void SharePoseWithRoom()
+    {
+        if (_applyingRemotePose || _mainSketchPanel == null || _onDesk)
+            return;
+
+        _nextNetworkBindTime = 0f;   // 지금 당장 붙어 본다(스로틀 무시)
+        BindNetwork();
+
+        if (_subscribedNetwork == null || !_subscribedNetwork.IsRpcReady)
+        {
+            _posePendingShare = true;   // 준비되면 LateUpdate 가 다시 시도한다
+            return;
+        }
+
+        _posePendingShare = false;
+        _subscribedNetwork.RequestWorkspacePose(
+            _mainSketchPanel.position,
+            _mainSketchPanel.rotation,
+            _mainSketchPanel.localScale.x);
     }
 
     private void HandleGraphChanged()
@@ -445,6 +545,7 @@ public class MvpWorkspaceLayout : MonoBehaviour
         if (_camera == null || !_camera.isActiveAndEnabled)
         {
             _workspacePoseInitialized = true;
+            SharePoseWithRoom();
             return;
         }
 
@@ -460,6 +561,7 @@ public class MvpWorkspaceLayout : MonoBehaviour
 
         _lockedEyePosition = eye;
         _workspacePoseInitialized = true;
+        SharePoseWithRoom();
     }
 
     private bool TryGetMeetingTable(

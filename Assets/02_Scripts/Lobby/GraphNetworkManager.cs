@@ -39,7 +39,16 @@ public class GraphNetworkManager : NetworkBehaviour
     public event Action<int, string, string, string> Generated3DModelReceived;
     public event Action<PlayerRef> ReportPanelShowReceived;
 
+    // 작업판(스케치 보드) 위치. 3D 받침대는 보드의 자식이라 이것만 맞추면 함께 따라온다.
+    // 예전에는 각자 자기 카메라 앞에 놓아 사람마다 다른 자리에 떠 있었다.
+    public event Action<Vector3, Quaternion, float> WorkspacePoseReceived;
+
     private readonly Dictionary<string, PlayerRef> lockCache = new Dictionary<string, PlayerRef>();
+    private bool workspacePoseKnown;
+    private Vector3 workspacePosePosition;
+    private Quaternion workspacePoseRotation = Quaternion.identity;
+    private float workspacePoseScale = 1f;
+
     private bool generated2DInProgress;
     private int generated2DVersion;
     private bool generated3DInProgress;
@@ -414,6 +423,13 @@ public class GraphNetworkManager : NetworkBehaviour
             if (edge == null) continue;
             RequestCreateEdge(edge);
         }
+
+        // 작업판 위치도 함께 맞춰 준다(늦게 들어온 사람만 다른 자리에 뜨지 않도록).
+        if (workspacePoseKnown && CanBroadcast)
+            RPC_BroadcastWorkspacePose(
+                workspacePosePosition,
+                workspacePoseRotation,
+                workspacePoseScale);
     }
 
     public void RequestGenerated2DStart(string designJson)
@@ -546,6 +562,20 @@ public class GraphNetworkManager : NetworkBehaviour
                 Safe(assetId),
                 Safe(mimeType),
                 Safe(modelUrl));
+    }
+
+    /// <summary>
+    /// 작업판 위치를 방 전체에 맞춘다. 마지막에 제안한 것이 기준이 된다.
+    /// </summary>
+    public void RequestWorkspacePose(Vector3 position, Quaternion rotation, float scale)
+    {
+        if (!IsReadyForRpc)
+            return;
+
+        if (CanBroadcast)
+            ApplyWorkspacePoseAsAuthority(position, rotation, scale);
+        else
+            RPC_RequestWorkspacePose(position, rotation, scale);
     }
 
     public void RequestReportPanelShow()
@@ -891,6 +921,18 @@ public class GraphNetworkManager : NetworkBehaviour
     }
 
     [Rpc(RpcSources.All, RpcTargets.StateAuthority)]
+    private void RPC_RequestWorkspacePose(Vector3 position, Quaternion rotation, float scale)
+    {
+        ApplyWorkspacePoseAsAuthority(position, rotation, scale);
+    }
+
+    [Rpc(RpcSources.StateAuthority, RpcTargets.All)]
+    private void RPC_BroadcastWorkspacePose(Vector3 position, Quaternion rotation, float scale)
+    {
+        WorkspacePoseReceived?.Invoke(position, rotation, scale);
+    }
+
+    [Rpc(RpcSources.All, RpcTargets.StateAuthority)]
     private void RPC_RequestReportPanelShow(RpcInfo info = default)
     {
         RPC_BroadcastReportPanelShow(GetRequester(info));
@@ -900,6 +942,35 @@ public class GraphNetworkManager : NetworkBehaviour
     private void RPC_BroadcastReportPanelShow(PlayerRef requester)
     {
         ReportPanelShowReceived?.Invoke(requester);
+    }
+
+    private void ApplyWorkspacePoseAsAuthority(
+        Vector3 position,
+        Quaternion rotation,
+        float scale)
+    {
+        if (!HasStateAuthority)
+            return;
+
+        // 먼저 정해진 자리를 유지한다.
+        // 나중에 들어온 사람이 자기 앞에 놓은 위치를 방송하면, 이미 작업 중인
+        // 사람들의 보드가 통째로 끌려간다. 처음 한 번만 받아 모두가 같은 자리를
+        // 보게 하고, 늦게 온 사람에게는 이 자리를 다시 내려 준다.
+        if (workspacePoseKnown)
+        {
+            RPC_BroadcastWorkspacePose(
+                workspacePosePosition,
+                workspacePoseRotation,
+                workspacePoseScale);
+            return;
+        }
+
+        workspacePoseKnown = true;
+        workspacePosePosition = position;
+        workspacePoseRotation = rotation;
+        workspacePoseScale = scale;
+
+        RPC_BroadcastWorkspacePose(position, rotation, scale);
     }
 
     private void ApplyCreateNode(

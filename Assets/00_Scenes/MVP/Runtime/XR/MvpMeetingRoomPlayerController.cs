@@ -33,6 +33,15 @@ public class MvpMeetingRoomPlayerController : MonoBehaviour
     [SerializeField] private int _openFloorSlots = 4;
     [SerializeField] private float _standingEyeHeight = 1.55f;
 
+    /// <summary>
+    /// 회의실 바닥 높이(월드 Y). 열린 공간 배치의 기준점이다.
+    /// 3D 결과물을 바닥 기준으로 놓을 때 쓴다.
+    /// </summary>
+    public float FloorY => _openFloorCenter.y;
+
+    /// <summary>선 자세의 눈높이. 바닥을 역산할 때 쓴다.</summary>
+    public float StandingEyeHeight => _standingEyeHeight;
+
     private OVRCameraRig _cameraRig;
     private Camera _headCamera;
     private Coroutine _respawnRoutine;
