@@ -410,6 +410,15 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
         return cachedSessionList.Find(s => s != null && s.Name == roomId);
     }
 
+    // 지금 Fusion 세션이 살아 있는 방인지. 목록 정렬과 표시가 같은 기준을 쓰도록 모아 둔다.
+    public bool IsRoomActive(string roomId)
+    {
+        if (string.IsNullOrEmpty(roomId) || cachedSessionList == null)
+            return false;
+
+        return cachedSessionList.Exists(s => s != null && s.Name == roomId);
+    }
+
     public void RequestJoinSession(SessionInfo session)
     {
         bool hasPwd = session.Properties.ContainsKey("password") &&
@@ -641,8 +650,20 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
             {
                 RoomListResponse response = JsonUtility.FromJson<RoomListResponse>(request.downloadHandler.text);
                 
-                // 1. 시간순 정렬 (13시 -> 14시)
-                response.result.rooms.Sort((a, b) => a.created_at.CompareTo(b.created_at));
+                // 1. 정렬: 지금 사람이 있는 방을 맨 위로, 그 안에서 시간순(13시 -> 14시).
+                //    예전에는 시간순만 썼는데, 활성 방은 대개 가장 최근에 만들어져
+                //    목록 맨 아래로 밀렸다. 들어갈 방이 제일 찾기 어려웠다.
+                response.result.rooms.Sort((a, b) =>
+                {
+                    bool aActive = IsRoomActive(a != null ? a.room_id : null);
+                    bool bActive = IsRoomActive(b != null ? b.room_id : null);
+                    if (aActive != bActive)
+                        return aActive ? -1 : 1;
+
+                    string aTime = a != null ? (a.created_at ?? "") : "";
+                    string bTime = b != null ? (b.created_at ?? "") : "";
+                    return aTime.CompareTo(bTime);
+                });
 
                 foreach (var room in response.result.rooms) 
                 {
@@ -664,7 +685,7 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
                                 script.startTimeText.text = room.created_at.Substring(11, 5);
                             
                             // 활성화 여부 체크 및 등록
-                            bool isActive = cachedSessionList.Exists(s => s.Name == room.room_id);
+                            bool isActive = IsRoomActive(room.room_id);
                             script.SetupFromDB(room, isActive); 
 
                             if(!sessionListUiDictionary.ContainsKey(room.room_id))
@@ -685,11 +706,43 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
         // DeleteOldSessionsFromUI(sessionList);
         CompareList(sessionList);
 
+        // 목록을 보고 있는 도중에 방이 열리거나 닫힐 수 있다. 그때도 사람이 있는
+        // 방이 맨 위로 오게 순서를 다시 맞춘다(목록을 다시 만들지는 않는다).
+        ReorderRoomEntries();
+
         if (networkStatusText != null && networkStatusText.text != "Connected to network.")
         {
             networkStatusText.text = "Connected to network.";
             networkStatusText.color = Color.green;
         }
+    }
+
+    // 사람이 있는 방을 맨 위로 올린다. 각 무리 안의 순서(시간순)는 그대로 둔다.
+    private void ReorderRoomEntries()
+    {
+        if (sessionListContentParent == null || sessionListUiDictionary.Count == 0)
+            return;
+
+        List<Transform> active = new List<Transform>();
+        List<Transform> inactive = new List<Transform>();
+
+        foreach (Transform child in sessionListContentParent)
+        {
+            string roomId = null;
+            foreach (KeyValuePair<string, GameObject> pair in sessionListUiDictionary)
+            {
+                if (pair.Value == child.gameObject) { roomId = pair.Key; break; }
+            }
+
+            if (IsRoomActive(roomId))
+                active.Add(child);
+            else
+                inactive.Add(child);
+        }
+
+        int index = 0;
+        foreach (Transform t in active) t.SetSiblingIndex(index++);
+        foreach (Transform t in inactive) t.SetSiblingIndex(index++);
     }
 
     private void CompareList(List<SessionInfo> sessionList)
