@@ -532,7 +532,13 @@ public class Generate2DController : MonoBehaviour
             _graphManager = FindFirstObjectByType<GraphManager>();
         if (_centerImage == null)
         {
-            MainSketchView sketchView = FindFirstObjectByType<MainSketchView>();
+            // 비활성까지 훑는다.
+            //   보드(MainSketchPanel)는 회의 목표 패널을 보는 동안 꺼져 있는데,
+            //   기본 FindFirstObjectByType 은 꺼진 오브젝트를 건너뛴다. 그러면 _centerImage 가
+            //   null 이라 받아 온 이미지를 Destroy 하고 포기해 버리고, 그 사이 남은 assetId 때문에
+            //   MvpGenerated2DSync 의 히스토리 복원까지 '이미 있음'으로 판단해 영영 멈춘다.
+            MainSketchView sketchView =
+                FindFirstObjectByType<MainSketchView>(FindObjectsInactive.Include);
             if (sketchView != null)
                 _centerImage = sketchView.GetComponentInChildren<RawImage>(true);
         }
