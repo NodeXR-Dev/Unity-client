@@ -28,6 +28,9 @@ public class MvpWorkspaceLayout : MonoBehaviour
     [SerializeField] private bool _applyErgonomicProfileAtRuntime = true;
 
     [Header("속성 노드")]
+    [Tooltip("노드가 항상 사용자를 향하게 한다(빌보드). " +
+             "끄면 예전처럼 보드와 같은 방향으로 고정된다.")]
+    [SerializeField] private bool _billboardNodes = true;
     [SerializeField] private float _nodeViewScale = RecommendedNodeViewScale;
     [SerializeField] private float _nodePlaneOffset = -0.08f;
     [SerializeField] private float _arcBaseHeight = 0.82f;
@@ -784,12 +787,37 @@ public class MvpWorkspaceLayout : MonoBehaviour
     {
         foreach (NodeView view in FindObjectsByType<NodeView>(FindObjectsSortMode.None))
         {
-            if (view != null)
-            {
-                view.transform.localScale = Vector3.one * _nodeViewScale;
-                if (_mainSketchPanel != null)
-                    view.transform.rotation = _mainSketchPanel.rotation;
-            }
+            if (view == null)
+                continue;
+
+            view.transform.localScale = Vector3.one * _nodeViewScale;
+            if (_mainSketchPanel != null)
+                view.transform.rotation = _mainSketchPanel.rotation;
+
+            ApplyNodeBillboard(view);
+        }
+    }
+
+    // 노드 글자가 사용자를 향하게 한다.
+    //
+    // 매 프레임 FindObjectsByType 으로 회전을 넣으면 헤드셋에서 탐색 비용이 그대로 부담이 된다
+    // (이 파일의 다른 주석에도 같은 경고가 있다). 노드마다 작은 컴포넌트를 한 번 붙여 두고
+    // 각자 LateUpdate 에서 돌게 한다.
+    private void ApplyNodeBillboard(NodeView view)
+    {
+        GraphNodeBillboard billboard = view.GetComponent<GraphNodeBillboard>();
+
+        if (_billboardNodes)
+        {
+            if (billboard == null)
+                view.gameObject.AddComponent<GraphNodeBillboard>();
+            else
+                billboard.enabled = true;
+        }
+        else if (billboard != null)
+        {
+            // 끄기만 한다. 지우면 다음 프레임에 다시 붙이는 왕복이 생긴다.
+            billboard.enabled = false;
         }
     }
 

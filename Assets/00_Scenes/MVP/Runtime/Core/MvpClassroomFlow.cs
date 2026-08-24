@@ -25,6 +25,18 @@ public class MvpClassroomFlow : MonoBehaviour
     [SerializeField] private GameObject _reportPanelPrefab;
 
     private GameObject _reportPanel;
+
+    // 회의 목표('GoalPannel')·마치기 확인('ConfirmPanel') 패널은 프리팹이 아니라
+    // 씬의 MainSketchPanel 아래에 꺼진 채로 놓여 있다. 필요할 때 찾아 켠다.
+    // (FindBoardPanel 주석에 씬에 두는 이유가 적혀 있다)
+    [Tooltip("따라다니는 캔버스 위에서의 확인 패널 크기. " +
+             "ConfirmPanel 프리팹이 원래 갖고 있던 값(0.5)이 기본이다. " +
+             "씬에 놓인 localScale 은 무시하고 이 값을 쓴다.")]
+    [SerializeField] private float _confirmPanelScale = 0.5f;
+
+    private GameObject _finishConfirmPanel;
+    private GameObject _goalPanel;
+    private Canvas _confirmFollowCanvas;   // 확인 패널을 얹는, 시야를 따라오는 캔버스
     [SerializeField] private Generate2DController _generate2DController;
     [SerializeField] private Generate3DController _generate3DController;
     [SerializeField] private MainSketchView _mainSketchView;
@@ -99,15 +111,16 @@ public class MvpClassroomFlow : MonoBehaviour
         // 로비(MvpLobby)에서 넘어왔다면 방 생성·입장이 이미 끝났다.
         // 그걸 모르고 Welcome 부터 시작하면 방을 한 번 더 만들고 Fusion 세션도 둘이 된다.
         //
-        // 브리핑('오늘의 설계 미션')도 건너뛴다. 주제·목표는 로비에서 이미 입력받아
-        // 같은 내용을 한 번 더 읽히고 '설계 시작'을 누르게 할 뿐이다. 바로 설계로 들어간다.
+        // 브리핑('오늘의 설계 미션')은 건너뛴다. 주제·목표는 로비에서 이미 입력받아
+        // 같은 내용을 한 번 더 읽히고 '설계 시작'을 누르게 할 뿐이다.
+        // 대신 시안의 회의 목표 패널을 먼저 띄우고, '회의 시작하기'로 설계에 들어간다.
         if (TryAdoptLobbySession())
         {
             // 설계 화면은 한 프레임 뒤에 연다.
             // 여기(Awake)에서 바로 StartDesign 을 부르면 보드·시안 프리팹 등 다른
             // 컴포넌트의 Awake/Start 가 아직 안 돌아 빈 판만 뜬다.
             // (원래 이 함수는 브리핑의 '설계 시작' 버튼이 훨씬 뒤에 부르던 것이다)
-            StartCoroutine(StartDesignWhenReady());
+            StartCoroutine(ShowGoalPanelWhenReady());
         }
         else
         {
@@ -1564,12 +1577,180 @@ public class MvpClassroomFlow : MonoBehaviour
     // public 인 이유: 손목 패널의 '나가기'도 같은 리포트를 띄운다(MvpWristSettingsMenu).
     public void ConfirmFinishDesign()
     {
+        Debug.Log("[MVP Flow] 설계 마치기 확인 요청(손목 '나가기' 또는 보드 리포트 버튼)");
+
+        if (ShowFinishConfirmPanel())
+            return;
+
+        // 시안 패널을 못 쓰는 경우(프리팹 미할당 등)에도 확인 단계는 남긴다.
         ShowConfirmDialog(
             "설계를 마칠까요?",
             "마치면 회의 리포트를 보여 줘요.\n계속 수정하려면 취소를 누르세요.",
             "설계 마치기",
             MvpStudentUiFactory.Mint,
             ShowReportPanel);
+    }
+
+    // '회의를 마칠까요?' 확인 패널(01_Prefabs/Graph/Main/ConfirmPanel)을 띄운다.
+    // 띄웠으면 true — 리포트는 '예'를 눌러야 나온다.
+    //
+    // 보드는 감추지 않는다. '아니오'를 누르면 하던 설계로 그대로 돌아와야 하는데,
+    // 껐다 켜는 사이 노드·엣지 상태가 흔들릴 이유가 없다.
+    private bool ShowFinishConfirmPanel()
+    {
+        // 이미 물어보는 중이면 하나만 띄운다(손목 버튼 연타 방지).
+        if (_finishConfirmPanel != null && _finishConfirmPanel.activeSelf)
+            return true;
+
+        GameObject panel = FindSceneObject("ConfirmPanel");
+        if (panel == null)
+        {
+            Debug.LogWarning(
+                "[MVP Flow] 확인 패널을 찾지 못했습니다 — " +
+                "씬에 'ConfirmPanel' 이 있는지 확인하세요.");
+            return false;
+        }
+
+        // 응답을 요구하는 팝업은 보드에 붙어 있으면 어색하다(보드를 등지면 안 보인다).
+        // 노드 삭제 확인창(ShowConfirmDialog)처럼 시야를 따라오는 캔버스에 얹는다.
+        _confirmFollowCanvas = CreateFollowCanvas("MvpFinishConfirmCanvas");
+        panel.transform.SetParent(_confirmFollowCanvas.transform, false);
+        if (panel.transform is RectTransform panelRect)
+        {
+            panelRect.anchorMin = new Vector2(0.5f, 0.5f);
+            panelRect.anchorMax = new Vector2(0.5f, 0.5f);
+            panelRect.pivot = new Vector2(0.5f, 0.5f);
+            panelRect.anchoredPosition3D = Vector3.zero;
+            panelRect.localRotation = Quaternion.identity;
+            // 스케일은 반드시 여기서 정한다.
+            //   씬에서 이 패널을 보드 밖으로 꺼내면 에디터가 '월드 크기 유지'로 localScale 을
+            //   0.0005 같은 값으로 바꿔 놓는다. 그대로 따라오면 캔버스 스케일(0.0009)과 곱해져
+            //   4e-7 이 되어 화면에서 사실상 사라진다(로그의 lossyScale=0.0000).
+            //   따라다니는 캔버스 기준의 크기는 씬 배치와 무관해야 한다.
+            panelRect.localScale = Vector3.one * _confirmPanelScale;
+        }
+        panel.SetActive(true);
+        _finishConfirmPanel = panel;
+
+        MvpPanelButtonBinder.Wire(
+            _finishConfirmPanel, "Button_Yes", AcceptFinishDesign);
+        MvpPanelButtonBinder.Wire(
+            _finishConfirmPanel, "Button_No", CloseFinishConfirmPanel);
+
+        Debug.Log(
+            "[MVP Flow] 확인 패널 표시 — activeInHierarchy=" +
+            _finishConfirmPanel.activeInHierarchy +
+            " cameraMain=" + (Camera.main != null ? Camera.main.name : "(없음)") +
+            " canvasWorld=" + _confirmFollowCanvas.transform.position.ToString("F2") +
+            " panelWorld=" + _finishConfirmPanel.transform.position.ToString("F2") +
+            " lossyScale=" + _finishConfirmPanel.transform.lossyScale.ToString("F4"));
+        return true;
+    }
+
+    // 시야를 따라오는 월드 캔버스. ShowConfirmDialog 가 쓰는 값과 같게 맞춘다
+    // (거리 0.85m, 스케일 0.0009, sortingOrder 400 — 다른 MVP 패널 위).
+    private Canvas CreateFollowCanvas(string name)
+    {
+        GameObject root = new GameObject(
+            name,
+            typeof(RectTransform),
+            typeof(Canvas),
+            typeof(CanvasScaler),
+            typeof(GraphicRaycaster));
+        root.transform.SetParent(transform, false);
+        root.GetComponent<RectTransform>().sizeDelta = new Vector2(1200f, 700f);
+
+        Canvas canvas = root.GetComponent<Canvas>();
+        canvas.renderMode = RenderMode.WorldSpace;
+        canvas.sortingOrder = 400;
+        canvas.worldCamera = Camera.main;
+
+        Camera cam = Camera.main;
+        if (cam != null)
+        {
+            Vector3 forward = cam.transform.forward;
+            forward.y = 0f;
+            if (forward.sqrMagnitude < 0.001f)
+                forward = Vector3.forward;
+            forward.Normalize();
+            root.transform.position =
+                cam.transform.position + forward * 0.85f;
+            root.transform.rotation = Quaternion.LookRotation(forward);
+        }
+        root.transform.localScale = Vector3.one * 0.0009f;
+        root.AddComponent<MvpGentleFollow>().Configure(0.85f);
+        return canvas;
+    }
+
+    // 씬 전체에서 이름으로 찾는다(비활성 포함).
+    // 확인 패널은 보드 밖으로 빼 두었으므로 MainSketchPanel 아래만 봐서는 못 찾는다.
+    private GameObject FindSceneObject(string objectName)
+    {
+        foreach (Transform t in
+                 FindObjectsByType<Transform>(
+                     FindObjectsInactive.Include, FindObjectsSortMode.None))
+        {
+            if (t != null && t.name == objectName)
+                return t.gameObject;
+        }
+        return null;
+    }
+
+    // 보드(MainSketchPanel) 아래에 미리 놓아 둔 패널을 이름으로 찾는다.
+    //
+    // 씬에 놓아 두는 방식을 쓰는 이유:
+    //   - 위치·스케일을 에디터에서 눈으로 맞출 수 있다(코드로 좌표를 찍어 맞히지 않아도 된다)
+    //   - MainSketchPanel 은 MainSketchView 가 붙은 오브젝트라, 그 자식은
+    //     MvpWorkspacePolish.KeepOnlyDesignerPanel() 의 '시안 안쪽' 예외에 자동으로 들어간다.
+    //     캔버스 바로 밑에 만들면 Graphic 이 전부 꺼져 화면에서만 사라진다.
+    //
+    // 꺼져 있는 오브젝트를 찾아야 하므로 비활성 자식까지 훑는다.
+    private GameObject FindBoardPanel(string panelName)
+    {
+        Transform root = _workspaceLayout != null
+            ? _workspaceLayout.MainSketchPanel
+            : null;
+        if (root == null && _mainSketchView != null)
+            root = _mainSketchView.transform;
+        if (root == null && _mainSketchCanvas != null)
+            root = _mainSketchCanvas.transform;
+        if (root == null)
+            return null;
+
+        foreach (Transform t in root.GetComponentsInChildren<Transform>(true))
+        {
+            if (t != null && t.name == panelName)
+                return t.gameObject;
+        }
+        return null;
+    }
+
+    // '예' — 확인 패널을 닫고 회의 리포트로 넘어간다.
+    private void AcceptFinishDesign()
+    {
+        CloseFinishConfirmPanel();
+        ShowReportPanel();
+    }
+
+    // '아니오' — 패널만 닫고 설계를 계속한다.
+    // 씬에 놓아 둔 오브젝트라 파기하지 않고 꺼 두기만 한다(다시 물어볼 때 재사용).
+    // 따라다니는 캔버스는 우리가 만든 것이므로 같이 지운다 —
+    // 패널은 그 캔버스 밑에 남겨 둔 채 꺼 두면 다음에 다시 붙일 때 그대로 쓸 수 있다.
+    private void CloseFinishConfirmPanel()
+    {
+        if (_finishConfirmPanel != null)
+        {
+            _finishConfirmPanel.SetActive(false);
+            // 캔버스를 지우면 자식인 패널도 함께 사라지므로 먼저 떼어 낸다.
+            _finishConfirmPanel.transform.SetParent(transform, false);
+            _finishConfirmPanel = null;
+        }
+
+        if (_confirmFollowCanvas != null)
+        {
+            Destroy(_confirmFollowCanvas.gameObject);
+            _confirmFollowCanvas = null;
+        }
     }
 
     // 회의 리포트 패널(01_Prefabs/Graph/Designer/ReportPanel)을 띄우고 서버 값을 채운다.
@@ -3815,6 +3996,138 @@ public class MvpClassroomFlow : MonoBehaviour
     {
         yield return null;
         yield return new WaitForEndOfFrame();
+        StartDesign();
+    }
+
+    // 회의실에 들어오면 설계 보드보다 먼저 '오늘 무엇을 설계하는지'를 보여 준다.
+    // 기다리는 이유는 StartDesignWhenReady 와 같다 — 보드 캔버스가 아직 없으면
+    // 패널을 붙일 곳을 못 찾는다.
+    private IEnumerator ShowGoalPanelWhenReady()
+    {
+        yield return null;
+        yield return new WaitForEndOfFrame();
+
+        if (!ShowGoalPanel())
+            StartDesign();   // 패널을 못 찾으면 예전처럼 곧장 설계로
+    }
+
+    // 회의 목표 패널(MainSketchPanel 아래 'GoalPannel')을 켠다.
+    // 켰으면 true — 이때 설계는 '회의 시작하기'를 누를 때까지 시작하지 않는다.
+    private bool ShowGoalPanel()
+    {
+        _goalPanel = FindBoardPanel("GoalPannel");
+        if (_goalPanel == null)
+        {
+            // 헤드셋에서는 화면에 아무것도 안 나오면 원인을 구분할 수 없다.
+            // (adb logcat -s Unity:V | grep "MVP Flow")
+            Debug.LogWarning(
+                "[MVP Flow] 회의 목표 패널을 찾지 못했습니다 — " +
+                "MainSketchPanel 아래에 'GoalPannel' 이 있는지 확인하세요.");
+            return false;
+        }
+
+        // 보드 캔버스를 먼저 켠다.
+        //
+        // Awake 의 PrepareExistingScene() 이 SetMainWorkspaceVisible(false) 로 보드를 꺼 두고,
+        // 원래는 StartDesign → ShowState(Design) 이 다시 켰다. 목표 패널은 그 보드(MainSketchPanel)
+        // **안에** 있으므로, 켜지 않으면 패널만 SetActive(true) 해 봐야 꺼진 부모 안이라 안 보인다.
+        // 화면에 아무것도 안 나오던 원인이 이것이다.
+        SetMainWorkspaceVisible(true);
+
+        // 여기서 보드를 재배치하지 않는다.
+        //   RecenterWorkspaceToActiveView() 를 불러 봤더니 보드가 예전보다 멀리 놓였다.
+        //   씬 로드 직후라 헤드셋 트래킹이 아직 안정되지 않은 카메라 포즈를 기준으로 잡기 때문이다.
+        //   배치는 MvpWorkspaceLayout 의 포즈 추종 창과 StartDesign 에 그대로 맡긴다.
+        _goalPanel.SetActive(true);
+
+        // 목표를 읽는 동안에는 보드·노드·엣지를 감춘다.
+        //
+        // HideWorkspaceForReport() 를 쓰면 안 된다 — 그건 캔버스의 자식,
+        // 즉 MainSketchPanel 을 통째로 끄는데 목표 패널이 그 **안에** 들어 있어서
+        // 같이 꺼진다. 목표 패널만 남기고 끄는 쪽을 쓴다.
+        HideWorkspaceExcept(_goalPanel);
+
+        // 흐름 캔버스(Welcome/브리핑 등을 그리는 판)는 만들어질 때 켜져 있다.
+        // 로비에서 넘어온 경우 아무 페이지도 그리지 않아 내용은 비었지만, 어두운 배경판이
+        // 카메라 앞 1.22m 에 그대로 떠 목표 패널을 가린다. 설계로 들어갈 때
+        // ShowState(Design) 이 어차피 끄는 판이므로 여기서 미리 끈다.
+        if (_flowCanvas != null)
+            _flowCanvas.gameObject.SetActive(false);
+
+        MvpPanelButtonBinder.Wire(_goalPanel, "Button_Start", BeginMeetingFromGoalPanel);
+
+        // 화면 없이 '보이는지'를 가려내야 하므로 상태를 한 줄 남긴다.
+        // activeInHierarchy 가 false 면 부모 어딘가가 꺼져 있다는 뜻이다.
+        Debug.Log(
+            "[MVP Flow] 회의 목표 패널 표시 — activeInHierarchy=" +
+            _goalPanel.activeInHierarchy +
+            " 보드캔버스=" + (_mainSketchCanvas != null &&
+                              _mainSketchCanvas.gameObject.activeInHierarchy) +
+            " world=" + _goalPanel.transform.position.ToString("F2") +
+            " lossyScale=" + _goalPanel.transform.lossyScale.ToString("F4"));
+        return true;
+    }
+
+    // 보드를 감추되 keep(과 그 조상)은 남긴다.
+    //
+    // HideWorkspaceForReport() 와 목적은 같지만, 남겨야 할 패널이 보드 **안에** 있을 때 쓴다.
+    // 조상은 끄지 않고 한 단계 더 들어가 형제만 끄는 식으로 내려간다.
+    // 꺼진 것은 _hiddenForReport 에 쌓이므로 RestoreWorkspaceAfterReport() 가 그대로 되살린다.
+    private void HideWorkspaceExcept(GameObject keep)
+    {
+        _hiddenForReport.Clear();
+
+        if (_mainSketchCanvas != null && keep != null)
+            HideSiblingsAlongPath(_mainSketchCanvas.transform, keep.transform);
+
+        foreach (NodeView node in
+                 FindObjectsByType<NodeView>(FindObjectsSortMode.None))
+        {
+            if (node == null || !node.gameObject.activeSelf) continue;
+            node.gameObject.SetActive(false);
+            _hiddenForReport.Add(node.gameObject);
+        }
+
+        foreach (EdgeView edge in
+                 FindObjectsByType<EdgeView>(FindObjectsSortMode.None))
+        {
+            if (edge == null || !edge.gameObject.activeSelf) continue;
+            edge.gameObject.SetActive(false);
+            _hiddenForReport.Add(edge.gameObject);
+        }
+    }
+
+    private void HideSiblingsAlongPath(Transform parent, Transform keep)
+    {
+        foreach (Transform child in parent)
+        {
+            if (child == null) continue;
+            if (child == keep) continue;                 // 남길 패널 자신
+
+            if (keep.IsChildOf(child))
+            {
+                // 남길 패널의 조상이다. 끄지 말고 한 단계 더 들어간다.
+                HideSiblingsAlongPath(child, keep);
+                continue;
+            }
+
+            if (!child.gameObject.activeSelf) continue;
+            child.gameObject.SetActive(false);
+            _hiddenForReport.Add(child.gameObject);
+        }
+    }
+
+    // 목표 패널의 '회의 시작하기'.
+    // 씬에 놓아 둔 오브젝트라 파기하지 않고 꺼 두기만 한다.
+    private void BeginMeetingFromGoalPanel()
+    {
+        if (_goalPanel != null)
+        {
+            _goalPanel.SetActive(false);
+            _goalPanel = null;
+        }
+
+        RestoreWorkspaceAfterReport();
         StartDesign();
     }
 

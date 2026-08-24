@@ -50,6 +50,9 @@ public class MvpGenerated2DSync : MonoBehaviour
     private Coroutine downloadCoroutine;
     private Coroutine restoreCoroutine;
     private Texture2D downloadedTexture;
+    // 보드가 꺼져 있어 아직 못 붙인 서버 이미지. RawImage 가 잡히면 Update 가 붙인다.
+    private Texture2D pendingTexture;
+    private string pendingAssetId;
     private string lastAppliedImageUrl;
     private string lastBroadcastImageUrl;
 
@@ -83,6 +86,20 @@ public class MvpGenerated2DSync : MonoBehaviour
         bool generating = IsBusy || IsControllerGenerating();
         if (generateButton != null && generateButton.interactable == generating)
             generateButton.interactable = !generating;
+
+        // 보드가 꺼져 있는 동안 도착했던 이미지를 붙일 곳이 생기면 그때 붙인다.
+        if (pendingTexture != null)
+        {
+            ResolveReferences();
+            if (centerImage != null)
+            {
+                Texture2D texture = pendingTexture;
+                string assetId = pendingAssetId;
+                pendingTexture = null;
+                pendingAssetId = null;
+                ApplyServerTexture(texture, assetId);
+            }
+        }
     }
 
     private void OnDisable()
@@ -102,6 +119,8 @@ public class MvpGenerated2DSync : MonoBehaviour
     {
         if (downloadedTexture != null)
             Destroy(downloadedTexture);
+        if (pendingTexture != null)
+            Destroy(pendingTexture);
     }
 
     public void RequestGenerateGraphAll()
@@ -301,7 +320,11 @@ public class MvpGenerated2DSync : MonoBehaviour
             centerImage = GetPrivateField<RawImage>(generate2DController, "_centerImage");
         if (centerImage == null)
         {
-            MainSketchView sketchView = FindFirstObjectByType<MainSketchView>();
+            // 비활성까지 훑는다. 보드(MainSketchPanel)는 회의 목표 패널을 보는 동안 꺼져 있고,
+            // 기본 FindFirstObjectByType 은 꺼진 오브젝트를 건너뛴다 → 그 사이 도착한
+            // 서버 이미지를 붙일 곳을 못 찾는다.
+            MainSketchView sketchView =
+                FindFirstObjectByType<MainSketchView>(FindObjectsInactive.Include);
             if (sketchView != null)
                 centerImage = sketchView.GetComponentInChildren<RawImage>(true);
         }
@@ -475,13 +498,32 @@ public class MvpGenerated2DSync : MonoBehaviour
 
     private void ApplyServerTexture(Texture2D texture, string assetId)
     {
+        if (texture == null)
+            return;
+
         ResolveReferences();
-        if (centerImage == null || texture == null)
+        Debug.Log(
+            "[MVP 2D] 서버 이미지 적용 시도 — centerImage=" +
+            (centerImage != null ? centerImage.name : "(없음)") +
+            " assetId=" + assetId +
+            " " + texture.width + "x" + texture.height);
+
+        if (centerImage == null)
         {
-            if (texture != null)
-                Destroy(texture);
+            // 붙일 곳이 아직 없다(보드가 꺼져 있는 동안 도착한 경우).
+            // 예전에는 여기서 텍스처를 파기해 버려 그 이미지를 영영 못 봤다.
+            // 들고 있다가 RawImage 가 잡히면 Update 에서 붙인다.
+            if (pendingTexture != null && pendingTexture != texture)
+                Destroy(pendingTexture);
+            pendingTexture = texture;
+            pendingAssetId = assetId;
             return;
         }
+
+        if (pendingTexture != null && pendingTexture != texture)
+            Destroy(pendingTexture);
+        pendingTexture = null;
+        pendingAssetId = null;
 
         centerImage.texture = texture;
         centerImage.enabled = true;
@@ -612,9 +654,21 @@ public class MvpGenerated2DSync : MonoBehaviour
         if (IsBusy)
             return true;
 
+        // 컨트롤러가 assetId 를 들고 있으면 '이미 표시됐다'고 보고 복원을 접는다.
+        //   그런데 assetId 만 기록되고 실제 표시는 실패한 경우가 있었다(보드가 꺼져 있어
+        //   RawImage 를 못 찾던 시절). 그때 복원까지 멈춰 이미지가 영영 안 나왔다.
+        //   중앙 이미지에 텍스처가 실제로 들어가 있을 때만 접는다.
         if (generate2DController != null &&
             !string.IsNullOrWhiteSpace(generate2DController.CurrentAssetId))
-            return true;
+        {
+            if (centerImage != null && centerImage.texture != null)
+                return true;
+
+            Debug.Log(
+                "[MVP 2D] assetId 는 있는데 중앙 이미지가 비어 있어 복원을 계속합니다 — " +
+                "assetId=" + generate2DController.CurrentAssetId +
+                " centerImage=" + (centerImage != null ? centerImage.name : "(없음)"));
+        }
 
         return false;
     }
