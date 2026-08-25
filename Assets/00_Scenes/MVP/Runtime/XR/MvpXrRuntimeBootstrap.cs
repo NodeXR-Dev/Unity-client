@@ -68,6 +68,13 @@ public static class MvpXrRuntimeBootstrap
             app.AddComponent<MvpMeetingRoomPlayerController>();
         if (app.GetComponent<MvpNodeInteractionController>() == null)
             app.AddComponent<MvpNodeInteractionController>();
+        // 에이전트 대사 패널(제약 위반 경고 / 결정 근거 복기). 캔버스를 스스로 만들므로
+        // 씬 배선이 필요 없다 — 붙여 두기만 하면 AGENT_GUIDE 를 구독한다.
+        if (app.GetComponent<MvpAgentGuidePanel>() == null)
+            app.AddComponent<MvpAgentGuidePanel>();
+        // 시연 대본 발화기. 붙여만 두고 인스펙터에서 Use Script 로 켜고 끈다.
+        if (app.GetComponent<MvpScriptedUtterancePlayer>() == null)
+            app.AddComponent<MvpScriptedUtterancePlayer>();
 
         // 화면 공유(발표자 시점) 부품은 여기서 붙이지 않는다.
         // MVP_SH 등에는 이미 씬에 PresenterViewSystem 오브젝트가 있고
