@@ -122,12 +122,104 @@ public class MvpWorldKeyboard : MonoBehaviour
 
     // ── 디자인 시안 색상 ──────────────────────────────────────
     // 어두운 회색 판 + 파란 테두리, 키캡은 판보다 한 톤 밝은 회색, Enter 만 파랑.
-    private static readonly Color PanelBg     = new Color(0.169f, 0.169f, 0.169f, 0.995f);
-    private static readonly Color KeyCap      = new Color(0.290f, 0.290f, 0.290f, 1f);
-    private static readonly Color KeyCapAlt   = new Color(0.235f, 0.235f, 0.235f, 1f);
-    private static readonly Color FieldBg     = new Color(0.118f, 0.118f, 0.118f, 1f);
-    private static readonly Color AccentBlue  = new Color(0.176f, 0.588f, 0.898f, 1f);
-    private static readonly Color KeyInk      = new Color(0.94f, 0.95f, 0.96f, 1f);
+    // ── 디자인 시안(밝은 판 + 회색 그라데이션 키캡) ──────────────
+    // 키캡은 위가 밝고 아래가 어두운 세로 그라데이션이라 단색 Image 로는 안 된다.
+    // 스프라이트를 키 높이에 딱 맞춰 만들어 입힌다(늘리지 않으므로 모서리가 안 깨진다).
+    private static readonly Color PanelBg     = new Color32(0xE6, 0xE6, 0xE6, 0xFF);
+    private static readonly Color FieldBg     = new Color32(0x3F, 0x3F, 0x3F, 0xFF);
+    private static readonly Color KeyInk      = Color.white;
+
+    private static readonly Color KeyTop      = new Color32(0x9C, 0x9C, 0x9C, 0xFF);
+    private static readonly Color KeyBottom   = new Color32(0x6E, 0x6E, 0x6E, 0xFF);
+    private static readonly Color MicTop      = new Color32(0xFF, 0xDE, 0x8A, 0xFF);
+    private static readonly Color MicBottom   = new Color32(0xF5, 0xB9, 0x3C, 0xFF);
+    private static readonly Color ClearTop    = new Color32(0xFF, 0xC1, 0x8A, 0xFF);
+    private static readonly Color ClearBottom = new Color32(0xF5, 0x8B, 0x3C, 0xFF);
+    private static readonly Color EnterTop    = new Color32(0x5A, 0xB0, 0xF7, 0xFF);
+    private static readonly Color EnterBottom = new Color32(0x1E, 0x88, 0xE5, 0xFF);
+
+    // 시안의 상단 흰색 손잡이. 밝은 판 위에서 파랑·금색이 크게 튀어 보였다.
+    private static readonly Color HandleFill  = new Color32(0xFF, 0xFF, 0xFF, 0xFF);
+    private static readonly Color StatusFill  = new Color32(0xF2, 0xF2, 0xF2, 0xFA);
+    private static readonly Color StatusInk   = new Color32(0x55, 0x55, 0x55, 0xFF);
+
+    // 아래 세 개는 기존 호출부가 색으로 역할을 구분하는 데 쓴다.
+    // 실제 칠은 ApplyKeyStyle 이 그라데이션으로 덮는다.
+    private static readonly Color KeyCap      = KeyTop;
+    private static readonly Color KeyCapAlt   = KeyBottom;
+    private static readonly Color AccentBlue  = EnterTop;
+
+    // 키 높이는 62(문자·기능)와 76(툴바) 두 가지뿐이라 스프라이트도 그만큼만 만든다.
+    private static readonly Dictionary<string, Sprite> _gradientCache =
+        new Dictionary<string, Sprite>();
+
+    private static Sprite GetKeyGradient(int height, Color top, Color bottom)
+    {
+        int radius = Mathf.Clamp(Mathf.RoundToInt(height * 0.18f), 6, 20);
+        string key = height + "|" + ColorUtility.ToHtmlStringRGB(top) +
+                     "|" + ColorUtility.ToHtmlStringRGB(bottom);
+        if (_gradientCache.TryGetValue(key, out Sprite cached) && cached != null)
+            return cached;
+
+        int w = radius * 2 + 8;
+        Texture2D tex = new Texture2D(w, height, TextureFormat.RGBA32, false);
+        tex.wrapMode = TextureWrapMode.Clamp;
+        tex.filterMode = FilterMode.Bilinear;
+
+        for (int y = 0; y < height; y++)
+        {
+            // 위가 밝고 아래가 어둡다(텍스처 y=0 이 아래).
+            float t = height <= 1 ? 1f : (float)y / (height - 1);
+            Color line = Color.Lerp(bottom, top, t);
+
+            for (int x = 0; x < w; x++)
+            {
+                float a = RoundedRectAlpha(x, y, w, height, radius);
+                tex.SetPixel(x, y, new Color(line.r, line.g, line.b, line.a * a));
+            }
+        }
+        tex.Apply();
+
+        // 좌우만 9-slice 로 늘린다. 높이는 실제 키 높이와 같아 늘어나지 않는다.
+        Sprite sprite = Sprite.Create(
+            tex, new Rect(0f, 0f, w, height), new Vector2(0.5f, 0.5f), 100f, 0,
+            SpriteMeshType.FullRect, new Vector4(radius + 2, 0f, radius + 2, 0f));
+        sprite.name = "KeyGradient_" + key;
+        _gradientCache[key] = sprite;
+        return sprite;
+    }
+
+    // 모서리를 둥글린 사각형의 알파(가장자리 1px 부드럽게).
+    private static float RoundedRectAlpha(int x, int y, int w, int h, int radius)
+    {
+        float cx = Mathf.Min(Mathf.Max(x + 0.5f, radius), w - radius);
+        float cy = Mathf.Min(Mathf.Max(y + 0.5f, radius), h - radius);
+        float d = Vector2.Distance(new Vector2(x + 0.5f, y + 0.5f), new Vector2(cx, cy));
+        return Mathf.Clamp01(radius - d + 0.5f);
+    }
+
+    // 키에 시안 스타일(그라데이션 + 그림자)을 입힌다.
+    private static void ApplyKeyStyle(Button key, Color top, Color bottom)
+    {
+        if (key == null) return;
+
+        Image image = key.GetComponent<Image>();
+        if (image != null)
+        {
+            RectTransform rect = key.GetComponent<RectTransform>();
+            int height = Mathf.Max(8, Mathf.RoundToInt(rect.sizeDelta.y));
+            image.sprite = GetKeyGradient(height, top, bottom);
+            image.type = Image.Type.Sliced;
+            image.color = Color.white;   // 스프라이트 색을 그대로 쓴다
+        }
+
+        // 시안의 옅은 드롭 섀도.
+        Shadow shadow = key.GetComponent<Shadow>();
+        if (shadow == null)
+            shadow = key.gameObject.AddComponent<Shadow>();
+        shadow.effectColor = new Color(0f, 0f, 0f, 0.28f);
+        shadow.effectDistance = new Vector2(0f, -3f);
+    }
 
     private void BuildVisuals()
     {
@@ -154,18 +246,17 @@ public class MvpWorldKeyboard : MonoBehaviour
             true);
         _panel = background.rectTransform;
 
+        // 시안의 판은 테두리 없이 옅은 그림자만 있다.
         Outline rim = background.GetComponent<Outline>();
-        if (rim == null)
-            rim = background.gameObject.AddComponent<Outline>();
-        rim.effectColor = new Color(0.176f, 0.588f, 0.898f, 0.95f);
-        rim.effectDistance = new Vector2(3f, -3f);
+        if (rim != null)
+            rim.effectColor = new Color(0f, 0f, 0f, 0f);
 
         // ── 윗줄: 마이크 / 입력칸 / 지우기 / 전체삭제 ──────────
         // 아이콘 글리프(🎤 ⌫ ⌨ 등)는 이 프로젝트 한글 폰트에 없어 두부(□)로 나온다.
         // 스프라이트가 준비될 때까지는 폰트에 있는 글자로 대체한다.
         _voiceKey = CreateIconKey(
             "Voice", "음성", new Vector2(-386f, 208f), new Vector2(76f, 76f),
-            KeyCap, ToggleVoiceKey, 22f, true);
+            KeyCap, ToggleVoiceKey, 22f, true, MicTop, MicBottom);
         _voiceKeyLabel = _voiceKey.GetComponentInChildren<TMP_Text>();
         _voiceIndicator = MvpVoiceIndicator.Attach(
             _voiceKey.transform, new Vector2(26f, 26f), 11f);
@@ -195,7 +286,7 @@ public class MvpWorldKeyboard : MonoBehaviour
 
         CreateIconKey(
             "Clear", "Clear", new Vector2(408f, 208f), new Vector2(84f, 76f),
-            KeyCap, ClearAll, 22f, true);
+            KeyCap, ClearAll, 22f, true, ClearTop, ClearBottom);
 
         // 모드 표시는 입력칸 위 작은 라벨로만 남긴다(시안엔 큰 제목이 없다).
         _modeLabel = MvpStudentUiFactory.CreateText(
@@ -207,7 +298,7 @@ public class MvpWorldKeyboard : MonoBehaviour
             18f,
             TextAlignmentOptions.MidlineLeft,
             true,
-            new Color(0.62f, 0.66f, 0.70f, 1f),
+            StatusInk,
             1);
 
         _keyRoot = MvpStudentUiFactory.CreateRect(
@@ -240,7 +331,7 @@ public class MvpWorldKeyboard : MonoBehaviour
             "VoiceStatusBar",
             new Vector2(0f, 280f),
             new Vector2(920f, 64f),
-            new Color(0.22f, 0.19f, 0.13f, 0.92f),
+            StatusFill,
             true);
         _voiceBar = bar.rectTransform;
 
@@ -256,10 +347,11 @@ public class MvpWorldKeyboard : MonoBehaviour
             gradient.cornerRadius = 32f;   // 알약 모양(높이 64의 절반)
             gradient.bgAngle = 49f;
             gradient.gradientResolution = 250;
+            // 밝은 판 위에서 금색이 크게 튀어, 애니메이션은 그대로 두고 톤만 낮춘다.
             gradient.borderGradient = MakeGradient(
-                new Color(0.925f, 0.684f, 0.109f, 1f), Color.white, 1f, 1f);
+                new Color(0.78f, 0.80f, 0.83f, 1f), Color.white, 1f, 1f);
             gradient.bgGradient = MakeGradient(
-                new Color(1f, 0.740f, 0f, 1f), Color.white, 0.329f, 0.102f);
+                new Color(0.95f, 0.96f, 0.97f, 1f), Color.white, 0.329f, 0.102f);
         }
 
         // 왼쪽 캐릭터. 원본이 정사각(762x762)이라 바 높이보다 크게 잡아 살짝 넘치게 둔다.
@@ -337,7 +429,8 @@ public class MvpWorldKeyboard : MonoBehaviour
     // 시안의 원형/사각 보조 키. 라벨을 그대로 쓰되 글꼴 크기와 색을 따로 준다.
     private Button CreateIconKey(
         string name, string label, Vector2 position, Vector2 size,
-        Color color, Action action, float fontSize, bool onPanel)
+        Color color, Action action, float fontSize, bool onPanel,
+        Color? gradientTop = null, Color? gradientBottom = null)
     {
         Button key = MvpStudentUiFactory.CreateButton(
             onPanel ? _panel : _keyRoot,
@@ -359,7 +452,12 @@ public class MvpWorldKeyboard : MonoBehaviour
             text.color = KeyInk;
         Outline outline = key.GetComponent<Outline>();
         if (outline != null)
-            outline.effectColor = new Color(1f, 1f, 1f, 0.10f);
+            outline.effectColor = new Color(0f, 0f, 0f, 0f);
+
+        ApplyKeyStyle(
+            key,
+            gradientTop ?? KeyTop,
+            gradientBottom ?? KeyBottom);
         return key;
     }
 
@@ -653,7 +751,14 @@ public class MvpWorldKeyboard : MonoBehaviour
             text.color = KeyInk;
         Outline outline = key.GetComponent<Outline>();
         if (outline != null)
-            outline.effectColor = new Color(1f, 1f, 1f, 0.10f);
+            outline.effectColor = new Color(0f, 0f, 0f, 0f);
+
+        // 호출부가 넘긴 색이 강조(Enter·Shift 켜짐)면 파랑, 아니면 회색.
+        bool accent = color == AccentBlue;
+        ApplyKeyStyle(
+            key,
+            accent ? EnterTop : KeyTop,
+            accent ? EnterBottom : KeyBottom);
     }
 
     private string[] ShiftCase(string[] lower)
@@ -709,13 +814,11 @@ public class MvpWorldKeyboard : MonoBehaviour
         if (text != null)
             text.color = KeyInk;
 
-        // 살짝 튀어나온 키캡 테두리. 포킹 목표도 각 키의 실제 사각형과 일치한다.
         Outline outline = key.GetComponent<Outline>();
         if (outline != null)
-        {
-            outline.effectColor = new Color(1f, 1f, 1f, 0.10f);
-            outline.effectDistance = new Vector2(1f, -2f);
-        }
+            outline.effectColor = new Color(0f, 0f, 0f, 0f);
+
+        ApplyKeyStyle(key, KeyTop, KeyBottom);
     }
 
     private void PressCharacter(string value)
@@ -1210,7 +1313,7 @@ public class MvpWorldKeyboard : MonoBehaviour
         "MoveHandleVisual",
         new Vector2(0f, 246f),
         new Vector2(220f, 32f),
-        new Color(0.10f, 0.42f, 0.62f, 0.9f),
+        HandleFill,
         false);
         visual.raycastTarget = false;
         MvpStudentUiFactory.CreateText(
