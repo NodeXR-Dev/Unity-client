@@ -19,6 +19,15 @@ using UnityEngine.Android;
 [DisallowMultipleComponent]
 public class MvpOnDeviceDictation : MonoBehaviour
 {
+    // 말을 멈춘 뒤 이 시간(초)만큼 조용하면 한 문장으로 확정한다.
+    //
+    // 1.0 초였을 때 실기에서 문장이 토막났다 — "그래도 빨리 말리려면 … 모터와 송풍기를 …" 처럼
+    // 중간에 숨을 고르면 거기서 끊겨 "그래도빨리" 만 올라갔다. 서버는 조각마다 새 토픽을 만들어
+    // 제약 등록 → 위반 판정 같은 문맥이 이어지지 않는다.
+    //
+    // 인식기는 처음 만들 때 이 값을 굽는다. 바꾸려면 앱 시작 전에 대입해야 한다.
+    public static float SentenceSilenceSeconds = 2.0f;
+
     private const int SampleRate = 16000;
 
     private static readonly string[] ModelFiles =
@@ -76,11 +85,15 @@ public class MvpOnDeviceDictation : MonoBehaviour
     private volatile string _workerPartial = "";
     private volatile string _workerFinal;
     private volatile bool _workerEndpoint;   // 문장 끝 무음 감지
+    // 이번 듣기 세션에서 말이 한 번이라도 인식됐는가.
+    // 발화 전 무음(Rule1)으로 잡힌 끝점을 문장 끝으로 오해하지 않기 위한 것이다.
+    private volatile bool _workerSawSpeech;
 
     // 듣기를 멈춘 뒤 워커의 마무리를 기다리는 중인지. 메인 스레드는 여기서
     // 블록하지 않고 Update 에서 폴링한다(Join 은 Quest 에서 모래시계를 부른다).
     private const float FlushTimeoutSeconds = 2f;
     private bool _awaitingFinal;
+    private float _nextQueueWarnAt;   // 디코드 지연 경고 도배 방지
     private float _flushStartedAt;
 
     // 마이크 링버퍼 길이(초). 30초는 16kHz 기준 480,000 샘플이라 여는 데만도 부담이다.
@@ -253,6 +266,7 @@ public class MvpOnDeviceDictation : MonoBehaviour
         _workerPartial = "";
         _workerFinal = null;
         _workerEndpoint = false;
+        _workerSawSpeech = false;
         _workerFinished = false;
         _flushRequested = false;
         _workerRunning = true;
@@ -291,8 +305,24 @@ public class MvpOnDeviceDictation : MonoBehaviour
 
                     _workerPartial =
                         (Recognizer.GetResult(stream).Text ?? "").Trim();
-                    if (Recognizer.IsEndpoint(stream))
-                        _workerEndpoint = true;
+
+                    // 끝점 판정은 래치가 아니라 '지금 상태' 여야 한다.
+                    //
+                    // 예전에는 한 번 true 가 되면 StartListening 전까지 유지됐다. 그래서
+                    // 말하기 전에 뜸을 들이면(Rule1 = 발화 전 무음 2.4초) 아직 한 마디도 안 했는데
+                    // 플래그가 켜졌고, 입을 떼어 첫 어절이 디코드되는 순간 메인 스레드가
+                    // "끝점 + 부분결과 있음" 으로 보고 즉시 확정해 버렸다.
+                    // 실기 로그의 "그래성북", "웃긴", "두번째는" 처럼 첫 1~2어절만 올라간 원인이다.
+                    //
+                    // 이번 세션에서 말이 한 번이라도 인식됐는지 기억한다.
+                    //   끝점이 잡히는 순간 부분결과가 잠깐 비는 경우가 있어서,
+                    //   "지금 부분결과가 있는가" 로만 보면 확정이 영영 안 될 수 있다.
+                    //   '말을 한 적이 있고 + 지금 끝점' 으로 판단한다.
+                    if (_workerPartial.Length > 0)
+                        _workerSawSpeech = true;
+
+                    _workerEndpoint =
+                        _workerSawSpeech && Recognizer.IsEndpoint(stream);
                 }
 
                 Thread.Sleep(fed ? 1 : 5);
@@ -456,6 +486,17 @@ public class MvpOnDeviceDictation : MonoBehaviour
         _micClip.GetData(buffer, offset);
         _pending.Enqueue(buffer);   // 소유권을 워커로 넘긴다(이후 메인은 건드리지 않는다)
 
+        // 디코드가 실시간을 못 따라가면 이 큐가 계속 쌓인다.
+        // Quest 는 NumThreads=1 이라 그럴 여지가 있고, 그러면 인식 결과가 엉뚱해진다.
+        // 큐가 깊어질 때만 이따금 남긴다(매 프레임 찍으면 로그가 소용없어진다).
+        if (_pending.Count >= 8 && Time.unscaledTime >= _nextQueueWarnAt)
+        {
+            _nextQueueWarnAt = Time.unscaledTime + 2f;
+            Debug.LogWarning(
+                "[MVP STT] 디코드가 밀리고 있습니다 — 대기 청크 " + _pending.Count +
+                "개. 인식 결과가 부정확해질 수 있습니다.");
+        }
+
         // RMS 기반 입력 레벨 (상승은 즉시, 하강은 부드럽게).
         float sum = 0f;
         for (int i = 0; i < count; i++)
@@ -496,7 +537,7 @@ public class MvpOnDeviceDictation : MonoBehaviour
             config.DecodingMethod = "greedy_search";
             config.EnableEndpoint = 1;
             config.Rule1MinTrailingSilence = 2.4f;   // 발화 전 무음
-            config.Rule2MinTrailingSilence = 1.0f;   // 발화 후 이 시간 무음이면 문장 확정
+            config.Rule2MinTrailingSilence = SentenceSilenceSeconds;
             config.Rule3MinUtteranceLength = 20f;
 
             _sharedRecognizer = new OnlineRecognizer(config);

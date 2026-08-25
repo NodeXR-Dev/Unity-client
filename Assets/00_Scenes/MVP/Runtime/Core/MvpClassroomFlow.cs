@@ -603,9 +603,23 @@ public class MvpClassroomFlow : MonoBehaviour
             return;
         }
 
+        // 시연 대본 모드: 마이크를 누를 때마다 대본의 다음 문장을 그대로 올린다.
+        //   온디바이스 STT 가 "모터"를 "모니터" 로 듣는 식이라 제약이 등록되지 않고,
+        //   그러면 에이전트의 위반 판정·근거 복기가 통째로 어긋난다.
+        //   에이전트는 텍스트만 서버에 닿으면 동작하므로, 촬영 때는 이 경로를 쓴다.
+        //   (MvpScriptedUtterancePlayer 를 끄거나 대본을 다 쓰면 실제 인식으로 돌아간다)
+        if (_scriptedUtterances == null)
+            _scriptedUtterances = FindFirstObjectByType<MvpScriptedUtterancePlayer>(
+                FindObjectsInactive.Include);
+        if (_scriptedUtterances != null &&
+            _scriptedUtterances.SendNext(_voiceController))
+            return;
+
         _voiceController.ToggleListening();
         RefreshVoiceButtonLabel();
     }
+
+    private MvpScriptedUtterancePlayer _scriptedUtterances;
 
     private MvpVoiceIndicator _voiceIndicator;
 

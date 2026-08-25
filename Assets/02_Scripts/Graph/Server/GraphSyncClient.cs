@@ -64,6 +64,24 @@ public class GraphSyncClient : MonoBehaviour
     // 서버 3D 생성 완료(3D_GENERATED) 통보. (Generate3DController 가 구독)
     public event Action<Model3DResult> OnModel3DGenerated;
 
+    // 에이전트 가이드(제약 위반 경고 / 결정 근거 복기 …). guide_type 과 대사를 그대로 넘긴다.
+    public event Action<AgentGuide> OnAgentGuide;
+
+    // 서버 AGENT_GUIDE payload 중 화면에 필요한 것만 담는다.
+    public readonly struct AgentGuide
+    {
+        public readonly string GuideId;
+        public readonly string GuideType;   // CONSTRAINT_VIOLATION / RATIONALE_RECALL / ASSET_GENERATION …
+        public readonly string Message;
+
+        public AgentGuide(string guideId, string guideType, string message)
+        {
+            GuideId = guideId;
+            GuideType = guideType;
+            Message = message;
+        }
+    }
+
     // 2D 생성 결과. 인자가 늘어 Action<string,string,...> 로는 호출부에서 순서를 헷갈리기 쉬워 묶었다.
     public readonly struct Image2DResult
     {
@@ -206,6 +224,33 @@ public class GraphSyncClient : MonoBehaviour
         if (eventType == "NODE_CREATE" || eventType == "EDGE_CREATE")
         {
             HandleCreateAck(eventType, raw);
+            return;
+        }
+
+        // AGENT_GUIDE: 발화를 분석한 에이전트의 대사(제약 위반 경고 / 결정 근거 복기 / 생성 접수).
+        // 그래프 뮤테이션이 아니므로 echo loop 와 무관하다.
+        if (eventType == "AGENT_GUIDE")
+        {
+            try
+            {
+                var evt = JsonUtility.FromJson<AgentGuideEnvelope>(raw);
+                string message = evt?.payload?.message;
+                if (!string.IsNullOrWhiteSpace(message))
+                {
+                    Debug.Log(
+                        $"[GraphSyncClient] AGENT_GUIDE({evt.payload.guide_type}): {message}");
+                    OnAgentGuide?.Invoke(new AgentGuide(
+                        evt.payload.guide_id ?? "",
+                        evt.payload.guide_type ?? "",
+                        message));
+                }
+                else
+                    Debug.LogWarning("[GraphSyncClient] AGENT_GUIDE 수신했으나 message 가 비어 있습니다.");
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"[GraphSyncClient] AGENT_GUIDE 파싱 실패: {e.Message}");
+            }
             return;
         }
 
@@ -412,6 +457,28 @@ public class GraphSyncClient : MonoBehaviour
             payload = new NodeTextPayload { node_id = nodeId, text = newText },
         };
         Send("NODE_TEXT_UPDATE", JsonUtility.ToJson(env));
+    }
+
+    // 발화 하나를 서버로 올린다.
+    //
+    // 서버는 이걸 받아 RealtimeUtteranceHotPath 를 돌린다 — 토픽 분류, 제약 위반 감지,
+    // 결정 근거 복기, 2D 생성 요청 판별. 결과는 AGENT_GUIDE 로 되돌아온다.
+    //
+    // 노드를 만드는 발화만 보내면 안 된다. "모터를 쓰지 않기로 한 이유가 뭐였지?" 처럼
+    // 노드를 만들지 않는 질문도 에이전트 트리거이므로, 인식된 발화는 전부 올린다.
+    // (노드 생성 여부는 서버가 판단한다)
+    public void SendUtterance(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return;
+
+        var env = new UtteranceEnvelope
+        {
+            room_id = _roomId,
+            user_id = _userId,
+            payload = new UtterancePayload { utterance = text.Trim() },
+        };
+        Send("UTTERANCE_CREATE", JsonUtility.ToJson(env));
     }
 
     private void HandleNodeDeleted(string nodeId)
@@ -651,4 +718,15 @@ public class GraphSyncClient : MonoBehaviour
     // GRAPH_UPDATED 파싱용. graph 는 콜드로드(GET /api/graph)와 공유하는 GraphSnapshotDto(Data/GraphQueryDto.cs).
     [Serializable] private class GraphUpdatedEnvelope { public string event_type; public GraphUpdatedPayload payload; }
     [Serializable] private class GraphUpdatedPayload  { public GraphSnapshotDto graph; }
+
+    // 발화 송신 — 서버 AutoUtterancePayload = { utterance }.
+    [Serializable] private class UtterancePayload  { public string utterance; }
+    [Serializable] private class UtteranceEnvelope { public string event_type = "UTTERANCE_CREATE"; public string room_id; public string user_id; public UtterancePayload payload; }
+
+    // AGENT_GUIDE 수신 — 서버 AgentGuidePayload = { guide_id, guide_type, message, evidence }.
+    // evidence 는 서버가 dict[str, Any] 로 두어 guide_type 마다 키가 다르다
+    // (CONSTRAINT_VIOLATION 은 related_fact_id 단수, RATIONALE_RECALL 은 related_fact_ids 배열).
+    // JsonUtility 로는 자유 형태 dict 를 못 읽으므로 여기서는 파싱하지 않는다 — 표시에 필요한 건 message 다.
+    [Serializable] private class AgentGuideEnvelope { public string event_type; public string room_id; public string user_id; public AgentGuidePayload payload; }
+    [Serializable] private class AgentGuidePayload  { public string guide_id; public string guide_type; public string message; }
 }

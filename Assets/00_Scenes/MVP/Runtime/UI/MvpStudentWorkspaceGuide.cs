@@ -8,8 +8,6 @@ using UnityEngine.UI;
 [DefaultExecutionOrder(850)]
 public class MvpStudentWorkspaceGuide : MonoBehaviour
 {
-    private const string MvpScenePath =
-        "Assets/00_Scenes/MVP/MVP.unity";
 
     private MvpWaterRocketGraphController _graph;
     private GraphManager _graphManager;
@@ -25,7 +23,15 @@ public class MvpStudentWorkspaceGuide : MonoBehaviour
         RuntimeInitializeLoadType.AfterSceneLoad)]
     private static void InstallForMvp()
     {
-        if (SceneManager.GetActiveScene().path != MvpScenePath)
+        // 예전에는 씬 경로를 "Assets/00_Scenes/MVP/MVP.unity" 와 문자열 비교했다.
+        // 그런데 빌드에 들어가는 작업 씬은 MVP_SH.unity 라 경로가 달라 설치되지 않았고,
+        // 그러면 MvpClassroomFlow.SetWorkspaceMessage 의 폴백 대상이 없어져
+        // 음성 자막("듣고 있어요", "듣는 중 · …")과 네트워크 안내가 전부 조용히 사라졌다.
+        //
+        // 씬 이름 대신 'MVP 흐름이 있는 씬인가' 로 판단한다. 로비처럼 흐름이 없는 씬에서는
+        // MvpClassroomFlow 가 없으므로 그대로 건너뛴다.
+        if (Object.FindFirstObjectByType<MvpClassroomFlow>(
+                FindObjectsInactive.Include) == null)
             return;
 
         GameObject app = GameObject.Find("MvpApp");
