@@ -32,6 +32,9 @@ public class Generate3DController : MonoBehaviour
     [SerializeField] private Generate2DController _generate2DController;
     [Tooltip("생성된 GLB 를 붙일 부모. 비우면 이 오브젝트 아래에 붙는다.")]
     [SerializeField] private Transform _modelParent;
+
+    [Tooltip("생성된 3D 모델이 제자리에서 도는 속도(초당 각도). 0 이면 안 돈다.")]
+    [SerializeField] private float _spinDegreesPerSecond = 12f;
     [SerializeField] private Button _generateButton;
     [SerializeField] private TMP_Text _statusText;
     [Tooltip("서버 3D 생성 대기 상한(초). 서버 Meshy 폴링 상한이 900초라 그보다 넉넉히 잡는다.")]
@@ -367,6 +370,11 @@ public class Generate3DController : MonoBehaviour
         // 크기 정규화 + 배치. Meshy 가 내려주는 GLB 의 단위·크기는 보장되지 않아
         // 그대로 두면 머리 위에 거대하게 뜨거나 발밑에 먼지처럼 박힌다.
         FitAndPlace(modelRoot);
+
+        // 제자리에서 천천히 돌린다. 각도는 방 전체가 공유하는 시각으로 계산하므로
+        // 회전을 주고받지 않아도 모두가 같은 자세를 본다(MvpModelSpin 참고).
+        MvpModelSpin spin = modelRoot.AddComponent<MvpModelSpin>();
+        spin.Configure(_modelParent, _spinDegreesPerSecond);
 
         // 새 모델이 준비된 뒤에야 이전 것을 치운다. 순서를 바꾸면 실패 시 화면이 비어버린다.
         DisposeCurrentModel();

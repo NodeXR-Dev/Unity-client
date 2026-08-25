@@ -62,6 +62,14 @@ public class GraphNetworkManager : NetworkBehaviour
     private bool IsReadyForRpc => Runner != null && Runner.IsRunning && Object != null;
     private bool CanBroadcast => IsReadyForRpc && HasStateAuthority;
     public bool IsRpcReady => IsReadyForRpc;
+
+    /// <summary>
+    /// 방 전체가 공유하는 시각(초). 세션이 없으면 로컬 시간으로 떨어진다.
+    /// 이 값으로 각도를 계산하면 메시지를 주고받지 않고도 모두가 같은 자세를 본다
+    /// (매 프레임 회전을 방송하면 대역폭도 크고 지연 때문에 서로 어긋난다).
+    /// </summary>
+    public float SharedTime =>
+        IsReadyForRpc ? Runner.SimulationTime : Time.time;
     public PlayerRef LocalPlayerRef =>
         IsReadyForRpc ? Runner.LocalPlayer : PlayerRef.None;
 

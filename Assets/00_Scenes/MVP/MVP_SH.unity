@@ -1736,6 +1736,7 @@ MonoBehaviour:
   _panelVerticalOffset: -0.02
   _panelScale: 0.001
   _applyErgonomicProfileAtRuntime: 1
+  _billboardNodes: 1
   _nodeViewScale: 0.09
   _nodePlaneOffset: -0.16
   _arcBaseHeight: 0.42
@@ -1990,7 +1991,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!224 &522246613
 RectTransform:
   m_ObjectHideFlags: 0
@@ -9785,6 +9786,7 @@ MonoBehaviour:
   _waterRocketGraph: {fileID: 1030815418}
   _graphSyncClient: {fileID: 1650281630}
   _reportPanelPrefab: {fileID: 2398877354853881499, guid: 000e5b0c91246478da369fd87e885a96, type: 3}
+  _confirmPanelScale: 0.5
   _generate2DController: {fileID: 1650281632}
   _generate3DController: {fileID: 0}
   _mainSketchView: {fileID: 555310988}
@@ -12936,6 +12938,7 @@ MonoBehaviour:
   _syncClient: {fileID: 1650281630}
   _generate2DController: {fileID: 1650281632}
   _modelParent: {fileID: 0}
+  _spinDegreesPerSecond: 12
   _generateButton: {fileID: 0}
   _statusText: {fileID: 0}
   _generationTimeoutSeconds: 600
