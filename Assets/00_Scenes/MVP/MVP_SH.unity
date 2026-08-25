@@ -12813,7 +12813,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   _graphManager: {fileID: 1840588727}
-  _host: 192.168.0.236:8000
+  _host: https://yippee-connector-ritzy.ngrok-free.dev
   _roomId: aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa
   _userId: 11111111-1111-1111-1111-111111111111
   _autoConnect: 1
