@@ -1,0 +1,2 @@
+/Users/mbauser22/Developer/Unity-client/Library/Bee/Android/Prj/IL2CPP/Gradle/unityLibrary/src/main/cpp/CMakeLists.txt
+/Users/mbauser22/Developer/Unity-client/Library/Bee/Android/Prj/IL2CPP/Gradle/unityLibrary/src/main/cpp/GameActivity/CMakeLists.txt
